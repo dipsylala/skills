@@ -1,6 +1,8 @@
-grill-me
+# Useful skills
 
-write-a-prod
+* grill-me
+* write-a-prod
+* write-a-skill
 
 Based off Matt Pocock's work, with some changes:
 
