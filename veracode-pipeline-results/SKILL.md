@@ -7,6 +7,8 @@ description: Interpret Veracode pipeline scan JSON results and summarise finding
 
 ## Quick start
 
+If no file is provided, search the workspace for a file matching `filtered_*.json` and use that. If multiple matches exist, ask the user which to use. If none found, ask the user to provide the file.
+
 When given a Veracode pipeline scan JSON:
 
 1. Check `scan_status` — if not `SUCCESS`, report the failure.
@@ -26,7 +28,7 @@ When given a Veracode pipeline scan JSON:
 Group by severity (highest first). For each severity level present, output a section:
 
 | Severity | Count | Issue Types |
-|----------|-------|-------------|
+| ---------- | ------- | ------------- |
 | Very High (5) | n | list |
 | High (4) | n | list |
 | Medium (3) | n | list |
