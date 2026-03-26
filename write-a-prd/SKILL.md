@@ -43,6 +43,8 @@ A LONG, numbered list of user stories. Each user story should be in the format o
 
 This list of user stories should be extremely extensive and cover all aspects of the feature.
 
+If it would be better presented as groups then group the user stories under subheadings.
+
 ## Acceptance Criteria
 
 A numbered list of observable, testable conditions that define when the feature is complete. Each criterion should be tied to one or more user stories and written so that a developer can unambiguously verify it — no interpretation required.
