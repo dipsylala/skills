@@ -1,11 +1,20 @@
-# Useful skills
+# Skills
 
-* grill-me
-* write-a-prod
-* write-a-skill
+A collection of [Agent Skills](https://agentskills.io) — an open standard supported by VS Code, Cursor, Claude Code, Claude, Roo Code, Gemini CLI, and more.
 
-Based off Matt Pocock's work, with some changes:
+## Available Skills
 
-* [https://www.aihero.dev/my-grill-me-skill-has-gone-viral](https://www.aihero.dev/my-grill-me-skill-has-gone-viral)
-* [https://github.com/mattpocock/skills](https://github.com/mattpocock/skills)
+| Skill | Description |
+| ------- | ------------- |
+| [grill-me](./grill-me/SKILL.md) | Interview the user relentlessly about a plan or design until reaching shared understanding, resolving each branch of the decision tree. |
+| [write-a-prd](./write-a-prd/SKILL.md) | Create a PRD through user interview, codebase exploration, and module design, then submit as a GitHub issue. |
+| [write-a-skill](./write-a-skill/SKILL.md) | Create new agent skills with proper structure, progressive disclosure, and bundled resources. |
+| [veracode-pipeline-results](./veracode-pipeline-results/SKILL.md) | Interpret Veracode pipeline scan JSON results and summarise findings by severity, file, and issue type. |
+| [veracode-local-sca-results](./veracode-local-sca-results/SKILL.md) | Interpret Veracode local SCA scan JSON results, summarising dependency vulnerabilities and IaC/Dockerfile misconfigurations. |
 
+## Credits
+
+Based on Matt Pocock's work, with additions:
+
+- [My grill-me skill has gone viral](https://www.aihero.dev/my-grill-me-skill-has-gone-viral)
+- [mattpocock/skills](https://github.com/mattpocock/skills)
