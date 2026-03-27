@@ -94,21 +94,19 @@ Do not edit lockfiles or package manifests directly unless the package manager i
 
 ## Config finding object (`configs[]`)
 
-> **Schema Variation Note**: Config field names may vary between Veracode versions (Pascal case vs. lowercase). The extraction scripts in SKILL.md auto-detect and handle both formats.
-
 | Field | Description |
 | ------- | ------------- |
-| `ID` (or `id`) | Rule identifier (e.g. `DS002`, `DS031`) |
-| `Title` (or `title`) | Short rule name |
-| `Description` (or `description`) | Explanation of why this is a risk |
-| `Message` (or `message`) | Specific finding detail — what was detected in the file |
-| `Resolution` (or `resolution`) | How to fix it |
-| `Severity` (or `severity`) | `CRITICAL`, `HIGH`, `MEDIUM`, `LOW` |
-| `Status` (or `status`) | `FAIL` or `PASS` |
-| `Target` (or `target`) | File or resource checked (e.g. `Dockerfile`) |
-| `Type` (or `type`) | Check category (e.g. `Dockerfile Security Check`) |
-| `PrimaryURL` (or `primaryURL`, `primary_url`) | Reference URL for the rule |
-| `Namespace` (or `namespace`) | Internal rule namespace |
+| `ID` | Rule identifier (e.g. `DS002`, `DS031`) |
+| `Title` | Short rule name |
+| `Description` | Explanation of why this is a risk |
+| `Message` | Specific finding detail — what was detected in the file |
+| `Resolution` | How to fix it |
+| `Severity` | `CRITICAL`, `HIGH`, `MEDIUM`, `LOW` |
+| `Status` | `FAIL` or `PASS` |
+| `Target` | File or resource checked (e.g. `Dockerfile`) |
+| `Type` | Check category (e.g. `Dockerfile Security Check`) |
+| `PrimaryURL` | Reference URL for the rule |
+| `Namespace` | Internal rule namespace |
 | `customerPolicyResult.Status` | Policy evaluation result |
 
 ---
