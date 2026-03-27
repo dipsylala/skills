@@ -16,10 +16,6 @@ policy_status = 'unknown'
 if data.get('vulnerabilities', {}).get('matches'):
     policy_status = data['vulnerabilities']['matches'][0].get('customerPolicyResult', {}).get('Status', 'not evaluated')
 
-# Print metadata header
-print(f"Policy: {policy_status} | Secrets: {secrets_count}")
-print()
-
 comps = defaultdict(list)
 
 for m in data['vulnerabilities']['matches']:
@@ -34,6 +30,16 @@ for k, v in comps.items():
     rows.append((k, sev, cves, fv[-1] if fv else 'none'))
 
 rows.sort(key=lambda r: sev_order.index(r[1]) if r[1] in sev_order else 99)
+
+# Compute totals
+total_components = len(rows)
+total_cves = sum(r[2] for r in rows)
+cves_by_sev = defaultdict(int)
+for r in rows:
+    cves_by_sev[r[1]] += r[2]
+sev_parts = ' '.join(f"{cves_by_sev[s]} {s}" for s in sev_order if cves_by_sev[s] > 0)
+print(f"Policy: {policy_status} | Secrets: {secrets_count} | Components: {total_components} | Total CVEs: {total_cves} ({sev_parts})")
+print()
 
 print(f"{'Component':<55} {'Sev':<10} {'CVEs':<6} Fix")
 for r in rows:

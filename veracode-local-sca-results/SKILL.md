@@ -15,8 +15,6 @@ The JSON contains up to three result sections — report on whichever the user a
 
 **Default mode is Summary.** Only switch to Detail mode when the user asks to investigate a specific component or CVE.
 
-> **Note**: All scripts in `scripts/` folder auto-handle schema variations (Pascal/lowercase fields) across Veracode versions.
-
 ---
 
 ## Mode 1 — Summary (default)
@@ -25,24 +23,24 @@ SCA files can be very large. Use scripts to extract the data rather than reading
 
 ### Step 1: Extract data
 
-Run the analysis scripts directly from the skill folder (no need to copy them to the workspace).
+Run the analysis scripts from the `scripts/` subfolder alongside this skill file. Resolve the path to `scripts/` based on where this SKILL.md was loaded from.
 
 **Run SCA summary:**
 ```bash
-python3 ~/.claude/skills/veracode-local-sca-results/scripts/sca_summary.py <path-to-veracode.json>
+python3 <skill-dir>/scripts/sca_summary.py <path-to-veracode.json>
 ```
 This outputs: policy status, secrets count, and the vulnerability summary table.
 
 **Run IaC summary:**
 ```bash
-python3 ~/.claude/skills/veracode-local-sca-results/scripts/iac_summary.py <path-to-veracode.json>
+python3 <skill-dir>/scripts/iac_summary.py <path-to-veracode.json>
 ```
 
 > **Duplicate matches note**: The same CVE often appears multiple times in the JSON (once per artifact location). Scripts auto-deduplicate — CVE counts reflect unique advisories only.
 
 ### Step 2: Output
 
-1. **Header**: Extract from sca_summary.py first line (policy result, secrets count), count unique components from table rows, sum CVEs from table
+1. **Header**: Use the first line of sca_summary.py output directly — it includes policy result, secrets count, component count, and total CVEs broken down by severity
 2. **SCA remediation table** (from sca_summary.py output, highest severity first):
 
 | Component | Version | Highest Severity | CVEs | Fix Version | Action |
@@ -66,15 +64,15 @@ Ref: <PrimaryURL>
 
 ## Mode 2 — Detail (on request)
 
-When the user asks about a specific component or CVE, run the detail script directly from the skill folder:
+When the user asks about a specific component or CVE, run the detail script from the `scripts/` subfolder alongside this skill file:
 
 ```bash
-python3 ~/.claude/skills/veracode-local-sca-results/scripts/sca_detail.py <path-to-veracode.json> <component-name>
+python3 <skill-dir>/scripts/sca_detail.py <path-to-veracode.json> <component-name>
 ```
 
 Example:
 ```bash
-python3 ~/.claude/skills/veracode-local-sca-results/scripts/sca_detail.py veracode.json snakeyaml
+python3 <skill-dir>/scripts/sca_detail.py veracode.json snakeyaml
 ```
 
 State the recommended action (Upgrade / Replace / Remove) with the specific target version if available.
