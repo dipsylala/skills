@@ -9,61 +9,68 @@ description: Interpret Veracode pipeline scan JSON results and summarise finding
 
 If no file is provided, search the workspace for a file matching `filtered_*.json` and use that. If multiple matches exist, ask the user which to use. If none found, ask the user to provide the file.
 
-When given a Veracode pipeline scan JSON:
+**Default mode is Summary.** Only switch to Detail mode when the user asks to investigate a specific finding.
 
-1. Check `scan_status` — if not `SUCCESS`, report the failure.
-2. Report modules scanned (`modules` array).
-3. Summarise findings by severity (see severity map in [REFERENCE.md](REFERENCE.md)).
-4. For each finding, show: severity label, file, line, function, issue type, CWE, and remediation.
+Use the scripts in the `scripts/` subfolder alongside this SKILL.md. Resolve the path to `scripts/` based on where this SKILL.md was loaded from.
 
-## Workflow
+---
 
-### 1. Scan overview
-- Status: `scan_status` + `message`
-- Modules scanned: list `modules[]`
-- Total findings: `findings` array length
+## Mode 1 — Summary (default)
 
-### 2. Findings summary table
+Pipeline scan JSON files can be large. Use the summary script to extract data rather than reading the file directly into context.
 
-Group by severity (highest first). For each severity level present, output a section:
+### Step 1: Run the summary script
 
-| Severity | Count | Issue Types |
-| ---------- | ------- | ------------- |
-| Very High (5) | n | list |
-| High (4) | n | list |
-| Medium (3) | n | list |
-...
-
-### 3. Per-finding detail
-
-For each finding (highest severity first):
-
-```
-[SEVERITY] issue_type (CWE-cwe_id)
-File: image_path, Line: files.source_file.line
-Function: files.source_file.qualified_function_name
-Exploitability: exploit_level (see REFERENCE.md)
-Remediation: <extracted from display_text — strip HTML tags, keep second <span> block>
+```bash
+python3 <skill-dir>/scripts/pipeline_summary.py <filtered_results.json>
 ```
 
-### 4. Remediation guidance
+The script outputs four sections — no stack dumps are read:
 
-The `display_text` field contains three `<span>` blocks (HTML-encoded):
-1. **What**: describes the flaw and data flow
-2. **How to fix**: remediation steps — always include this
-3. **References**: CWE/OWASP links
+1. **Scan Overview** — status, message, module count, module list, total findings
+2. **Severity Breakdown** — count per severity level and exploitability range at each level
+3. **Issue Type Breakdown** — count and highest severity per unique issue type
+4. **Findings by File** — each source file as its own block; header shows finding count and highest severity; rows sorted highest severity first within the file
 
-Strip HTML tags and present the second block as remediation advice.
+### Step 2: Interpret and present
 
-### 5. Shell-shock findings (severity 0, issue_type_id: shell_shock)
+1. **One-paragraph executive summary** — scan status, module count, total findings, and severity distribution (draw from Scan Overview and Severity Breakdown sections)
+2. **Issue type highlights** — call out any issue type with Very High or High findings, or with a high count (draw from Issue Type Breakdown)
+3. **File-by-file analysis** — work through each file block from the script output, summarising what was found and why it matters; group related issues where possible
+4. **Prioritised remediation list** — Very High → High → Medium → Low, one action per finding referencing its ID
 
-These are informational — flag them separately as environment review items, not flaws requiring code changes.
+---
 
-## Output format
+## Mode 2 — Finding detail (on demand)
 
-- Lead with a one-paragraph executive summary
-- Use a severity table for the overview
-- Use collapsible or indented sections per finding
-- End with a prioritised remediation list (Very High → High → Medium → Low)
+Switch to this mode when the user asks about a specific finding, wants to assess exploitability, or wants to know if a result is a false positive.
+
+### Step 1: Run the detail script
+
+```bash
+python3 <skill-dir>/scripts/pipeline_detail.py <filtered_results.json> <issue_id>
+```
+
+This outputs: full finding header, plain-text description / remediation / references (HTML stripped from `display_text`), and the taint data path reconstructed from `stack_dumps` (Source → Sink).
+
+### Step 2: Interpret the data path
+
+- Review the reconstructed call chain from the script output
+- Determine whether the taint source is truly user-controlled or a false positive (e.g. a hardcoded filename passed to `file_get_contents` is not HTTP input)
+- State your verdict: **Confirmed** (user input genuinely reaches the sink) or **Likely false positive** (source is internal/hardcoded), with a one-sentence reason
+
+Example verdict output:
+```
+Verdict: Likely false positive — path argument is a hardcoded string literal;
+         data originates from a bundled local file, not HTTP input.
+```
+
+### Step 3: Remediation advice
+
+- Present the **Remediation** section from the script output as the primary fix guidance
+- If verdict is **Likely false positive**, note that mitigation (rather than a code change) may be appropriate and describe compensating controls
+
+---
 
 See [REFERENCE.md](REFERENCE.md) for the full JSON schema, severity map, and exploitability levels.
+See [scripts/README.md](scripts/README.md) for script usage details.
