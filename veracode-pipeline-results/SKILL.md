@@ -22,7 +22,7 @@ Pipeline scan JSON files can be large. Use the summary script to extract data ra
 ### Step 1: Run the summary script
 
 ```bash
-python3 <skill-dir>/scripts/pipeline_summary.py <filtered_results.json>
+python <skill-dir>/scripts/pipeline_summary.py <filtered_results.json>
 ```
 
 The script outputs four sections — no stack dumps are read:
@@ -48,7 +48,7 @@ Switch to this mode when the user asks about a specific finding, wants to assess
 ### Step 1: Run the detail script
 
 ```bash
-python3 <skill-dir>/scripts/pipeline_detail.py <filtered_results.json> <issue_id>
+python <skill-dir>/scripts/pipeline_detail.py <filtered_results.json> <issue_id>
 ```
 
 This outputs: full finding header, plain-text description / remediation / references (HTML stripped from `display_text`), and the taint data path reconstructed from `stack_dumps` (Source → Sink).
