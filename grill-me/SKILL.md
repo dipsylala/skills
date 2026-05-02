@@ -30,7 +30,7 @@ Notice hedging, or overconfidence in the user's responses.
 Name it directly (e.g., "You seem less certain here - what's driving
 that?").
 
-Every 8–10 questions, do a brief process check-in: ask whether the
+Every 8-10 questions, do a brief process check-in: ask whether the
 current line of questioning is hitting the right areas or whether
 the user wants to shift focus.
 
