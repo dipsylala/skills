@@ -27,7 +27,7 @@ When an answer matters, use a scaling question to surface confidence
 up under 10× the load?"). Dig deeper on anything below a 7.
 
 Notice hedging, or overconfidence in the user's responses.
-Name it directly (e.g., "You seem less certain here — what's driving
+Name it directly (e.g., "You seem less certain here - what's driving
 that?").
 
 Every 8–10 questions, do a brief process check-in: ask whether the
