@@ -1,6 +1,6 @@
 ---
 name: prompt-audit
-description: Analyse a prompt or system instruction set for quality issues across five dimensions: contradictions, ambiguity, persona consistency, cognitive load, and semantic coverage. Use when the user wants to audit, review, analyse, or debug a prompt, system prompt, or instruction set.
+description: "Analyse a prompt or system instruction set for quality issues across five dimensions: contradictions, ambiguity, persona consistency, cognitive load, and semantic coverage. Use when the user wants to audit, review, analyse, or debug a prompt, system prompt, or instruction set."
 ---
 
 # Prompt Audit
