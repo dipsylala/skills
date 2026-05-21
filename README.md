@@ -7,6 +7,7 @@ A collection of [Agent Skills](https://agentskills.io) — an open standard supp
 | Skill | Description |
 | ------- | ------------- |
 | [code-guardian](./code-guardian/SKILL.md) | Audits LLM-generated code edits for adherence to surrounding code conventions and OWASP Top 10 security practices before applying them. Blocks and self-corrects violations inline. |
+| [continuation](./continuation/SKILL.md) | Create compact continuation notes so another agent or future session can resume work with minimal rediscovery. |
 | [grill-me](./grill-me/SKILL.md) | Interview the user relentlessly about a plan or design until reaching shared understanding, resolving each branch of the decision tree. |
 | [prompt-audit](./prompt-audit/SKILL.md) | Analyse a prompt or system instruction set for quality issues across five dimensions: contradictions, ambiguity, persona consistency, cognitive load, and semantic coverage. |
 | [write-a-prd](./write-a-prd/SKILL.md) | Create a PRD through user interview, codebase exploration, and module design, then submit as a GitHub issue. |
