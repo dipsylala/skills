@@ -2,6 +2,28 @@
 
 A collection of [Agent Skills](https://agentskills.io) — an open standard supported by VS Code, Cursor, Claude Code, Claude, Roo Code, Gemini CLI, and more.
 
+## Installation
+
+Install from this repository with the Skills CLI:
+
+```bash
+npx skills add dipsylala/skills
+```
+
+List available skills before installing:
+
+```bash
+npx skills add dipsylala/skills --list
+```
+
+Install a specific skill:
+
+```bash
+npx skills add dipsylala/skills --skill code-guardian
+```
+
+By default, skills are installed at project scope. Use `--global` to install them for all projects supported by your agent.
+
 ## Available Skills
 
 | Skill | Description |
