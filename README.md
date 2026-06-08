@@ -45,4 +45,4 @@ Grill-Me, Write-A-Prd, Write-A-Skill are based on Matt Pocock's work, with addit
 
 The `prompt-audit` skill is inspired by the LLM-powered analysis dimensions (contradictions, ambiguity, persona consistency, cognitive load, semantic coverage) from Microsoft's [vscode-chat-customizations-evaluation](https://github.com/microsoft/vscode-chat-customizations-evaluation), used under the [MIT License](https://github.com/microsoft/vscode-chat-customizations-evaluation/blob/main/LICENSE).
 
-The `de-ai-doc` skill adapts the editorial prompt taxonomy from [AUAggy/deslop](https://github.com/AUAggy/deslop/), used under [the MIT License](https://github.com/AUAggy/deslop/blob/main/LICENSE).
+The `de-ai-doc` skill adapts the editorial prompt taxonomy from [AUAggy/deslop](https://github.com/AUAggy/deslop/), used under the [MIT License](https://github.com/AUAggy/deslop/blob/main/LICENSE).
