@@ -30,6 +30,7 @@ By default, skills are installed at project scope. Use `--global` to install the
 | ------- | ------------- |
 | [code-guardian](./code-guardian/SKILL.md) | Audits LLM-generated code edits for adherence to surrounding code conventions, OWASP Top 10:2025 application security, and OWASP LLM security practices before applying them. Use as a heuristic guardrail alongside deterministic scanners, linting, and tests. |
 | [continuation](./continuation/SKILL.md) | Create compact continuation notes so another agent or future session can resume work with minimal rediscovery. |
+| [de-ai-doc](./de-ai-doc/SKILL.md) | Rewrites AI-heavy documentation into concise, natural, technically precise prose while preserving facts, code, structure, and author intent. |
 | [grill-me](./grill-me/SKILL.md) | Interview the user relentlessly about a plan or design until reaching shared understanding, resolving each branch of the decision tree. |
 | [prompt-audit](./prompt-audit/SKILL.md) | Analyse a prompt or system instruction set for quality issues across five dimensions: contradictions, ambiguity, persona consistency, cognitive load, and semantic coverage. |
 | [write-a-prd](./write-a-prd/SKILL.md) | Create a PRD through user interview, codebase exploration, and module design, then submit as a GitHub issue. |
@@ -43,3 +44,5 @@ Based on Matt Pocock's work, with additions:
 - [mattpocock/skills](https://github.com/mattpocock/skills)
 
 The `prompt-audit` skill is inspired by the LLM-powered analysis dimensions (contradictions, ambiguity, persona consistency, cognitive load, semantic coverage) from Microsoft's [vscode-chat-customizations-evaluation](https://github.com/microsoft/vscode-chat-customizations-evaluation), used under the [MIT License](https://github.com/microsoft/vscode-chat-customizations-evaluation/blob/main/LICENSE).
+
+The `de-ai-doc` skill adapts the editorial prompt taxonomy from [AUAggy/deslop](https://github.com/AUAggy/deslop/), used under the MIT License.
