@@ -49,31 +49,10 @@ resolved from the supplied files or repository context, the skill reports it.
 
 ## Sources
 
-### Wikipedia: Signs of AI writing
-
-[Wikipedia:Signs of AI writing](https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing)
-is used as a field guide to common AI-isms. Its examples inform checks for:
-
-- Inflated claims about significance, legacy, and broader trends
-- Superficial analysis appended to otherwise factual statements
-- Vague attribution and unsupported claims of consensus
-- Negative parallelism and forced groups of three
-- Avoidance of plain verbs such as "is", "are", and "has"
-- Unnecessary synonym changes for the same subject
-- Formulaic headings, lists, boldface, tables, and punctuation
-- Leaked chatbot language, response scaffolding, and accidental placeholders
-
-These patterns demonstrate recurring traits of generated prose. They are
-editing signals, not proof that a particular passage was written by AI. The
-skill fixes the underlying clarity, evidence, structure, or tone problem
-instead of trying to conceal authorship.
-
-The page was reviewed on June 8, 2026. Wikipedia text is available under the
-[Creative Commons Attribution-ShareAlike License](https://creativecommons.org/licenses/by-sa/4.0/).
-
 ### DeSlop
 
 The initial taxonomy of padding, cliché structures, protected regions, and
 document-specific rules was adapted from
 [AUAggy/deslop](https://github.com/AUAggy/deslop/), reviewed June 8, 2026.
-DeSlop is available under the MIT License.
+DeSlop is available under the [MIT License](https://github.com/AUAggy/deslop/blob/main/LICENSE).
+Copyright (c) Miaggy.com.
