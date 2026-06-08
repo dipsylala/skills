@@ -1,6 +1,6 @@
 # Skills
 
-A collection of [Agent Skills](https://agentskills.io) — an open standard supported by VS Code, Cursor, Claude Code, Claude, Roo Code, Gemini CLI, and more.
+A collection of [Agent Skills](https://agentskills.io) - an open standard supported by VS Code, Cursor, Claude Code, Claude, Roo Code, Gemini CLI, and more.
 
 ## Installation
 

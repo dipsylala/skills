@@ -40,6 +40,12 @@ higher-priority rule.
   or accuracy.
 - Rewrite at the smallest useful scope. Keep correct, specific prose instead of
   replacing every sentence.
+- When a document is heavily AI-generated, treat its specific factual claims -
+  infrastructure names, integration details, architecture descriptions - as
+  unverified. Cross-check them against the repository, codebase, or other
+  supplied files before preserving. Claims that cannot be verified and are
+  inconsistent with the surrounding context should be flagged as gaps, not
+  carried forward as facts.
 
 ## Preserve First
 

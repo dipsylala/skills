@@ -21,12 +21,12 @@ Analyse the supplied prompt across these five areas:
 
 ## Output Format
 
-Respond with a human-readable report using the following sections. Each section uses plain prose and bullet points — no JSON, no code blocks.
+Respond with a human-readable report using the following sections. Each section uses plain prose and bullet points - no JSON, no code blocks.
 
 See [REPORT-TEMPLATE.md](REPORT-TEMPLATE.md) for the full section format.
 
 ## Constraints
 
 - All quoted text must be copied exactly from the prompt so issues can be located precisely.
-- All explanations and suggestions must be specific and actionable — never vague like "could be clearer".
+- All explanations and suggestions must be specific and actionable - never vague like "could be clearer".
 - Suggestions must be concrete rewrites or additions, not abstract advice.

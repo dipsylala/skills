@@ -27,7 +27,7 @@ List any places where the expected tone, personality, or role contradicts itself
 - Name the two conflicting traits or tones.
 - Quote the most relevant text from the prompt.
 - Label severity as WARNING or INFO.
-- Suggest how to make the persona consistent — pick one approach or reconcile them.
+- Suggest how to make the persona consistent - pick one approach or reconcile them.
 
 If none found, write "No persona issues found."
 

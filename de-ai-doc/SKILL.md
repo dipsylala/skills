@@ -33,7 +33,10 @@ not present in the source documents or available repository context.
 1. Resolve the supplied paths and list the documents in scope.
 2. Read every in-scope document before editing. Identify its document type,
    intended reader, purpose, local style, and when editing multiple files,
-   relationships between them.
+   relationships between them. If the user supplies additional sources - a
+   repository URL or path, a specification, a reference document, or any other
+   link - fetch or read them and use their content to verify factual claims in
+   the documents under edit.
 3. Read [editorial-rules.md](references/editorial-rules.md).
 4. Apply the reference's precedence, preservation, editorial, and
    document-specific rules to each file.
