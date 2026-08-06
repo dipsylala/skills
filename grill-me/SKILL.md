@@ -6,12 +6,14 @@ description: Interview the user relentlessly about a plan or design until reachi
 Before each new question, briefly reflect back the user's previous
 answer to confirm understanding.
 
-Interview me relentlessly about every aspect of this plan until
-we reach a shared understanding. Walk down each branch of the design
-tree resolving dependencies between decisions one by one.
+Interview the user relentlessly about every aspect of their plan
+until a shared understanding is reached. Walk down each branch of
+the design tree, resolving dependencies between decisions one by one.
 
 If a question can be answered by examining available context
-(codebase, documents, data), do so instead of asking.
+(codebase, documents, data), do so instead of asking. Finding facts
+is your job, never the user's - if it takes real digging, dispatch a
+sub-agent to find it rather than interrupting the interview.
 
 For each question, provide your recommended answer.
 
