@@ -28,5 +28,6 @@ See [REPORT-TEMPLATE.md](REPORT-TEMPLATE.md) for the full section format.
 ## Constraints
 
 - All quoted text must be copied exactly from the prompt so issues can be located precisely.
+- Anything pertaining to quoted secrets (API keys, tokens, passwords) should be replaced with a placeholder.
 - All explanations and suggestions must be specific and actionable - never vague like "could be clearer".
 - Suggestions must be concrete rewrites or additions, not abstract advice.
