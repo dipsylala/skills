@@ -58,11 +58,6 @@ description: Brief description of capability. Use when [specific triggers].
 
 The description helps the host decide when to load a skill. Discovery can also expose its name, path, or other metadata; exact behaviour depends on the host. Write a concise description identifying the capability and activation conditions, with a boundary when nearby tasks should not trigger it.
 
-**Goal**: Give your agent just enough info to know:
-
-1. What capability this skill provides
-2. When/why to trigger it (specific keywords, contexts, file types)
-
 **Portable format requirements**:
 
 - Include a non-empty `name` and `description` in YAML frontmatter.
@@ -75,7 +70,7 @@ Leading with the capability followed by "Use when..." is a useful convention, no
 **Good example**:
 
 ```
-Extract text and tables from PDF files, fill forms, merge documents. Use when working with PDF files or when user mentions PDFs, forms, or document extraction.
+Extract text and tables from PDFs, fill PDF forms, and merge PDF documents. Use when the requested input or output is a PDF.
 ```
 
 **Bad example**:
