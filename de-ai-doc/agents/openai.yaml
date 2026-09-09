@@ -1,0 +1,3 @@
+interface:
+  display_name: "De-AI Doc"
+  short_description: "Rewrite AI-heavy docs into natural prose"

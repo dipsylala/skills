@@ -1,0 +1,3 @@
+interface:
+  display_name: "Continuation"
+  short_description: "Hand off work with compact resume notes"

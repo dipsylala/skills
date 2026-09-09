@@ -1,9 +1,15 @@
 ---
 name: code-guardian
 description: Audits LLM-generated code edits for adherence to surrounding code conventions, OWASP Top 10:2025 application security, and OWASP LLM security practices before applying them. Use when writing, editing, or generating code as a pre-apply guardrail, especially when a deterministic SAST, lint, or test hook is unavailable or as a supplement to one.
+metadata:
+  status: proof-of-concept
 ---
 
 # Code Guardian
+
+Proof of concept. This checklist is advisory: prose cannot prevent an edit from
+being applied, so it does not enforce the gate it describes. A `PreToolUse`
+hook is the appropriate mechanism. See [README.md](README.md).
 
 ## Quick start
 

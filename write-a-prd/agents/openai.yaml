@@ -1,0 +1,3 @@
+interface:
+  display_name: "Write a PRD"
+  short_description: "Turn an idea into a PRD and GitHub issue"

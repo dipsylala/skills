@@ -28,7 +28,7 @@ By default, skills are installed at project scope. Use `--global` to install the
 
 | Skill | Description |
 | ------- | ------------- |
-| [code-guardian](./code-guardian/SKILL.md) | Audits LLM-generated code edits for adherence to surrounding code conventions, OWASP Top 10:2025 application security, and OWASP LLM security practices before applying them. Use as a heuristic guardrail alongside deterministic scanners, linting, and tests. |
+| [code-guardian](./code-guardian/SKILL.md) | **Proof of concept.** Audits LLM-generated code edits for adherence to surrounding code conventions, OWASP Top 10:2025 application security, and OWASP LLM security practices before applying them. Use as a heuristic guardrail alongside deterministic scanners, linting, and tests. Prose cannot enforce a pre-apply gate; see [the rationale for moving this to a hook](./code-guardian/README.md). |
 | [continuation](./continuation/SKILL.md) | Create compact continuation notes so another agent or future session can resume work with minimal rediscovery. |
 | [de-ai-doc](./de-ai-doc/SKILL.md) | Update one or more documentation files in place to replace AI-heavy writing with concise, natural, technically precise prose while preserving facts, code, structure, and author intent. Adapts the editorial prompt taxonomy from [AUAggy/deslop](https://github.com/AUAggy/deslop/), used under the [MIT License](https://github.com/AUAggy/deslop/blob/main/LICENSE) |
 | [grill-me](./grill-me/SKILL.md) | Interview the user relentlessly about a plan or design until reaching shared understanding, resolving each branch of the decision tree. Based on [Grill-Me by Matt Pocock](https://www.aihero.dev/my-grill-me-skill-has-gone-viral) |
