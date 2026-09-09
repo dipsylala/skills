@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sphinx"
+  short_description: "Socratic review of technical documentation"
+  brand_color: "#4864b5"
