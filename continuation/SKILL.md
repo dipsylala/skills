@@ -1,6 +1,6 @@
 ---
 name: continuation
-description: Create compact continuation notes so another agent or future session can resume work with minimal rediscovery. Use when the user asks to resume later, checkpoint progress, compact the conversation, summarize current progress, prepare notes for a new session, or pass work to another agent.
+description: Create compact continuation notes so another agent or future session can resume work with minimal rediscovery. Use when the user asks to resume later, checkpoint progress, compact the conversation, summarize current progress for a handoff or future session, prepare notes for a new session, or pass work to another agent. Ordinary conversational status updates do not require this skill.
 argument-hint: "What should the next session focus on?"
 ---
 
@@ -10,7 +10,9 @@ The document must preserve only the context needed to continue the work. Prefer 
 
 Before writing, quickly establish the current state from available context and local workspace signals when relevant, such as the current directory, `git status`, changed files, and durable artifacts already mentioned in the conversation. Do not run expensive, destructive, or network-dependent commands just to create the continuation.
 
-Save the document in the current workspace by default. If the workspace is a Git repository, prefer the repository root; otherwise use the current working directory. Use another location only if the user explicitly requests it. If there is no accessible workspace, provide the document content directly in the response instead. Use a clear filename such as `continuation-YYYYMMDD-HHMM.md`; if that filename already exists, add a short suffix instead of overwriting. Report the absolute path when saved.
+Save the document in the current workspace by default. If the workspace is a Git repository, prefer the repository root; otherwise use the current working directory. Use another location only if the user explicitly requests it. Use a clear filename such as `continuation-YYYYMMDD-HHMM.md`; if that filename already exists, add a short suffix instead of overwriting. Report the absolute path only after confirming the write succeeded.
+
+If there is no accessible workspace or saving fails, provide the complete document in the response and state that it was not saved, with the reason.
 
 If the user passed arguments, treat them as the expected focus of the next session and tailor the document around that focus.
 
@@ -41,7 +43,7 @@ In "Suggested skills", list only skills that are known to exist in the current s
 
 Clearly distinguish verified facts from assumptions or guesses. Mark stale or uncertain information explicitly.
 
-Redact sensitive information including API keys, passwords, tokens, credentials, private URLs, personal data, and any other secrets. Preserve useful surrounding context and replace secrets with explicit placeholders such as `[REDACTED_TOKEN]`.
+Redact credentials, secret-bearing URL components, sensitive personal data, locations that are themselves confidential, and any other secrets. Preserve non-secret artifact references needed for the authorised handoff; use a safe identifier when the location must be withheld. Preserve useful surrounding context and replace secrets with explicit placeholders such as `[REDACTED_TOKEN]`.
 
 Do not invent repository state, file changes, commands, test results, skill availability, or paths. For continuation-critical facts that should exist but cannot be verified, write `Unknown`.
 
