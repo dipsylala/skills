@@ -22,6 +22,8 @@ description: Create new agent skills with proper structure, progressive disclosu
 ```
 skill-name/
 ├── SKILL.md           # Main instructions (required)
+├── agents/
+│   └── openai.yaml    # Codex metadata (optional)
 ├── references/        # Detailed docs or examples (if needed)
 ├── assets/            # Files used in output (if needed)
 └── scripts/           # Executable helpers (if needed)
@@ -67,19 +69,25 @@ The description helps the host decide when to load a skill. Discovery can also e
 
 Leading with the capability followed by "Use when..." is a useful convention, not a format requirement.
 
-**Good example**:
+**Example**:
 
 ```
 Extract text and tables from PDFs, fill PDF forms, and merge PDF documents. Use when the requested input or output is a PDF.
 ```
 
-**Bad example**:
+## Codex Metadata
 
-```
-Helps with documents.
+When Codex is a target or the destination repository uses this convention, create or update `agents/openai.yaml`. This file is optional host metadata; keep the workflow complete in `SKILL.md` so other hosts can use it independently. Consult the [official metadata documentation](https://learn.chatgpt.com/docs/build-skills#optional-metadata) when creating or changing this file.
+
+Start with a display name and short description that match the skill:
+
+```yaml
+interface:
+  display_name: "Skill Name"
+  short_description: "Brief summary of the skill's capability"
 ```
 
-The bad example gives your agent no way to distinguish this from other document skills.
+Add icons, a default prompt, tool dependencies, or invocation policy settings only when needed. Preserve existing metadata that remains applicable, and follow the invocation policy established in step 1.
 
 ## When to Add Scripts
 
@@ -94,6 +102,7 @@ Keep the entrypoint focused on essential instructions. Move substantial optional
 After drafting:
 
 - [ ] Validate YAML frontmatter, field types, naming, and optional host configuration against the target format. Use an available validator and report any limitation when validation cannot run.
+- [ ] If `agents/openai.yaml` is included, check that its metadata matches the skill, referenced assets exist, and its invocation settings preserve the policy established in step 1.
 - [ ] Check that local references resolve, required resources are included or declared as dependencies, and template placeholders have been removed.
 - [ ] Check that instructions preserve the user's scope, use consistent terminology, and define an observable result or completion criterion.
 - [ ] Run added scripts with representative inputs and relevant failure cases, within authorised resources and side effects.
