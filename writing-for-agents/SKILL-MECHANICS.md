@@ -2,21 +2,32 @@
 
 The skill-specific branch of [`writing-for-agents`](SKILL.md): what changes when the document is a skill (frontmatter, the invocation choice, and router skills). Everything else about writing it is the universal reference in `SKILL.md`.
 
+## Portable format
+
+Keep `name` and `description` in `SKILL.md` frontmatter. The description states the capability and when it applies, including a boundary when needed to distinguish nearby tasks. Put additional descriptive metadata under `metadata`. Consult the [Agent Skills specification](https://agentskills.io/specification) when validating fields and types.
+
 ## Invocation
 
-Two choices, trading the two loads:
+Identify the target host before configuring invocation. Preserve the user's chosen policy. When none is specified, retain the host's default discovery behaviour; do not infer an explicit-only requirement from the task having side effects. Discovery does not itself authorise those side effects.
 
-- A **model-invoked** skill keeps a `description`, so the agent can fire it autonomously, and other skills can reach it. You can still type its name: model-invocation always _includes_ user reach; a description only ever adds agent discovery, never removes the human's. The description is the skill's top-level context pointer, forced to stay loaded at all times: permanent context load in exchange for discoverability. A model-invoked skill whose content is all reference is also one home for shared reference: another skill can invoke it, so reference needed by several skills lives in one place. Mechanics: omit `disable-model-invocation`, and write a model-facing description carrying the trigger branches (the pointer-writing rules in `SKILL.md` apply in full).
-- A **user-invoked** skill strips the description from the agent's reach: only the human typing its name can invoke it, and no other skill can. Zero context load, but it spends cognitive load: you are the index that must remember it exists. Mechanics: set `disable-model-invocation: true`; the `description` becomes human-facing: a one-line summary, trigger lists stripped.
+- **Automatic discovery** lets the host consider a skill when its description matches the task. The host determines which metadata is exposed, whether other skills can invoke it, and when its body enters context.
+- **Explicit invocation** lets the user select a skill directly. Whether it also disables automatic discovery depends on the host's configuration; explicit use alone does not imply that restriction.
 
-Pick model-invocation only when the agent must reach the skill on its own, or another skill must. If it only ever fires by hand, make it user-invoked and pay no context load.
+Use host-specific settings only for the target that supports them:
 
-Shared reference that two user-invoked skills both need can live in neither: with no descriptions, neither can fire the other. Push it to a plain file outside the skill system: external reference any skill can point at.
+| Host | Explicit-only configuration | Reference |
+| --- | --- | --- |
+| Claude Code | `disable-model-invocation: true` in `SKILL.md` frontmatter | [Invocation controls](https://code.claude.com/docs/en/skills#control-who-invokes-a-skill) |
+| Codex | `policy.allow_implicit_invocation: false` in `agents/openai.yaml` | [Optional metadata](https://learn.chatgpt.com/docs/build-skills#optional-metadata) |
+
+Check the linked host documentation when changing invocation settings or relying on visibility and context-loading behaviour. These settings are not interchangeable parts of the portable format. For other hosts, consult their documentation rather than assuming either setting applies.
+
+Shared reference material can live in ordinary files linked from each skill that needs it. Keep those files available in every installed package that relies on them. Reading a reference is distinct from invoking a skill and must not be used to bypass host invocation restrictions.
 
 ## Splitting by invocation
 
-The invocation cut of splitting (the sequence cut lives in `SKILL.md`): split off a model-invoked skill when you have a distinct leading word that should trigger it on its own (a trigger word you actually use in your prompts), or another skill must reach it. You pay context load for the new always-loaded description, so that independent reach has to be worth it.
+Split off a skill when it has a distinct task that should be discoverable or directly invocable on its own. Keep supporting reference in ordinary files when it has no independent workflow. Account for the added discovery metadata and the user's need to understand which skill to choose.
 
 ## Router skills
 
-When user-invoked skills multiply past what you can remember, that piled-up cognitive load is cured by a **router skill**: one user-invoked skill that names the others and when to reach for each, so the human has one skill to remember instead of many. It can only hint, never fire them: user-invoked skills have no description, so nothing but the human can reach them.
+A **router skill** helps select among related workflows by naming them and explaining when each applies. Add one only when it makes selection easier. It may invoke another skill only when the host permits that invocation and the skill is available; otherwise, direct the user to the appropriate invocation. A router does not override an explicit-only policy.
