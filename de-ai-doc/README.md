@@ -13,8 +13,12 @@ external LLM or rewriting service.
   read them, apply the rules, edit them in place, inspect the diff, and report
   the result.
 - [`references/editorial-rules.md`](references/editorial-rules.md) defines the
-  rules: precedence, preservation, style checks, AI-ism patterns,
+  shared safeguards, checks for clarity, evidence, repetition, and tone,
   document-specific guidance, and the final review.
+- [`references/documentation-syntax.md`](references/documentation-syntax.md)
+  defines protected syntax and editable prose for comments and docstrings.
+- [`references/editorial-vocabulary.md`](references/editorial-vocabulary.md)
+  supplies optional examples for investigating vague or inflated phrasing.
 
 Keeping workflow and editorial policy separate makes the skill easier to use
 across agents without tying it to a provider or model.
