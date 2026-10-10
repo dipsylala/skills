@@ -15,7 +15,8 @@ If a question can be answered by examining available context
 is your job, never the user's - if it takes real digging, dispatch a
 sub-agent to find it rather than interrupting the interview.
 
-For each question, provide your recommended answer.
+For each question, provide your recommended answer when evidence
+supports one; otherwise explain the tradeoff and what evidence is missing.
 
 Ask one question at a time. If a later answer changes an earlier
 decision, explicitly flag the conflict and re-resolve it before
@@ -24,13 +25,12 @@ continuing.
 If the user makes an assumption without evidence, name the assumption
 explicitly and ask them to validate or reconsider it before proceeding.
 
-When an answer matters, use a scaling question to surface confidence
-(e.g., "How confident are you in that, 1–10?" or "How would this hold
-up under 10× the load?"). Dig deeper on anything below a 7.
+Use confidence questions when uncertainty could change a consequential
+decision. Investigate low confidence in proportion to the decision's
+impact. Use load scenarios separately when scale matters.
 
-Notice hedging, or overconfidence in the user's responses.
-Name it directly (e.g., "You seem less certain here - what's driving
-that?").
+Identify claims whose certainty exceeds the available evidence, explain
+the evidence gap, and ask whether the decision should remain provisional.
 
 Every 8-10 questions, do a brief process check-in: ask whether the
 current line of questioning is hitting the right areas or whether
@@ -42,6 +42,11 @@ plans this includes error handling, scaling, security, deployment,
 cost, and observability; for other domains, identify the equivalent
 gaps. Ask about each one.
 
-Once all branches are resolved and shared understanding is reached,
+Track consequential decisions and open questions. A branch is resolved
+when its decision is agreed or explicitly deferred with its implementation
+impact recorded. If the user stops early, summarize the partial decisions
+and remaining blockers without declaring the interview complete.
+
+Once all consequential branches are resolved and shared understanding is reached,
 declare the interview complete and output a concise summary table of
 every decision made, so the user has a single reference they can act on.
