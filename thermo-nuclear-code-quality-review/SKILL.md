@@ -24,7 +24,7 @@ Review with a **code judo** stance: look for the restructuring that preserves be
 
    For any other language, apply the rules by analogy to its type system, dispatch mechanisms, and concurrency model.
 3. **File sizes.** Record each changed file's line count at the base and at the head. Rule 1 uses these numbers.
-4. **Review.** Read every changed hunk with enough surrounding code to see the flow it joins, and check it against rules 0–7. Search the codebase for existing helpers and owning modules before calling code bespoke or misplaced. Done when every hunk has been checked against every rule.
+4. **Review.** Read every changed hunk with enough surrounding code to see the flow it joins, and check it against rules 0–7. Search the codebase for existing helpers and owning modules before calling code bespoke or misplaced, and locate the tests that cover each flow you flag. Done when every hunk has been checked against every rule.
 5. **Report** in the format under [Output](#output).
 
 ## Rules
@@ -82,15 +82,20 @@ Each rule lists what to look for, the preferred remedy, an example comment, and 
 
 ## Output
 
+Open the report with the reviewed range: the base and head commits from step 1, and whether uncommitted changes were included. Line numbers refer to the head.
+
 Report blockers first, then should-fix findings, each group ordered by how much complexity the proposal would remove. Report structural findings only: a few high-conviction findings beat a long list, and naming or formatting notes stay out.
 
-For each finding:
+Give each finding an ID (`F1`, `F2`, ...) and these fields:
 
-- **Location:** `path:line`
-- **Rule:** number and name
-- **Severity:** blocker or should-fix, plus any justification found for a blocker
-- **Problem:** what the change does to the structure
-- **Proposal:** the restructuring, concrete enough to act on
+- **Locations:** every affected `path:line`, primary location first.
+- **Rule:** number and name.
+- **Severity:** blocker or should-fix, plus any justification found for a blocker.
+- **Problem:** what the change does to the structure.
+- **Evidence:** what the review measured or found: base and head line counts for rule 1; the path of the existing helper or owning module for rule 6; each repeated site for duplicated logic or scattered conditionals.
+- **Proposal:** the target shape (each new or changed function, type, or module, with its name and location), what moves, what gets deleted, and the behavior that must stay identical. Add a short code sketch when the shape is not obvious from the description; full patches stay out of the report.
+- **Verification:** the tests that cover the affected behavior, or a note that none do and what a test should pin down before the restructure.
+- **Relations:** findings this one supersedes or must follow (`supersedes F3`, `after F1`); omit when there are none.
 
 Write direct, serious, demanding comments in the style of each rule's example. When a change makes the codebase messier or misses a dramatic simplification, say so plainly.
 
