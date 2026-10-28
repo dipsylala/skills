@@ -1,6 +1,6 @@
 # Credits
 
-The skill's rules, review stance, and example comments are adapted from the [Cursor Team thermo-nuclear code quality review](https://github.com/cursor/plugins/tree/main/cursor-team-kit/skills/thermo-nuclear-code-quality-review) skill.
+The skill's rules, review stance, and example comments are adapted from the [Cursor Team thermo-nuclear code quality review](https://github.com/cursor/plugins/tree/main/cursor-team-kit/skills/thermo-nuclear-code-quality-review) skill. It was published in this repository as `thermo-nuclear-code-quality-review` before becoming a review-only skill with per-language references and taking the name `code-judo-review`.
 
 The language references in [`references/`](references/) were checked bullet by bullet against the sources below. Where no primary source covers a point (for example, splitting god classes or repeated switches), the bullet reflects widely accepted practice, usually from Martin Fowler's [*Refactoring*](https://refactoring.com/catalog/) (2nd ed.) or his [bliki](https://martinfowler.com/bliki/) ([FlagArgument](https://martinfowler.com/bliki/FlagArgument.html), [InterfaceImplementationPair](https://martinfowler.com/bliki/InterfaceImplementationPair.html)).
 

@@ -1,5 +1,5 @@
 interface:
-  display_name: "Thermo-Nuclear Code Quality Review"
+  display_name: "Code Judo Review"
   short_description: "Extremely strict maintainability review"
 policy:
   allow_implicit_invocation: false

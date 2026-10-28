@@ -1,10 +1,10 @@
 ---
-name: thermo-nuclear-code-quality-review
+name: code-judo-review
 description: Extremely strict maintainability review of a branch's changes, reported as findings and a verdict without editing code.
 disable-model-invocation: true
 ---
 
-# Thermo-Nuclear Code Quality Review
+# Code Judo Review
 
 Review the changes for structure and maintainability, then report findings and a verdict. Leave the code unchanged: every restructuring goes into the report as a proposal.
 
