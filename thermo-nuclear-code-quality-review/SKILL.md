@@ -12,7 +12,7 @@ Review with a **code judo** stance: look for the restructuring that preserves be
 
 ## Workflow
 
-1. **Scope.** Use the target the user names (PR, branch, commit range, or paths). Otherwise review the current branch against its merge base with the default branch, plus uncommitted changes. Done when you can list every changed file.
+1. **Scope.** Use the target the user names (PR, branch, commit range, or paths). Otherwise review the current branch against its merge base with the default branch, plus uncommitted changes. Read the PR description and the commit messages in range; with code comments, they are where blocker justifications come from. Done when you can list every changed file.
 2. **Languages.** List the languages in the changed files and read the matching reference for each:
    - TypeScript / JavaScript: [typescript.md](references/typescript.md)
    - Python: [python.md](references/python.md)
@@ -24,23 +24,24 @@ Review with a **code judo** stance: look for the restructuring that preserves be
 
    For any other language, apply the rules by analogy to its type system, dispatch mechanisms, and concurrency model.
 3. **File sizes.** Record each changed file's line count at the base and at the head. Rule 1 uses these numbers.
-4. **Review.** Read every changed hunk with enough surrounding code to see the flow it joins, and check it against rules 0–7. Search the codebase for existing helpers and owning modules before calling code bespoke or misplaced, and locate the tests that cover each flow you flag. Done when every hunk has been checked against every rule.
+4. **Review.** Read every changed hunk with enough surrounding code to see the flow it joins, and check it against rules 0–7. Search the codebase for existing helpers and owning modules before calling code bespoke or misplaced, and locate the tests that cover each flow you flag. Then step back to the change as a whole and check it against rule 0: would a different framing make some of these hunks unnecessary? Done when every hunk has been checked against every rule and the whole change against rule 0.
 5. **Report** in the format under [Output](#output).
 
 ## Rules
 
-Each rule lists what to look for, the preferred remedy, an example comment, and its severity. A **blocker** fails the verdict unless the PR description, commit messages, or code comments give a clear structural justification. A **should-fix** is reported but does not fail the verdict.
+Each rule lists what to look for, the preferred remedy, an example comment, and its severity. A **blocker** fails the verdict unless the PR description, commit messages, or code comments give a clear structural justification. A **should-fix** is reported but does not fail the verdict. File each issue once, under the most specific rule, and link overlapping findings through Relations.
 
 ### 0. Code judo — blocker
 
 - **Look for:** a reframing that would delete whole categories of complexity; refactors that move code around without reducing the number of concepts a reader holds; a cleaner version of the same messy idea when a much simpler idea is visible.
+- **Severity:** a blocker only when the Proposal can name the target shape; a simpler idea you can see but not yet specify is a should-fix.
 - **Remedy:** delete a layer of indirection rather than polish it; reframe the state model so conditionals disappear instead of getting centralized; change the ownership boundary so the feature becomes a natural extension of an existing abstraction; turn special-case logic into a default flow with fewer exceptions.
 - **Comment:** `i think there's a code-judo move here that makes this much simpler. can we reframe this so these branches disappear?` / `this refactor moves complexity around, but doesn't really delete it. is there a way to make the model itself simpler?`
 
 ### 1. File size — blocker
 
 - **Look for:** a file at or under 1000 lines at the base that exceeds 1000 lines at the head. A file already over 1000 lines that the change grows further is a should-fix.
-- **Exempt:** generated files; each language reference lists its markers. Review the generator input instead.
+- **Exempt:** generated files. Each language reference lists its markers; in any language, a `@generated` or `DO NOT EDIT` header marks one. Review the generator input instead.
 - **Remedy:** extract helpers, subcomponents, or modules so the file stays under 1000 lines. Accept the growth only for a compelling structural reason, with the resulting file still clearly organized.
 - **Comment:** `this pushes the file past 1000 lines. can we decompose this first?`
 
@@ -53,7 +54,7 @@ Each rule lists what to look for, the preferred remedy, an example comment, and 
 ### 3. Structural regression — blocker
 
 - **Look for:** working code that leaves a previously cohesive module more coupled, more stateful, or harder to scan; copy-pasted logic; refactors that pass tests but make the code less modular or less readable.
-- **Remedy:** keep the behavior and restructure the implementation: extract a helper or pure function, separate orchestration from business logic, split a large file into focused modules.
+- **Remedy:** keep the behavior and restructure the implementation: extract a helper or pure function, or separate orchestration from business logic.
 - **Comment:** `this works, but it makes the surrounding code more spaghetti. let's keep the behavior and restructure the implementation.`
 
 ### 4. Direct, boring code — blocker
@@ -82,7 +83,7 @@ Each rule lists what to look for, the preferred remedy, an example comment, and 
 
 ## Output
 
-Open the report with the reviewed range: the base and head commits from step 1, and whether uncommitted changes were included. Line numbers refer to the head.
+Open the report with the reviewed range: the base and head commits from step 1, and whether uncommitted changes were included. Line numbers refer to the head, or to the working tree when uncommitted changes are included.
 
 Report blockers first, then should-fix findings, each group ordered by how much complexity the proposal would remove. Report structural findings only: a few high-conviction findings beat a long list, and naming or formatting notes stay out.
 
@@ -96,8 +97,9 @@ Give each finding an ID (`F1`, `F2`, ...) and these fields:
 - **Proposal:** the target shape (each new or changed function, type, or module, with its name and location), what moves, what gets deleted, and the behavior that must stay identical. Add a short code sketch when the shape is not obvious from the description; full patches stay out of the report.
 - **Verification:** the tests that cover the affected behavior, or a note that none do and what a test should pin down before the restructure.
 - **Relations:** findings this one supersedes or must follow (`supersedes F3`, `after F1`); omit when there are none.
+- **Comment:** the review comment to post, in the style of the rule's example.
 
-Write direct, serious, demanding comments in the style of each rule's example. When a change makes the codebase messier or misses a dramatic simplification, say so plainly.
+Keep Problem and Comment direct, serious, and demanding. When a change makes the codebase messier or misses a dramatic simplification, say so plainly.
 
 End with one verdict line:
 
