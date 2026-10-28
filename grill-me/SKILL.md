@@ -47,6 +47,8 @@ when its decision is agreed or explicitly deferred with its implementation
 impact recorded. If the user stops early, summarize the partial decisions
 and remaining blockers without declaring the interview complete.
 
-Once all consequential branches are resolved and shared understanding is reached,
-declare the interview complete and output a concise summary table of
-every decision made, so the user has a single reference they can act on.
+Once all consequential branches are resolved, output a concise summary
+table of every decision made, so the user has a single reference they
+can act on, and ask the user to confirm it reflects your shared
+understanding. Re-resolve anything they correct. Declare the interview
+complete only once they confirm, and act on the plan only after that.
