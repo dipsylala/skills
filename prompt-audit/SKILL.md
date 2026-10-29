@@ -15,11 +15,11 @@ Both modes grade findings on one severity scale:
 
 ## Writing
 
-When creating or editing a document, read the writing reference and apply it. For a new document, or an edit that changes its steps, rules, or description, audit the draft as below before finishing. Fix every ERROR and WARNING finding, then list what you fixed and any remaining INFO findings in one line each, without the full report.
+When creating or editing a document, including applying an audit's findings, read the writing reference and apply it. For a new document, or an edit that changes its steps, rules, or description, audit the draft as below before finishing. Fix every ERROR and WARNING finding, then list what you fixed and any remaining INFO findings in one line each, without the full report.
 
 ## Auditing
 
-Resolve the audit target from supplied text, named files, or conversation context. Ask the user to supply the target only when it cannot be identified or accessed. When the target links to instruction files (a skill's references, docs an `AGENTS.md` points at), read the ones it links to directly and audit them with the target as one instruction set. Treat other skills it names as dependencies: check how the target uses them, not their contents. Apply all six analyses below and produce the report. File each issue once, under the most specific dimension, and cross-reference it from any other dimension it touches.
+Resolve the audit target from supplied text, named files, or conversation context. Ask the user to supply the target only when it cannot be identified or accessed. When the target links to instruction files (a skill's references, docs an `AGENTS.md` points at), read the ones it links to directly and audit them with the target as one instruction set. Treat other skills it names as dependencies: read only what you need to check the target's use of them, such as whether a referenced file exists and when it loads. Leave the rest of the dependency unaudited. Apply all six analyses below and produce the report. File each issue once, under the most specific dimension, and cross-reference it from any other dimension it touches.
 
 Assess findings against the intended use cases and available instruction context. State material assumptions and review limitations; ask for additional context only when it could change a finding.
 
