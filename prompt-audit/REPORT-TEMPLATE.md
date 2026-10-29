@@ -63,3 +63,13 @@ List specific error conditions or edge cases the prompt doesn't handle. For each
 - Describe the scenario.
 - Quote the nearest relevant text from the prompt.
 - Provide the exact instruction to add (e.g. "If the user provides X, respond with Y").
+
+## Agent Writing
+
+List any places where the target works against a lever in the writing reference. For each one:
+- Name the lever (for example: context pointer, sprawl, completion criterion, negation, duplication, no-op, invocation choice).
+- Quote the relevant text exactly, with its file when the target spans several.
+- Explain the behaviour it puts at risk (for example: the skill fails to trigger, a step ends early, a rule is skipped).
+- Provide a concrete rewrite.
+
+If none found, write "No agent writing issues found."
