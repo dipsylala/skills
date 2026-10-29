@@ -25,6 +25,18 @@ voice should remain.
 - north star, move the needle, low-hanging fruit, boil the ocean
 - circle back, double-click, bandwidth, learnings, and "ask" as a noun
 
+### Recent Model Vocabulary
+
+The words models overuse shift between releases: "delve" has largely dropped
+out of newer output, so a document can pass the list above and still carry
+current tells. These appear in output from 2023 onward, newest last:
+
+- additionally (opening a sentence), boasts (meaning "has"), bolstered,
+  enduring, garner, interplay, meticulous, underscore, valuable
+- emphasizing, enhance, showcasing
+- challenge, clearer, dependable, echoed, matters, practical, prioritize,
+  quietly, steady, universally
+
 ## Phrase Families
 
 - **Inflated narrative:** a journey of, embark on a journey, embark on a
@@ -65,10 +77,11 @@ voice should remain.
 - **Generic business outcomes:** adoption rate, customer loyalty, customer
   satisfaction, efficiency, market penetration, market share, profitability,
   revenue growth, sustainability, user engagement, user experience
-- **Canned framing:** as such, broadly speaking, generally speaking, going
-  forward, in brief, in conclusion, in essence, in general, in summary, moving
-  forward, specifically speaking, that being said, ultimately, and whilst it
-  is true when they announce structure without adding meaning
+- **Canned framing:** as such, at its core, broadly speaking, generally
+  speaking, going forward, here's the thing, in brief, in conclusion, in
+  essence, in general, in summary, in terms of, moving forward, needless to
+  say, specifically speaking, that being said, the truth is, ultimately, and
+  whilst it is true when they announce structure without adding meaning
 - **Meta-discourse padding:** to clarify, to elucidate, to emphasize, to
   exemplify, to highlight, to illustrate, to reiterate, to shed light on, to
   showcase, to summarize, and to underscore when they narrate the act of
