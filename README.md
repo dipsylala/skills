@@ -19,7 +19,7 @@ npx skills add dipsylala/skills --list
 Install a specific skill:
 
 ```bash
-npx skills add dipsylala/skills --skill code-guardian
+npx skills add dipsylala/skills --skill code-judo-review
 ```
 
 By default, skills are installed at project scope. Use `--global` to install them for all projects supported by your agent.
@@ -42,9 +42,7 @@ These six skills are adapted from [Matt Pocock's skills](https://github.com/matt
 
 | Skill | Description |
 | ------- | ------------- |
-| [code-guardian](./code-guardian/SKILL.md) | **Proof of concept.** Audits LLM-generated code edits for adherence to surrounding code conventions, OWASP Top 10:2025 application security, and OWASP LLM security practices before applying them. Use as a heuristic guardrail alongside deterministic scanners, linting, and tests. Prose cannot enforce a pre-apply gate; see [the rationale for moving this to a hook](./code-guardian/README.md). |
 | [code-judo-review](./code-judo-review/SKILL.md) | Run an extremely strict, review-only maintainability review of a branch's changes for code-judo restructurings, spaghetti growth, file size, and type boundaries, reported as fix-ready findings and a verdict. Adapted from [Cursor Team - Thermo-nuclear code quality review](https://github.com/cursor/plugins/tree/main/cursor-team-kit/skills/thermo-nuclear-code-quality-review); see [credits](./code-judo-review/CREDITS.md) for language-reference sources. |
-| [continuation](./continuation/SKILL.md) | Create compact continuation notes so another agent or future session can resume work with minimal rediscovery. |
 | [de-ai-doc](./de-ai-doc/SKILL.md) | Update one or more documentation files in place to replace AI-heavy writing with concise, natural, technically precise prose while preserving facts, code, structure, and author intent. Adapts the editorial prompt taxonomy from [AUAggy/deslop](https://github.com/AUAggy/deslop/), used under the [MIT License](https://github.com/AUAggy/deslop/blob/main/LICENSE) |
 | [grill-me](./grill-me/SKILL.md) | Interview the user about a plan or design until consequential decisions are agreed or explicitly deferred. |
 | [grill-with-docs](./grill-with-docs/SKILL.md) | Interview the user while recording agreed architectural decisions and domain vocabulary in ADRs and a glossary. |
@@ -56,3 +54,5 @@ These six skills are adapted from [Matt Pocock's skills](https://github.com/matt
 | [sphinx](./sphinx/SKILL.md) | Review technical documentation through one focused question at a time. Use when the user wants Socratic critique while retaining authorship of the draft. Adapted from [Daniel Miessler's Socrates Agent](https://danielmiessler.com/blog/the-socrates-agent), refocused for technical documentation review. |
 
 `write-a-prd` and `write-a-skill` were retired, following the same change upstream: use `/grill-me` then `/to-spec` in place of `write-a-prd`, and `prompt-audit` in place of `write-a-skill`. `writing-for-agents` was folded into `prompt-audit`, which now carries its writing guidance.
+
+`code-guardian` and `continuation` were also retired. `code-guardian` was a proof of concept whose own README argued it belongs in a hook rather than a skill; its OWASP checklists remain [in history](https://github.com/dipsylala/skills/tree/2a3fa9f/code-guardian). `continuation` overlapped the built-in `/compact`.
