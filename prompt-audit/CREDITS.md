@@ -1,0 +1,4 @@
+# Credits
+
+- The audit dimensions (contradictions, ambiguity, persona consistency, cognitive load, semantic coverage) are inspired by the LLM-powered analysis dimensions in Microsoft's [vscode-chat-customizations-evaluation](https://github.com/microsoft/vscode-chat-customizations-evaluation), used under the [MIT License](https://github.com/microsoft/vscode-chat-customizations-evaluation/blob/main/LICENSE).
+- The writing reference ([`references/writing.md`](references/writing.md) and [`references/skill-mechanics.md`](references/skill-mechanics.md)) is adapted from Matt Pocock's [writing-for-agents](https://github.com/mattpocock/skills/tree/main/skills/productivity/writing-for-agents) skill, used under the [MIT License](https://github.com/mattpocock/skills/blob/main/LICENSE). It was published in this repository as the `writing-for-agents` skill before being folded into `prompt-audit`.

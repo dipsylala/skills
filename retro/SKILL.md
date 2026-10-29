@@ -8,7 +8,7 @@ The user has asked for a **retrospective**. You are suggesting improvements to t
 
 ## Steps
 
-1. Read `writing-for-agents` if available through the host's supported skill mechanism. If unavailable, continue with concise recommendations that name the observed problem, proposed change, and completion criterion.
+1. Read the writing guidance in `prompt-audit` if available through the host's supported skill mechanism. If unavailable, continue with concise recommendations that name the observed problem, proposed change, and completion criterion.
 
 2. Read the primary sources for the session the user specifies. This may mean searching through session logs on this machine. If the user doesn't specify a session, default to the current one.
 
@@ -47,4 +47,4 @@ You have access to several files in the repo:
 - `CLAUDE.md`/`AGENTS.md`: these files are pushed to the context window of any agent working in this repo. They should be used incredibly sparingly, usually only for **navigation pointers** to other files.
 - `CODING_STANDARDS.md`: consult relevant standards during implementation and review. Follow the project's configured workflow. Keep detailed guidance in linked reference documents when needed.
 - Docs: use docs as references files, pointed to by other files. Look for existing docs before writing new ones.
-- Skills: use skills for docs (since their description goes into the agent's context window), or for user-invoked commands. Follow the advice in the `writing-for-agents` skill.
+- Skills: use skills for docs (since their description goes into the agent's context window), or for user-invoked commands. Follow the writing guidance in the `prompt-audit` skill.
