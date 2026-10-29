@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 Break a plan, spec, or conversation into a set of **tickets**: tracer-bullet vertical slices, each declaring the tickets that **block** it.
 
-Resolve the issue tracker, local artifact location, and triage labels from the user's instructions and repository configuration. If no tracker is configured, use local files under `.scratch/<feature-slug>/`. Do not invent tracker labels. Use a remote tracker only when publishing there is authorized by the user's request or existing instructions.
+Resolve the issue tracker, local artifact location, and triage labels from the user's instructions and repository configuration. If no tracker is configured, use local files under `.scratch/<feature-slug>/`, reusing the source spec's folder when working from a local spec. Do not invent tracker labels. Use a remote tracker only when publishing there is authorized by the user's request or existing instructions.
 
 ## Process
 
@@ -74,7 +74,7 @@ Preserve complete local drafts before remote publication. If publication partial
 
 Identify which tickets can start immediately. This skill ends after publishing tickets and reporting their identifiers or paths.
 
-Do NOT close or modify any parent issue.
+Leave the parent issue's body, state, and labels unchanged; linking tickets to it as sub-issues is the only change.
 
 <local-ticket-template>
 
@@ -83,6 +83,8 @@ Do NOT close or modify any parent issue.
 **What to build:** the end-to-end behaviour this ticket makes work, from the user's perspective, not a layer-by-layer implementation list.
 
 **Blocked by:** the numbers/titles of the tickets that gate this one, or "None (can start immediately)".
+
+**Spec:** the path to the source spec, when the breakdown came from one; otherwise omit this line.
 
 **Status:** <ready-for-agent or draft; use draft when decisions block implementation>
 
@@ -112,4 +114,4 @@ The end-to-end behaviour this ticket makes work, from the user's perspective, no
 
 </issue-template>
 
-In either form, avoid specific file paths or code snippets: they go stale fast. Exception: if a prototype produced a snippet that encodes a decision more precisely than prose can (state machine, reducer, schema, type shape), inline it and note briefly that it came from a prototype. Trim to the decision-rich parts, not a working demo, just the important bits.
+In either form, avoid implementation file paths or code snippets: they go stale fast. Source links, such as the spec path or parent issue, are exempt. Exception: if a prototype produced a snippet that encodes a decision more precisely than prose can (state machine, reducer, schema, type shape), inline it and note briefly that it came from a prototype. Trim to the decision-rich parts, not a working demo, just the important bits.
