@@ -7,13 +7,19 @@ description: "Write or audit any document an agent consumes: a prompt, system pr
 
 Applies to any document an agent consumes: a prompt, a system prompt, a skill, an `AGENTS.md` / `CLAUDE.md`. [references/writing.md](references/writing.md) is the writing reference for both modes below. When the document is a skill, also read [references/skill-mechanics.md](references/skill-mechanics.md).
 
+Both modes grade findings on one severity scale:
+
+- **ERROR**: Prevents the intended task from completing correctly.
+- **WARNING**: Creates a plausible failure in an intended use case.
+- **INFO**: Improves clarity or maintenance without an identified functional failure.
+
 ## Writing
 
-When creating or editing a document, read the writing reference and apply it. For a new document or a substantial rewrite, audit the draft as below before finishing and fix every ERROR and WARNING finding.
+When creating or editing a document, read the writing reference and apply it. For a new document, or an edit that changes its steps, rules, or description, audit the draft as below before finishing. Fix every ERROR and WARNING finding, then list what you fixed and any remaining INFO findings in one line each, without the full report.
 
 ## Auditing
 
-Resolve the audit target from supplied text, named files, or conversation context. Ask the user to supply the target only when it cannot be identified or accessed. When the target links to other files (a skill's references, docs an `AGENTS.md` points at), read them too and audit the whole set as one instruction set. Apply all six analyses below and produce the report.
+Resolve the audit target from supplied text, named files, or conversation context. Ask the user to supply the target only when it cannot be identified or accessed. When the target links to instruction files (a skill's references, docs an `AGENTS.md` points at), read the ones it links to directly and audit them with the target as one instruction set. Treat other skills it names as dependencies: check how the target uses them, not their contents. Apply all six analyses below and produce the report. File each issue once, under the most specific dimension, and cross-reference it from any other dimension it touches.
 
 Assess findings against the intended use cases and available instruction context. State material assumptions and review limitations; ask for additional context only when it could change a finding.
 
@@ -32,7 +38,7 @@ Analyse the target across these six areas:
 
 Respond with a human-readable report using the following sections. Each section uses plain prose and bullet points - no JSON, no code blocks.
 
-Read [REPORT-TEMPLATE.md](REPORT-TEMPLATE.md) when preparing the report, and use its section format and shared severity scale.
+Read [REPORT-TEMPLATE.md](REPORT-TEMPLATE.md) when preparing the report, and use its section format.
 
 ### Constraints
 

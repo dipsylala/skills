@@ -2,11 +2,7 @@
 
 Begin with the audit scope, material assumptions, and review limitations, including whether the findings come from static analysis or behavioural evaluation.
 
-Label every finding with one severity from this shared scale:
-
-- **ERROR**: Prevents the intended task from completing correctly.
-- **WARNING**: Creates a plausible failure in an intended use case.
-- **INFO**: Improves clarity or maintenance without an identified functional failure.
+Label every finding with one severity from the scale in [SKILL.md](SKILL.md).
 
 ## Contradictions
 
