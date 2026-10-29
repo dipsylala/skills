@@ -43,7 +43,9 @@ Preserve these character-for-character unless the request requires a change:
 Preserve required headings and hierarchy, factual table contents and cell
 relationships, warnings, prerequisites, constraints, qualifications, and
 attribution while allowing careful presentation edits. Keep deliberate
-placeholders in templates, examples, and fill-in instructions.
+placeholders in templates, examples, and fill-in instructions. Report unfilled
+placeholders elsewhere, such as "[Name]", "(Add your URL here)", or dates like
+"2025-xx-xx", as gaps rather than inventing values.
 
 If a file contains only protected content, leave it unchanged. Before editing
 comments or docstrings, read [Documentation Syntax](documentation-syntax.md)
@@ -66,8 +68,9 @@ unresolved gaps separately from the edited document.
 
 Preserve degrees of certainty, conditions, negations, and distinctions between
 association, causation, participation, and leadership. Keep material limits on
-evidence, dates, and source access; if their significance is unclear, retain
-them and report the uncertainty.
+evidence, dates, and source access that the sources establish; if their
+significance is unclear, retain them and report the uncertainty. The Evidence
+checks cover disclaimers the sources do not support.
 
 ### Context and Voice
 
@@ -103,6 +106,8 @@ Missing evidence calls for verification or a reported gap, not a larger rewrite.
 - Remove throat-clearing such as "it is worth noting" or "when it comes to"
   when it delays the point. Reduce stacked hedges such as "might possibly be
   able to" without removing necessary uncertainty.
+- Use "to" for "in order to" and "because" for "due to the fact that" when the
+  meaning is unchanged.
 - Remove "simply" and "just" when they dismiss difficulty or hide prerequisites;
   keep meaningful uses such as "just before shutdown".
 - Rewrite anthropomorphism when it obscures behavior, agency, or responsibility.
@@ -172,6 +177,13 @@ checks:
   exhaustive list should not be introduced as examples with "such as". Describe
   coverage as independent, prominent, or high-quality only when relevant and
   established.
+- Inspect disclaimers about evidence or usage: corrective framings such as
+  "should be treated as X rather than Y", "does not by itself establish", or
+  "should not be confused with", and claims that information is "not publicly
+  available" or that a person "maintains a low profile". Keep a limit or
+  distinction the sources establish. Report one they do not support as an
+  unsupported claim; remove it only when it makes no claim about the subject,
+  such as a framing that tells the reader how to treat a source.
 
 ### Repetition
 
@@ -190,10 +202,12 @@ checks:
 
 - Remove generic scene-setting, theatrical question-and-answer openings, and
   forced optimistic conclusions when they delay or obscure the point. Examples
-  include "In today's fast-paced world" and "The future of X is here".
-- Remove accidental assistant residue such as "Certainly", "I hope this helps",
-  and "Would you like me to". Preserve it when quoted, instructional, or part of
-  the document's subject. Apply the evidence-limit safeguard to disclaimers.
+  include "In today's fast-paced world", "Imagine a world", "Picture this",
+  "Look no further", and "The future of X is here".
+- Remove accidental assistant residue and engagement closers such as
+  "Certainly", "I hope this helps", "Would you like me to", "Feel free to reach
+  out", and "Don't hesitate to". Preserve them when quoted, instructional, or
+  part of the document's subject. Apply the Evidence checks to disclaimers.
 - Remove decorative emoji and avoid exclamation points in neutral technical
   documentation. Keep emoji with product meaning or explicitly requested use.
 - Keep editor commentary out of the document unless requested, including
@@ -203,7 +217,10 @@ checks:
 
 Follow repository typography and markup conventions; preserve intentional
 Unicode punctuation and symbols. Use punctuation to express relationships,
-avoiding em dashes as a repeated all-purpose connector.
+avoiding em dashes as a repeated all-purpose connector. Hold your own edits to
+the same standard: introduce em dashes only where the document already uses
+them, and keep a mix of sentence lengths and punctuation rather than reducing
+every sentence to short comma-and-period clauses.
 
 - Use sentence case for headings unless local conventions differ. Maintain
   heading hierarchy without skipped levels; normally reserve H1 for the title.
@@ -216,6 +233,8 @@ avoiding em dashes as a repeated all-purpose connector.
   label-and-value tables. Convert to prose or lists only when the replacement
   improves comprehension and preserves information and relationships. Check for
   needless duplication and unrelated entries forced into matching cells.
+- Add summary sections such as "TL;DR" or "Key takeaways" only when the source
+  already has one or the request asks for it.
 
 ## Document-Specific Checks
 
@@ -275,9 +294,20 @@ Apply the relevant checks in addition to the shared safeguards and prose checks.
    account for changes to identifiers, numbers, negations, and modal verbs.
 2. Confirm protected content and required syntax are unchanged except for
    changes required by the request.
-3. Check links, fences, frontmatter, tables, and structural markers, plus
-   terminology and cross-references across all supplied files.
-4. Remove accidental formatting churn and check for repetitive rhythm or abrupt
-   over-editing.
-5. Keep editorial notes separate from document content. Report material factual
+3. Search each file with a deterministic tool for zero-width characters,
+   bidirectional controls, Unicode tag characters, and soft hyphens outside
+   protected regions, and remove them. Replace unusual space characters and
+   look-alike punctuation, such as U+02BC used as an apostrophe in English, with
+   the document's usual characters. Keep characters the text needs: right-to-left
+   scripts, letters such as U+02BC in languages that use it, deliberate
+   non-breaking spaces, and intended hyphenation points.
+   Report what you removed.
+4. Check links, fences, frontmatter, tables, and structural markers, plus
+   terminology and cross-references across all supplied files. Report links
+   that carry AI-tool tracking parameters (`utm_source=chatgpt.com`,
+   `utm_source=openai`, `utm_source=copilot.com`, `referrer=grok.com`) and stray
+   `<mark>` highlighting, leaving them unchanged unless the request covers them.
+5. Remove accidental formatting churn and check for repetitive rhythm, em dashes
+   you introduced, uniformly short sentences, or abrupt over-editing.
+6. Keep editorial notes separate from document content. Report material factual
    corrections and unresolved gaps, then stop when these checks succeed.
