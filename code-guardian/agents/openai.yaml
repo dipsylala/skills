@@ -1,3 +1,0 @@
-interface:
-  display_name: "Code Guardian"
-  short_description: "Audit AI code edits before they land"
