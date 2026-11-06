@@ -24,6 +24,8 @@ npx skills add dipsylala/skills --skill code-judo-review
 
 By default, skills are installed at project scope. Use `--global` to install them for all projects supported by your agent.
 
+Manual-only skills set `disable-model-invocation: true` in `SKILL.md` and `allow_implicit_invocation: false` in `agents/openai.yaml`. An agent that honours neither setting may invoke them automatically.
+
 ## Recommended Workflow
 
 Use these skills in the following order:

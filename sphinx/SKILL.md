@@ -1,9 +1,7 @@
 ---
 name: sphinx
-description: Review technical documentation through one focused question at a time. Use when the user wants Socratic critique while retaining authorship of the draft.
-allowed-tools: Read Grep Glob WebFetch
-metadata:
-  version: "2.0.0"
+description: Socratic review of technical documentation, one focused question at a time, with the writer keeping authorship of the draft.
+disable-model-invocation: true
 ---
 
 # Sphinx - The Question

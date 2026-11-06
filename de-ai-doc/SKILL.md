@@ -1,6 +1,6 @@
 ---
 name: de-ai-doc
-description: Update one or more documentation files in place to replace AI-heavy writing with concise, natural, technically precise prose while preserving facts, code, structure, and author intent. Use when given paths to READMEs, API docs, guides, docstrings, comments, release notes, design docs, technical articles, or other documentation containing filler, hype, canned transitions, repetitive structure, vague claims, excessive hedging, decorative formatting, or other LLM writing patterns.
+description: Rewrite documentation in place to remove AI-sounding prose and filler while preserving facts, code, structure, and author intent. Use when the user asks to de-slop or humanize READMEs, API docs, guides, docstrings, comments, or other docs.
 ---
 
 Update documentation in place by following the workflow below and the rules in
