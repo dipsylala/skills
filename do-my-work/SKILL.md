@@ -37,7 +37,7 @@ Once discovery is done, present the proposed approach, verification strategy, im
 | **Coherent task:** one connected piece of work | Concise specification/design when it adds value; otherwise a short plan | A or B |
 | **Multi-stage project:** needs independently verifiable stages, or may outlast one context | Durable specification/design in the effort's artifact folder (below); independently verifiable work units, preferably vertical slices; dependencies, acceptance criteria, and concise resumable task state | B or C |
 
-Keep every artifact for the effort (specification, design, progress file, research notes) in one folder, so it maps back to the work. If the work comes from a ticket, name the folder after its identifier, using the parent ticket if there are several, e.g. `docs/specs/PROJ-123/`. Otherwise name it after the feature, e.g. `docs/specs/csv-export/`. Repository conventions decide where the folder lives.
+When an effort warrants persistent artifacts (specification, design, progress file, research notes), keep them in one folder, so they map back to the work. If the work comes from a ticket, name the folder after its identifier, using the parent ticket if there are several, e.g. `docs/specs/PROJ-123/`. Otherwise name it after the feature, e.g. `docs/specs/csv-export/`. Repository conventions decide where the folder lives.
 
 If a spec or tickets already exist for this effort, use them as the specification and work units. For multi-stage work, offer `/to-spec` and `/to-tickets` when installed.
 
@@ -67,9 +67,9 @@ For multiple genuinely parallelisable implementation workstreams with clear owne
 
 - Director owns the overall specification, decomposition, interface contracts, dependencies, workstream assignments, integration decisions, and final acceptance verification.
 - Engineering agents own explicitly bounded implementation areas and their local tests. Assign distinct files/modules or isolated worktrees; define expected outputs and interfaces before parallel work.
-- Start with one engineer per independent workstream, up to 3-5, and give each self-contained tasks with a clear deliverable. Check progress regularly and redirect work that is going off course.
+- Start with one engineer per independent workstream, at most 5, and give each self-contained tasks with a clear deliverable. Check progress at meaningful milestones and redirect work that is going off course.
 - Define a merge/integration owner, shared-file policy, dependency order, integration tests, and concise status/handoff format. Do not allow uncoordinated concurrent edits or conflicting build operations. The director must not concurrently modify files owned by engineering agents; resolve ownership changes explicitly before making overlapping edits.
-- Use researcher and tester only where they add value; step 6 sets when independent review applies. An engineer's self-review is not an independent review.
+- Use researcher and tester only where they add value. Step 6 sets when independent review applies; for each review, the director spawns a fresh adversarial reviewer as defined in model B, never a standing team member. Neither an engineer's self-review nor the director's review of integration is independent.
 - Prefer direct director-to-engineer communication and short evidence-based updates over repeated narrative relays.
 
 **Do not choose director mode merely because a task is large.** High coupling, unstable interfaces, and shared ownership can make a single implementer more efficient.
@@ -98,7 +98,7 @@ Run relevant tests and verify acceptance criteria against observable evidence. A
 
 For multi-stage projects, also review meaningful milestones and the final integrated system.
 
-Reviewers report findings; the responsible implementer fixes code, and the director/main agent decides integration and disposition. Do not blindly accept reviewer suggestions. Reject a finding only with evidence it is wrong. A confirmed blocking finding left unfixed needs the user's acceptance; record it and its assumptions in the spec or requirements summary. Fix a non-blocking finding only when the fix is small and in scope.
+Reviewers report findings; the responsible implementer fixes code, and the director/main agent decides integration and disposition. Do not blindly accept reviewer suggestions. Reject a finding only with evidence it is wrong. A confirmed blocking finding left unfixed needs the user's acceptance; record it and its assumptions in the spec or requirements summary. Fix a non-blocking finding when it is in scope and the benefit justifies the effort and regression risk; otherwise leave it for the final report.
 
 Retest confirmed blocking defects. Respect explicitly accepted issues only while their documented assumptions hold; do not accept risks on the user's behalf. If a blocking finding survives two fix attempts, report it and ask for direction; count attempts per finding, not across the project. Never declare untested or blocked work complete.
 
