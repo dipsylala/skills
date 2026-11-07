@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 This skill records agreed decisions from the conversation, referenced sources, and codebase understanding. Do not reopen settled product or architectural decisions or start a new interview. The focused testing-boundary confirmation below is the only exception.
 
-Resolve the issue tracker, local artifact location, and triage labels from the user's instructions and repository configuration. If no tracker is configured, use local files under `.scratch/<feature-slug>/`. Do not invent tracker labels. Use a remote tracker only when publishing there is authorized by the user's request or existing instructions.
+Resolve the issue tracker, local artifact location, and triage labels from the user's instructions and repository configuration. If no tracker is configured, use local files under `docs/work/<effort>/`. `<effort>` is the source ticket's identifier when the work comes from one (the parent ticket if there are several), otherwise a feature slug. Reuse an existing folder for this effort and keep its name once created. Do not invent tracker labels. Use a remote tracker only when publishing there is authorized by the user's request or existing instructions.
 
 ## Process
 
@@ -18,7 +18,7 @@ Resolve the issue tracker, local artifact location, and triage labels from the u
 
 4. Write the spec using the template below. Distinguish agreed decisions, observed codebase facts, and unresolved questions. Do not present assumptions or proposals as decisions. A question blocks implementation when proceeding would require an implementer to invent a consequential decision. Record each blocker and the decision needed; nonblocking unknowns may remain documented without preventing completion.
 
-5. Save the complete spec to `.scratch/<feature-slug>/spec.md`, following the configured local tracker convention if it specifies another location. Reuse an existing copy for this effort rather than overwriting an unrelated spec. Save it before publishing so tracker failures or truncation cannot lose the full draft.
+5. Save the complete spec to `docs/work/<effort>/spec.md`, following the configured local tracker convention if it specifies another location. Reuse an existing copy for this effort rather than overwriting an unrelated spec. Save it before publishing so tracker failures or truncation cannot lose the full draft.
 
 6. Publish the spec as a planning parent using the configured tracker's convention. For a local tracker, the saved spec is the published artifact. If blockers remain, clearly mark the spec as a draft, use the configured draft or blocked state when available, and omit `ready-for-agent`. Otherwise, do not apply `ready-for-agent` unless the user explicitly intends the spec itself to be implemented as one work item. Resolve canonical label names through the configured triage vocabulary.
 
