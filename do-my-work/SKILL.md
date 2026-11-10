@@ -78,6 +78,8 @@ For multiple genuinely parallelisable implementation workstreams with clear owne
 
 **Do not choose director mode merely because a task is large.** High coupling, unstable interfaces, and shared ownership can make a single implementer more efficient.
 
+**Foundation first, then fan out.** When later workstreams all depend on a shared foundation (data schema, authentication, layout, core interfaces), build the foundation as a single implementer, then propose engineers for the workstreams that have become independent. In the initial team proposal, name the stage after which you expect to switch.
+
 ### D. Dedicated subordinate director: exceptional
 
 A separate director may coordinate a substantial, independently bounded programme or repository within a larger multi-programme effort. It must own a distinct outcome, not duplicate the invoking agent's coordination role.
@@ -90,7 +92,7 @@ Give every spawned agent its task and inputs, plus the absolute path to its role
 
 ### Reassess sparingly
 
-Reconsider topology only when discoveries or progress materially change independence, dependencies, or coordination costs, such as a shared interface stabilising. Do not reorganise for minor changes. If the runtime lacks parallel agents, run subagents one at a time. Without subagents, work as the single owner, skip independent review, and offer one in a fresh session. Never pretend parallel work or independent review occurred.
+Beyond the stage-end check in step 6, reconsider topology only when discoveries or progress materially change independence, dependencies, or coordination costs, such as a shared interface stabilising. Do not reorganise for minor changes. If the runtime lacks parallel agents, run subagents one at a time. Without subagents, work as the single owner, skip independent review, and offer one in a fresh session. Never pretend parallel work or independent review occurred.
 
 ## 5. Offer issue synchronisation
 
@@ -106,7 +108,11 @@ Run relevant tests and verify acceptance criteria against observable evidence. R
 
 Choose review lenses by what the change touches: correctness always; security when it touches authentication, authorisation, secrets, payments, or untrusted input reaching queries, shells, file paths, or HTML; user experience and visual consistency when users will see it. Run each selected lens as its own fresh adversarial reviewer, in parallel where supported, and wait for all of them before acting on findings. Where the runtime lets you choose models, match reviewer capability to risk.
 
-For multi-stage projects, also review meaningful milestones and the final integrated system.
+For multi-stage projects, finish every stage with these checks before starting the next:
+
+1. Run an independent review of the stage, with lenses chosen as above; after the final stage, review the integrated system.
+2. Update the progress file: the stage completed, acceptance criteria verified with evidence, review outcomes, decisions, and the next stage.
+3. Reassess the execution model against step 4 and state the result in one line: why the current model still fits, or a proposed team for the user to approve.
 
 Reviewers grade each finding blocking (it breaks an acceptance criterion, or adds a regression or security problem) or non-blocking; the responsible implementer fixes code, and the director/main agent decides integration and disposition. Reject a finding only with evidence it is wrong. A confirmed blocking finding left unfixed needs the user's acceptance; record it and its assumptions in the spec or requirements summary. Fix a non-blocking finding when it is in scope and the benefit justifies the effort and regression risk; otherwise leave it for the final report.
 
