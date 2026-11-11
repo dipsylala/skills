@@ -43,6 +43,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.parse
 import urllib.request
 import webbrowser
 from collections import deque
@@ -61,16 +62,35 @@ RUNNING_WINDOW = 120  # seconds since the last entry for an unfinished agent to 
 STALL_AFTER = 600     # seconds of silence after which an unfinished agent counts as stalled
 RESULT_LINE = re.compile(r"^\s*(STATUS|VERDICT):", re.M)
 HOOK_KINDS = ["ran", "context", "message", "cancelled", "error", "blocked"]  # least to most severe
+FILE_TOOLS = {"Write": "file_path", "Edit": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
+SHELL_TOOLS = {"Bash", "PowerShell"}
+COMMIT_OUT = re.compile(r"^\[([^\]\s]+)(?: \(root-commit\))? ([0-9a-f]{7,40})\] (.+)$", re.M)
+# The message from -m "...", a shell heredoc (-F - <<'EOF'), or a PowerShell here-string (-F - @'); -F <file> can't be read.
+COMMIT_MSG = re.compile(r"""git\s+commit\b[^\n]*?\s-m\s+(["'])([\s\S]+?)\1|git\s+commit\b[^\n]*<<-?\s*['"]?(\w+)['"]?\n(.*)"""
+                        r"""|git\s+commit\b[^\n]*@['"]\r?\n(.*)""")
+GIT_COMMIT = re.compile(r"(?:^|[;&|(]|\n)\s*git\s+(?:-C\s+\S+\s+)?commit\b")  # run, not merely mentioned
+GH_PR_CREATE = re.compile(r"(?:^|[;&|(]|\n)\s*gh\s+pr\s+create\b")
+PR_URL = re.compile(r"https://github\.com/[\w.-]+/[\w.-]+/pull/\d+")
 BRIEF_KEYS = ("command", "file_path", "path", "pattern", "url", "description", "query", "title", "message", "prompt")
 
 
 def read_jsonl(path):
-    with open(path, encoding="utf-8") as f:
-        for line in f:
+    """Each entry with its byte offset, so a later lookup can jump straight back to it."""
+    with open(path, "rb") as f:
+        while True:
+            offset, line = f.tell(), f.readline()
+            if not line:
+                return
             try:
-                yield json.loads(line)
-            except json.JSONDecodeError:
+                yield offset, json.loads(line)
+            except (json.JSONDecodeError, UnicodeDecodeError):
                 continue
+
+
+def entry_at(path, offset):
+    with open(path, "rb") as f:
+        f.seek(offset)
+        return json.loads(f.readline())
 
 
 def epoch(timestamp):
@@ -187,7 +207,10 @@ def summarise_uncached(path):
     ended = False
     activity = deque(maxlen=30)
     chapters, spawns, launched, hooks = [], {}, {}, {}
-    for entry in read_jsonl(path):
+    files, commits, prs, shell = {}, [], [], {}  # outputs; shell: git commands awaiting their result
+    cwd = None
+    for offset, entry in read_jsonl(path):
+        cwd = cwd or entry.get("cwd")
         stamp = entry.get("timestamp")
         t = epoch(stamp) if stamp else None
         if t is not None:
@@ -205,6 +228,20 @@ def summarise_uncached(path):
             launched.setdefault(launch["agentId"], {"tool_use_id": tool_use_id,
                                                     "description": launch.get("description"),
                                                     "model": launch.get("resolvedModel")})
+        if entry.get("type") == "user" and isinstance(content, list):
+            for block in content:
+                command = shell.pop(block.get("tool_use_id"), None) if block.get("type") == "tool_result" else None
+                if command is None or block.get("is_error"):
+                    continue
+                output = text_of(block.get("content"))
+                if GH_PR_CREATE.search(command):
+                    prs += [{"t": t, "url": url} for url in dict.fromkeys(PR_URL.findall(output))]
+                if GIT_COMMIT.search(command):
+                    message = COMMIT_MSG.search(command)
+                    out = COMMIT_OUT.search(output)
+                    text = (message.group(2) or message.group(4) or message.group(5) or "") if message else out.group(3) if out else ""
+                    commits.append({"t": t, "message": text.replace("\\n", "\n").strip().split("\n")[0],
+                                    "branch": out.group(1) if out else "", "hash": out.group(2) if out else ""})
         if entry.get("type") != "assistant":
             continue
         model = message.get("model") or ""
@@ -223,6 +260,16 @@ def summarise_uncached(path):
                 tools[name] = tools.get(name, 0) + 1
                 if t is not None:
                     activity.append([t, name, brief(tool_input)])
+                if name in FILE_TOOLS and t is not None and tool_input.get(FILE_TOOLS[name]):
+                    f = files.setdefault(tool_input[FILE_TOOLS[name]], {"t0": t, "t1": t, "writes": 0, "edits": 0, "at": {}})
+                    if block.get("id") in f["at"]:
+                        continue  # the same call written twice while streaming
+                    f["at"][block.get("id")] = offset  # where the full change can be read back
+                    f["t1"] = t
+                    f["writes" if name == "Write" else "edits"] += 1
+                elif name in SHELL_TOOLS and (GIT_COMMIT.search(tool_input.get("command") or "")
+                                              or GH_PR_CREATE.search(tool_input.get("command") or "")):
+                    shell[block.get("id")] = tool_input["command"]
                 if name == HANDBACK_TOOL:
                     final, ended = str(tool_input.get("message", "")).strip(), True
                 elif name.endswith("mark_chapter") and t is not None:
@@ -246,6 +293,7 @@ def summarise_uncached(path):
         "tokens_out": sum(u.get("output_tokens", 0) for u in usage.values()),
         "prompt": prompt[:3000], "final": final[:4000], "result": result, "ended": ended,
         "activity": list(activity), "chapters": chapters, "spawns": spawns, "launched": launched,
+        "files": files, "commits": commits, "prs": prs, "cwd": cwd,
         "hooks": [{**h, "texts": [x[:3000] for x in h["texts"]]} for h in sorted(hooks.values(), key=lambda h: h["t"])][-300:],
     }
 
@@ -299,6 +347,88 @@ def batch_label(descriptions):
     return label or f"{descriptions[0]} + {len(descriptions) - 1} more"
 
 
+CLIP_CHARS, CLIP_BYTES = 200_000, 500_000  # limits on what the file viewer is sent
+
+
+def relative_to(path, roots):
+    """path relative to the first root it sits under (so worktree copies of a file match), else None."""
+    p = path.replace("\\", "/")
+    for root in roots:
+        r = root.replace("\\", "/").rstrip("/") + "/" if root else None
+        if r and p.lower().startswith(r.lower()):
+            return p[len(r):]
+    return None
+
+
+def outputs(info, roots):
+    """Files changed, commits and PRs, as sent to the page (without the transcript offsets)."""
+    files = [{"path": relative_to(p, roots) or p.replace("\\", "/"), "abs": p, "inside": relative_to(p, roots) is not None,
+              **{k: v for k, v in f.items() if k != "at"}}
+             for p, f in sorted(info["files"].items(), key=lambda kv: kv[1]["t0"])]
+    return {"files": files, "commits": info["commits"], "prs": info["prs"]}
+
+
+def clip(text):
+    text = text if isinstance(text, str) else ""
+    return text if len(text) <= CLIP_CHARS else text[:CLIP_CHARS] + f"\n... (cut at {CLIP_CHARS:,} characters)"
+
+
+def file_detail(session, rel):
+    """What each agent did to one file, read back from the transcripts, and the file as it is now on disk.
+
+    Only files that this session's transcripts changed can be asked for, so the server never reads anything else.
+    """
+    main = summarise(session)
+    sources = [("main", session, main, [main["cwd"]])]
+    for transcript in sorted((session.parent / session.stem / "subagents").glob("agent-*.jsonl")):
+        meta_path = transcript.with_suffix(".meta.json")
+        meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
+        info = summarise(transcript)
+        sources.append((transcript.stem.removeprefix("agent-"), transcript, info,
+                        [meta.get("worktreePath"), info["cwd"], main["cwd"]]))
+    changes, paths, inside = [], set(), False
+    for agent_id, transcript, info, roots in sources:
+        for path, f in info["files"].items():
+            relative = relative_to(path, roots)
+            if (relative or path.replace("\\", "/")).lower() != rel.lower():
+                continue
+            paths.add(path)
+            inside = inside or relative is not None
+            for block_id, offset in f["at"].items():
+                entry = entry_at(transcript, offset)
+                block = next((b for b in entry["message"]["content"] if b.get("id") == block_id), None)
+                if not block:
+                    continue
+                tool_input, name = block.get("input") or {}, block.get("name")
+                change = {"t": epoch(entry["timestamp"]), "agent": agent_id, "tool": name}
+                if name == "Edit":
+                    change["edits"] = [{"old": clip(tool_input.get("old_string")), "new": clip(tool_input.get("new_string"))}]
+                elif name == "MultiEdit":
+                    change["edits"] = [{"old": clip(e.get("old_string")), "new": clip(e.get("new_string"))}
+                                       for e in tool_input.get("edits") or []]
+                else:  # Write, or NotebookEdit's new cell source
+                    change["content"] = clip(tool_input.get("content") if name == "Write" else tool_input.get("new_source"))
+                changes.append(change)
+    if not paths:
+        return None
+    # The current copy: the project's own file first (worktrees are often gone once merged), then worktree copies.
+    root = (main["cwd"] or "").replace("\\", "/").lower().rstrip("/") + "/"
+    own = lambda p: p.replace("\\", "/").lower().startswith(root) and "/.claude/worktrees/" not in p.replace("\\", "/").lower()
+    candidates = sorted(paths, key=lambda p: not own(p))
+    if inside and main["cwd"] and ".." not in rel.split("/"):
+        candidates.insert(0, str(Path(main["cwd"]) / rel))
+    current = {"missing": True}
+    for path in candidates:
+        if os.path.isfile(path):
+            with open(path, "rb") as f:
+                data = f.read(CLIP_BYTES + 1)
+            binary = b"\0" in data[:8192]
+            current = {"path": path, "binary": binary, "truncated": len(data) > CLIP_BYTES,
+                       "text": "" if binary else data[:CLIP_BYTES].decode("utf-8", "replace")}
+            break
+    return {"changes": sorted(changes, key=lambda c: c["t"]), "current": current}
+
+
 def collect(session):
     now = time.time()
     main = summarise(session)
@@ -325,6 +455,8 @@ def collect(session):
             "background": meta.get("requestShape") == "background" or bool(spawn_input.get("run_in_background")),
             "depth": meta.get("spawnDepth", 1),
             "transcript": str(transcript),
+            "branch": meta.get("worktreeBranch") or "",
+            **outputs(info, [meta.get("worktreePath"), info["cwd"], main["cwd"]]),
             **{k: info[k] for k in ("start", "end", "segments", "active", "tools", "tokens_in",
                                     "tokens_out", "prompt", "final", "result", "activity", "hooks")},
         })
@@ -342,7 +474,8 @@ def collect(session):
         "now": now,
         "session": session.stem,
         "project": session.parent.name,
-        "main": {"running": now - main["end"] <= RUNNING_WINDOW, "transcript": str(session),
+        "main": {"running": now - main["end"] <= RUNNING_WINDOW, "transcript": str(session), "branch": "",
+                 **outputs(main, [main["cwd"]]),
                  **{k: main[k] for k in ("start", "end", "segments", "active", "models", "tokens_in", "tokens_out",
                                          "tools", "prompt", "final", "activity", "hooks")}},
         "chapters": main["chapters"],
@@ -426,6 +559,60 @@ input[type=search] { flex:1 1 180px; max-width:280px; }
 .tip { position:fixed; z-index:10; max-width:420px; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--card);
   box-shadow:0 4px 14px rgba(0,0,0,.18); font-size:12px; white-space:pre-line; pointer-events:none; }
 .tip b { font-weight:600; }
+.tabs { display:flex; gap:4px; margin:0 0 10px; border-bottom:1px solid var(--line); }
+.tab { font:inherit; font-size:13px; background:none; border:0; border-bottom:2px solid transparent; margin-bottom:-1px;
+  padding:6px 10px; color:var(--muted); cursor:pointer; }
+.tab[aria-selected="true"] { color:var(--fg); border-bottom-color:var(--run); font-weight:600; }
+main.view-outputs #chips, main.view-outputs #range, main.view-outputs #list { display:none; }
+main:not(.view-outputs) #outputs { display:none; }
+.outputs section { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 14px; margin:0 0 12px; }
+.outputs h2 { font-size:13px; margin:0 0 8px; }
+.otable { width:100%; border-collapse:collapse; font-size:12px; }
+.otable td { padding:3px 10px 3px 0; border-bottom:1px dotted var(--line); vertical-align:top; }
+.otable .p { font-family:ui-monospace, Consolas, monospace; word-break:break-all; }
+.otable .t { color:var(--muted); white-space:nowrap; font-variant-numeric:tabular-nums; width:1%; }
+.otable small { color:var(--muted); }
+.clash { color:var(--stall); font-weight:600; cursor:help; }
+.outputs a, .detail a { color:var(--run); }
+.shared { color:var(--muted); }
+.ofiles { display:grid; grid-template-columns:minmax(220px, 30%) minmax(0, 1fr); background:var(--card); border:1px solid var(--line);
+  border-radius:8px; margin:0 0 12px; height:min(72vh, 820px); overflow:hidden; }
+.otree { overflow:auto; border-right:1px solid var(--line); padding:6px 0; font-size:13px; }
+.tnode { padding:2px 8px 2px 0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; }
+.tnode:hover { background:var(--hover); }
+.tnode.sel { background:var(--hover); box-shadow:inset 3px 0 0 var(--run); font-weight:600; }
+.tnode .chev { display:inline-block; width:14px; color:var(--muted); }
+.tnode small { color:var(--muted); font-weight:400; }
+.oviewer { overflow:auto; padding:0 14px 14px; }
+.vhead { position:sticky; top:0; z-index:1; background:var(--card); padding:10px 0 8px; border-bottom:1px solid var(--line); margin-bottom:10px; }
+.vhead .p { font-family:ui-monospace, Consolas, monospace; font-size:13px; font-weight:600; word-break:break-all; margin-bottom:4px; }
+.vmeta { font-size:12px; margin-bottom:6px; } .vmeta small { color:var(--muted); }
+.change { margin:0 0 14px; }
+.chead { font-size:12px; color:var(--muted); margin-bottom:4px; }
+.oviewer pre { max-height:none; }
+pre.diff .del, pre.diff .add { display:block; }
+pre.diff .del { color:var(--chapter); background:color-mix(in srgb, var(--chapter) 10%, transparent); }
+pre.diff .add { color:var(--done); background:color-mix(in srgb, var(--done) 10%, transparent); }
+.hl-c { color:var(--muted); font-style:italic; } .hl-s { color:var(--done); } .hl-n { color:var(--stall); }
+.hl-k { color:var(--quiet); font-weight:600; } .hl-t { color:var(--run); }
+.md { font-size:14px; line-height:1.6; max-width:860px; }
+.md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { line-height:1.3; margin:1.2em 0 .5em; }
+.md h1 { font-size:1.6em; border-bottom:1px solid var(--line); padding-bottom:.25em; }
+.md h2 { font-size:1.3em; border-bottom:1px solid var(--line); padding-bottom:.2em; } .md h3 { font-size:1.1em; }
+.md h4, .md h5, .md h6 { font-size:1em; } .md > :first-child { margin-top:0; }
+.md p, .md ul, .md ol, .md blockquote, .md table, .md pre { margin:0 0 .9em; }
+.md ul, .md ol { padding-left:1.6em; } .md li { margin:.15em 0; } .md li > ul, .md li > ol { margin:.15em 0; }
+.md code { font-family:ui-monospace, Consolas, monospace; font-size:.9em; background:var(--hover); border-radius:4px; padding:.1em .35em; }
+.md pre code { background:none; padding:0; }
+.md blockquote { border-left:3px solid var(--line); margin-left:0; padding:0 0 0 12px; color:var(--muted); }
+.md hr { border:0; border-top:1px solid var(--line); margin:1.2em 0; }
+.md a { color:var(--run); } .md .mdlink { text-decoration:underline dotted; cursor:help; } .md .mdimg { color:var(--muted); font-style:italic; }
+.mdtable { border-collapse:collapse; font-size:13px; display:block; overflow-x:auto; }
+.mdtable th, .mdtable td { border:1px solid var(--line); padding:4px 10px; text-align:left; vertical-align:top; }
+.mdtable th { background:var(--hover); }
+pre.code .ln { display:inline-block; min-width:3em; margin-right:12px; text-align:right; color:var(--muted); user-select:none; }
+@media (max-width:760px) { .ofiles { grid-template-columns:1fr; height:auto; }
+  .otree { max-height:40vh; border-right:0; border-bottom:1px solid var(--line); } .oviewer { max-height:70vh; } }
 .tip .entry + .entry { border-top:1px solid var(--muted); margin-top:7px; padding-top:7px; }
 .tk-blocked, .tk-error { color:var(--chapter); } .tk-message, .tk-context { color:var(--stall); } .tk-cancelled, .tk-ran { color:var(--muted); }
 .hooks { list-style:none; margin:0; padding:0; font-size:12px; max-height:280px; overflow:auto; }
@@ -456,6 +643,10 @@ details summary { cursor:pointer; color:var(--muted); font-size:12px; margin-bot
 <p class="sub" id="sub"></p>
 <div class="stats" id="stats"></div>
 <div class="attention" id="attention" hidden></div>
+<div class="tabs" role="tablist">
+  <button class="tab" role="tab" data-view="timeline" aria-selected="true">Timeline</button>
+  <button class="tab" role="tab" data-view="outputs" aria-selected="false">Outputs</button>
+</div>
 <div class="controls">
   <span id="chips"></span>
   <input type="search" id="q" placeholder="Filter agents" aria-label="Filter agents">
@@ -468,6 +659,11 @@ details summary { cursor:pointer; color:var(--muted); font-size:12px; margin-bot
   <span class="live" id="live"></span>
 </div>
 <div class="list" id="list"></div>
+<div class="outputs" id="outputs">
+  <p class="sub" id="osum"></p>
+  <div class="ofiles"><div class="otree" id="otree" role="tree" aria-label="Changed files"></div><div class="oviewer" id="oviewer"></div></div>
+  <div id="oextra"></div>
+</div>
 </main>
 <div class="tip" id="tip" role="tooltip" hidden></div>
 <script>
@@ -477,7 +673,8 @@ const STATUS = {running: ["Running", "●"], quiet: ["Quiet", "◐"], stalled: [
 // Hook markers: "notable" hides routine runs that printed nothing; the Hooks chip cycles through the modes.
 const NOTABLE = new Set(["blocked", "error", "message", "context"]);
 const HOOK_MODES = {notable: ["Notable hooks", "all"], all: ["All hooks", "off"], off: ["Hooks off", "notable"]};
-const state = {open: new Set(), details: new Set(), hide: new Set(), groups: new Map(), hooks: "notable", q: "", range: "fit"};
+const state = {open: new Set(), details: new Set(), hide: new Set(), groups: new Map(), folders: new Map(),
+  view: "timeline", file: "", fileMode: "changes", hooks: "notable", q: "", range: "fit"};
 const SEVERITY = ["ran", "context", "message", "cancelled", "error", "blocked"];  // least to most, as in HOOK_KINDS
 const KEEP = 8, EARLIER = "earlier";  // groups or rows kept outside the Earlier fold; its state key
 let foldedIds = new Set();
@@ -486,7 +683,7 @@ const tally = agents => Object.keys(STATUS).map(k => [k, agents.filter(a => a.st
   .map(([k, n]) => `${n} ${STATUS[k][0].toLowerCase()}`).join(" · ");
 const statusOf = a => STATUS[a.status] || ["Idle", "·"];
 const $ = id => document.getElementById(id);
-const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 const dur = s => { s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), r = s % 60;
   return h ? `${h}h ${m}m` : m ? `${m}m ${String(r).padStart(2, "0")}s` : `${r}s`; };
 const kt = n => n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : String(n);
@@ -512,6 +709,262 @@ function barTip(a) {
     + `<div class="entry">Started ${when(a.start)} · ${finish}\n${dur(a.active)} active</div>`
     + `<div class="entry">${kt(a.tokens_out)} output tokens · ${kt(a.tokens_in)} input (including cached context)\n`
     + `${esc(a.model)}${a.type ? " · " + esc(a.type) : ""}\n${calls} tool call${calls === 1 ? "" : "s"}${top ? ": " + esc(top) : ""}</div>`;
+}
+
+// The Outputs tab: a folder tree of changed files with a viewer beside it, then files that several agents
+// changed, and commits and pull requests.
+const OUTSIDE = "(outside the project)";  // scratch files, temp PR bodies and the like
+const fileCache = new Map();  // viewer data by file and its latest change, so polling doesn't refetch it
+let viewerKey = "";
+const who = a => `<button class="goto" data-goto="${esc(a.id)}">${esc(a.description)}</button>`;
+const did = f => [f.writes && `wrote${f.writes > 1 ? ` ×${f.writes}` : ""}`, f.edits && `${f.edits} edit${f.edits > 1 ? "s" : ""}`].filter(Boolean).join(", ");
+const flag = x => x.clash ? `<span class="clash" title="Changed by agents that were running at the same time">⚠</span> `
+  : x.shared ? `<span class="shared" title="Changed by more than one agent">◆</span> ` : "";
+const nameOf = id => id === "main" ? "Main session" : DATA.agents.find(a => a.id === id)?.description || id;
+
+function outputsModel() {
+  const m = DATA.main;
+  const people = [{...m, id: "main", description: "Main session", status: m.running ? "running" : "idle"}, ...DATA.agents];
+  const files = new Map();
+  for (const a of people) for (const f of a.files) {
+    const key = f.path.toLowerCase();
+    if (!files.has(key)) files.set(key, {key, path: f.path, inside: f.inside, by: []});
+    files.get(key).by.push({a, f});
+  }
+  // The main session integrating agents' work is expected; two subagents on one file is worth a look,
+  // more so when they ran at the same time (a likely merge conflict or overwrite).
+  const together = (a, b) => a.start < b.end && b.start < a.end;
+  for (const x of files.values()) {
+    const subs = x.by.filter(b => b.a.id !== "main");
+    x.shared = x.inside && subs.length > 1;
+    x.clash = x.shared && subs.some((b, i) => subs.slice(i + 1).some(c => together(b.a, c.a)));
+    x.last = Math.max(...x.by.map(b => b.f.t1));
+  }
+  return {people, files};
+}
+
+function renderOutputs() {
+  const {people, files} = outputsModel();
+  const q = state.q.toLowerCase(), match = (...parts) => !q || parts.join(" ").toLowerCase().includes(q);
+  const all = [...files.values()].filter(x => match(x.path, ...x.by.map(b => b.a.description)));
+
+  // Folder tree; a folder holding only one folder is joined with it ("src/app/admin"), as in most editors.
+  const root = {path: "", dirs: new Map(), files: []};
+  for (const x of all) {
+    const parts = x.inside ? x.path.split("/") : [OUTSIDE, x.path];
+    let node = root;
+    for (const part of parts.slice(0, -1)) {
+      if (!node.dirs.has(part)) node.dirs.set(part, {name: part, path: node.path ? `${node.path}/${part}` : part, dirs: new Map(), files: []});
+      node = node.dirs.get(part);
+    }
+    node.files.push({x, name: parts.at(-1)});
+  }
+  const count = n => n.files.length + [...n.dirs.values()].reduce((s, d) => s + count(d), 0);
+  const many = all.length > 40 && !q;  // big trees start with only the top level open
+  const tree = (node, depth) => {
+    let html = "";
+    const dirs = [...node.dirs.values()].sort((a, b) => (a.name === OUTSIDE) - (b.name === OUTSIDE) || a.name.localeCompare(b.name));
+    for (let d of dirs) {
+      let label = d.name;
+      while (d.name !== OUTSIDE && !d.files.length && d.dirs.size === 1) { d = [...d.dirs.values()][0]; label += `/${d.name}`; }
+      const open = state.folders.has(d.path) ? state.folders.get(d.path) : d.name !== OUTSIDE && (!many || depth === 0);
+      html += `<div class="tnode dir" data-dir="${esc(d.path)}" data-open="${open}" style="padding-left:${6 + depth * 14}px" title="${esc(label)}">`
+        + `<span class="chev">${open ? "▾" : "▸"}</span>${esc(label)} <small>${count(d)}</small></div>`;
+      if (open) html += tree(d, depth + 1);
+    }
+    for (const {x, name} of node.files.sort((a, b) => a.name.localeCompare(b.name)))
+      html += `<div class="tnode file${state.file === x.key ? " sel" : ""}" data-file="${esc(x.key)}" style="padding-left:${20 + depth * 14}px" title="${esc(x.path)}">`
+        + `${flag(x)}${esc(name)}${x.by.length > 1 ? ` <small>${x.by.length} agents</small>` : ""}</div>`;
+    return html;
+  };
+
+  const events = [
+    ...people.flatMap(a => a.prs.map(p => ({...p, a, pr: true}))).filter(p => match(p.url, p.a.description)),
+    ...people.flatMap(a => a.commits.map(c => ({...c, a}))).filter(c => match(c.message, c.a.description)),
+  ].sort((x, y) => x.t - y.t);
+  const commitCount = events.filter(e => !e.pr).length;
+  const changers = new Set(all.flatMap(x => x.by.map(b => b.a.id))).size;
+  $("osum").textContent = `${all.length} files changed by ${changers} agent${changers === 1 ? "" : "s"} · ${commitCount} commits · `
+    + `${events.length - commitCount} pull requests. Files come from Write and Edit calls; changes made through shell commands are not counted.`;
+  const scroll = $("otree").scrollTop;
+  $("otree").innerHTML = tree(root, 0) || `<p class="empty">No file changes recorded.</p>`;
+  $("otree").scrollTop = scroll;
+  renderViewer(files.get(state.file));
+
+  let extra = "";
+  if (events.length) extra += `<section><h2>Commits and pull requests</h2><table class="otable">${events.map(e => e.pr
+    ? `<tr><td class="t">${when(e.t)}</td><td>${who(e.a)}</td><td colspan="2">Pull request <a href="${esc(e.url)}" target="_blank" rel="noopener noreferrer">${esc(e.url.replace("https://github.com/", ""))}</a></td></tr>`
+    : `<tr><td class="t">${when(e.t)}</td><td>${who(e.a)}</td><td>${esc(e.message) || "<small>(message not in the command)</small>"}</td>
+      <td class="p">${esc([e.branch || e.a.branch, e.hash].filter(Boolean).join(" "))}</td></tr>`).join("")}</table></section>`;
+  $("oextra").innerHTML = extra;
+}
+
+// The viewer re-renders only when the selected file, its latest change, or the mode changes, so polling
+// doesn't reset its scroll position or refetch.
+function renderViewer(x) {
+  // Preview exists only for markdown; on other files that choice shows the current file instead.
+  const mode = x && state.fileMode === "preview" && !isMarkdown(x.path) ? "current" : state.fileMode;
+  const key = x ? `${x.key}|${x.last}|${mode}` : "";
+  if (key === viewerKey) return;
+  viewerKey = key;
+  const v = $("oviewer");
+  if (!x) { v.innerHTML = `<p class="empty">Select a file to see what each agent changed.</p>`; return; }
+  const modes = [["changes", "Changes"], ["current", "Current file"], ...(isMarkdown(x.path) ? [["preview", "Preview"]] : [])]
+    .map(([m, label]) => `<button class="chip" data-mode="${m}" aria-pressed="${mode === m}">${label}</button>`).join(" ");
+  v.innerHTML = `<div class="vhead"><div class="p">${flag(x)}${esc(x.path)}</div>
+    <div class="vmeta">${x.by.map(b => `${who(b.a)} <small>${did(b.f)} · ${when(b.f.t1)}</small>`).join(" · ")}</div><div>${modes}</div></div>
+    <div id="vbody"><p class="empty">${LIVE ? "Loading…" : "File contents need the live view: run the script with --serve."}</p></div>`;
+  v.scrollTop = 0;
+  if (!LIVE) return;
+  const show = d => { if (viewerKey === key) $("vbody").innerHTML = mode === "changes" ? changesHtml(d) : mode === "preview" ? previewHtml(d) : currentHtml(d, x.path); };
+  const cacheKey = `${x.key}|${x.last}`;
+  if (fileCache.has(cacheKey)) return show(fileCache.get(cacheKey));
+  fetch(`file.json${location.search}${location.search ? "&" : "?"}path=${encodeURIComponent(x.path)}`,
+        {cache: "no-store", headers: {"X-Timeline-Token": TOKEN}})
+    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+    .then(d => { fileCache.set(cacheKey, d); show(d); })
+    .catch(() => { if (viewerKey === key) $("vbody").innerHTML = `<p class="empty">Couldn't load this file.</p>`; });
+}
+
+const diffLines = (text, cls, sign) => text ? esc(text).split("\n").map(l => `<span class="${cls}">${sign} ${l}</span>`).join("") : "";
+function changesHtml(d) {
+  if (!d.changes.length) return `<p class="empty">No recorded changes.</p>`;
+  return d.changes.slice().reverse().map((c, i) => `<div class="change">
+    <div class="chead">${when(c.t)} · <button class="goto" data-goto="${esc(c.agent)}">${esc(nameOf(c.agent))}</button> · `
+    + `${c.edits ? `edit${c.edits.length > 1 ? ` in ${c.edits.length} places` : ""}` : c.tool === "Write" ? "wrote the whole file" : "notebook cell"}</div>`
+    + (c.edits ? c.edits.map(e => `<pre class="diff">${diffLines(e.old, "del", "-")}${diffLines(e.new, "add", "+")}</pre>`).join("")
+      : `<details${i === 0 ? " open" : ""}><summary>${c.content.split("\n").length} lines</summary><pre>${esc(c.content)}</pre></details>`)
+    + `</div>`).join("");
+}
+const numbered = html => html.split("\n").map((l, i) => `<span class="ln">${i + 1}</span>${l}`).join("\n");
+function currentHtml(d, path) {
+  const c = d.current;
+  if (c.missing) {
+    const known = lastKnown(d.changes);
+    return `<p class="empty">This file isn't in the project or its worktrees now. It was probably deleted, renamed, or merged into
+      another file by a shell command, or left in a worktree that has since been removed; the transcripts can't follow that.</p>`
+      + (known === null ? "" : `<p class="sub">Last version an agent wrote, rebuilt from the transcript (its last full write plus later edits):</p>
+      <pre class="code">${numbered(highlight(known, path))}</pre>`);
+  }
+  if (c.binary) return `<p class="empty">Binary file: ${esc(c.path)}</p>`;
+  return `<p class="sub">${esc(c.path)}${c.truncated ? " (first 500 KB)" : ""}</p><pre class="code">${numbered(highlight(c.text, c.path))}</pre>`;
+}
+const isMarkdown = path => /\.(md|markdown|mdx)$/i.test(path);
+function previewHtml(d) {
+  const c = d.current, text = c.missing ? lastKnown(d.changes) : c.binary ? null : c.text;
+  if (text === null) return `<p class="empty">Nothing to preview.</p>`;
+  return (c.missing ? `<p class="sub">Rebuilt from the transcript: this file isn't in the project now.</p>` : "")
+    + `<div class="md">${markdown(text)}</div>`;
+}
+
+// A small built-in markdown renderer. Everything is escaped first; only http(s) and mailto links are clickable,
+// and images are shown as placeholders, so the page never loads anything from elsewhere.
+// No step ever runs over markup another step produced: one pass over the raw text swaps code spans, images, links
+// and bare URLs for placeholders, each built from its own escaped parts; the rest is escaped, and emphasis is a
+// single pass over that escaped text, which holds no tags yet.
+const MD_HELD = /`([^`]+)`|!\[([^\]]*)\]\([^)]*\)|\[([^\]]+)\]\(([^)\s]+)[^)]*\)|(https?:\/\/[^\s<>"'`)]+)/g;
+const MD_EMPHASIS = /\*\*(?=\S)([^*]*?\S)\*\*|__(?=\S)([^_]*?\S)__|~~(?=\S)([^~]*?\S)~~|(^|[^*\w])\*(?=\S)([^*]*?\S)\*(?!\w)|(^|[^\w])_(?=\S)([^_]*?\S)_(?!\w)/g;
+function mdInline(raw) {
+  const held = [], hold = html => `\u0000${held.push(html) - 1}\u0000`;
+  const link = (url, text) => /^(https?:|mailto:)/i.test(url)
+    ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(text)}</a>`
+    : `<span class="mdlink" title="${esc(url)}">${esc(text)}</span>`;
+  const text = raw.replace(/\u0000/g, "").replace(MD_HELD, (_, code, alt, label, url, bare) => hold(
+    code !== undefined ? `<code>${esc(code)}</code>`
+    : alt !== undefined ? `<span class="mdimg">[image${alt ? ": " + esc(alt) : ""}]</span>`
+    : label !== undefined ? link(url, label) : link(bare, bare)));
+  return esc(text)
+    .replace(MD_EMPHASIS, (_, strong, strong2, del, pre, em, pre2, em2) =>
+      strong || strong2 ? `<strong>${strong || strong2}</strong>` : del ? `<del>${del}</del>` : em ? `${pre}<em>${em}</em>` : `${pre2}<em>${em2}</em>`)
+    .replace(/\u0000(\d+)\u0000/g, (_, i) => held[i]);
+}
+const LIST_ITEM = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
+function mdList(lines, i) {
+  const indent = lines[i].match(/^\s*/)[0].length, ordered = /^\s*\d/.test(lines[i]);
+  let html = "";
+  while (i < lines.length) {
+    const m = lines[i].match(LIST_ITEM);
+    if (!m || m[1].length < indent) break;
+    if (m[1].length > indent) { const [inner, next] = mdList(lines, i); html = html.replace(/<\/li>$/, inner + "</li>"); i = next; continue; }
+    let text = m[3]; i++;
+    while (i < lines.length && /^\s{2,}\S/.test(lines[i]) && !LIST_ITEM.test(lines[i])) text += " " + lines[i++].trim();
+    const task = text.match(/^\[([ xX])\]\s+(.*)$/);
+    html += `<li>${task ? `<input type="checkbox" disabled${task[1] === " " ? "" : " checked"}> ${mdInline(task[2])}` : mdInline(text)}</li>`;
+  }
+  return [ordered ? `<ol>${html}</ol>` : `<ul>${html}</ul>`, i];
+}
+function markdown(text) {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n"), para = [];
+  let html = "", i = 0, m;
+  const flush = () => { if (para.length) html += `<p>${mdInline(para.splice(0).join(" "))}</p>`; };
+  const cells = l => l.trim().replace(/^\|/, "").replace(/\|$/, "").split(/(?<!\\)\|/).map(c => c.trim().replace(/\\\|/g, "|"));
+  while (i < lines.length) {
+    const line = lines[i];
+    if ((m = line.match(/^\s*(`{3,}|~{3,})\s*([\w+#.-]*)/))) {
+      flush(); const body = []; i++;
+      while (i < lines.length && !lines[i].trim().startsWith(m[1])) body.push(lines[i++]);
+      i++; html += `<pre class="code">${highlight(body.join("\n"), `x.${m[2] || "txt"}`)}</pre>`;
+    } else if (!line.trim()) { flush(); i++; }
+    else if ((m = line.match(/^(#{1,6})\s+(.*?)\s*#*\s*$/))) { flush(); html += `<h${m[1].length}>${mdInline(m[2])}</h${m[1].length}>`; i++; }
+    else if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { flush(); html += "<hr>"; i++; }
+    else if (/^\s*>/.test(line)) {
+      flush(); const body = [];
+      while (i < lines.length && /^\s*>/.test(lines[i])) body.push(lines[i++].replace(/^\s*>\s?/, ""));
+      html += `<blockquote>${markdown(body.join("\n"))}</blockquote>`;
+    } else if (/^\s*\|.*\|\s*$/.test(line) && /^\s*\|?\s*:?-{3,}/.test(lines[i + 1] || "")) {
+      flush(); const head = cells(line), rows = []; i += 2;
+      while (i < lines.length && /^\s*\|/.test(lines[i])) rows.push(cells(lines[i++]));
+      html += `<table class="mdtable"><thead><tr>${head.map(c => `<th>${mdInline(c)}</th>`).join("")}</tr></thead>`
+        + `<tbody>${rows.map(r => `<tr>${r.map(c => `<td>${mdInline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+    } else if (LIST_ITEM.test(line)) { flush(); const [list, next] = mdList(lines, i); html += list; i = next; }
+    else { para.push(line.trim()); i++; }
+  }
+  flush();
+  return html;
+}
+
+// The file as the agents left it: the last whole-file write, with the edits made after it applied in order.
+function lastKnown(changes) {
+  const start = changes.map(c => c.tool === "Write").lastIndexOf(true);
+  if (start < 0) return null;
+  let text = changes[start].content;
+  for (const c of changes.slice(start + 1)) for (const e of c.edits || []) text = text.replace(e.old, () => e.new);
+  return text;
+}
+
+// A small built-in highlighter (no third-party code on a page that holds transcripts and a token): comments,
+// strings, numbers, keywords and capitalised type names, with comment styles picked by file extension.
+const KEYWORDS = new Set(("abstract as async await base bool break case catch char class const continue def default del delete do "
+  + "double elif else enum except export extends false final finally float fn for foreach from func function get if impl "
+  + "implements import in int interface internal is lambda let long match mod mut namespace new nil none not null object of "
+  + "or out override package pass private protected pub public raise readonly ref return sealed self set static string struct "
+  + "super switch this throw throws trait true try type typeof uint unsafe use using val var virtual void when where while with yield").split(" "));
+function highlight(text, path) {
+  const ext = (path.match(/\.([^./\\]+)$/) || [])[1]?.toLowerCase() || "";
+  if (/^(md|markdown|txt|log|csv|tsv|rst)$/.test(ext)) return esc(text);
+  const hash = /^(py|rb|sh|bash|zsh|ps1|psm1|yml|yaml|toml|r|pl|conf|ini|cfg|env|mk|dockerfile|gitignore)$/.test(ext);
+  const markup = /^(html?|xml|xaml|svg|csproj|props|targets|vue)$/.test(ext);
+  const comment = markup ? String.raw`<!--[\s\S]*?-->` : hash ? String.raw`#[^\n]*` : ext === "sql" ? String.raw`--[^\n]*|/\*[\s\S]*?\*/`
+    : String.raw`//[^\n]*|/\*[\s\S]*?\*/`;
+  const strings = String.raw`"{3}[\s\S]*?"{3}|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'` + (/^(js|mjs|cjs|jsx|ts|tsx)$/.test(ext) ? String.raw`|` + "`(?:\\\\.|[^`\\\\])*`" : "");
+  const token = new RegExp(`(${comment})|(${strings})|(\\b0x[0-9a-fA-F]+\\b|\\b\\d[\\d_]*(?:\\.\\d+)?(?:[eE][+-]?\\d+)?\\b)|([A-Za-z_$][\\w$]*)`, "g");
+  let html = "", last = 0;
+  for (const m of text.matchAll(token)) {
+    html += esc(text.slice(last, m.index));
+    const cls = m[1] ? "hl-c" : m[2] ? "hl-s" : m[3] ? "hl-n" : KEYWORDS.has(m[4]) ? "hl-k" : !markup && /^[A-Z][a-z]/.test(m[4]) ? "hl-t" : "";
+    html += cls ? `<span class="${cls}">${esc(m[0])}</span>` : esc(m[0]);
+    last = m.index + m[0].length;
+  }
+  return html + esc(text.slice(last));
+}
+
+function selectFile(key) {
+  const x = outputsModel().files.get(key); if (!x) return;
+  state.file = key;
+  const parts = x.inside ? x.path.split("/").slice(0, -1) : [OUTSIDE];
+  parts.forEach((_, i) => state.folders.set(parts.slice(0, i + 1).join("/"), true));
+  renderOutputs();
+  document.querySelector("#otree .file.sel")?.scrollIntoView({block: "nearest"});
 }
 
 function range() {
@@ -654,6 +1107,7 @@ function render() {
     ["Agents", tally(DATA.agents) || "none", totals],
     ...(blocked ? [["Blocked hooks", blocked]] : []),
   ].map(([k, v, title]) => `<span${title ? ` title="${esc(title)}"` : ""}>${k}: <b>${v}</b></span>`).join("");
+  if (state.view === "outputs") renderOutputs();
 }
 
 // The two detail columns share a grid row, so both are as tall as the taller one.
@@ -690,6 +1144,7 @@ function detail(a) {
   <details class="more" data-key="more-${a.id}"><summary>More: tokens, tools, ${prompt.toLowerCase()}, hooks (${a.hooks.length})</summary>
     <dl><dt title="Input includes cached context re-read on each turn">Tokens</dt><dd>${kt(a.tokens_in)} in / ${kt(a.tokens_out)} out</dd>
       <dt>Tools</dt><dd>${esc(tools)}</dd>
+      <dt>Outputs</dt><dd>${a.files.length} file${a.files.length === 1 ? "" : "s"} changed · ${a.commits.length} commit${a.commits.length === 1 ? "" : "s"}${a.branch ? ` · branch ${esc(a.branch)}` : ""}${a.prs.map(p => ` · <a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.url.replace(/^.*\/pull\//, "PR #"))}</a>`).join("")}</dd>
       <dt>Transcript</dt><dd>${esc(a.transcript)}</dd></dl>
     <details data-key="prompt-${a.id}"><summary>${prompt}</summary><pre data-scroll="prompt-${a.id}">${esc(a.prompt)}</pre></details>
     <section class="hookbox"><h3>Hooks (${a.hooks.length})</h3>${hooks ? `<ol class="hooks" data-scroll="hooks-${a.id}">${hooks}</ol>` : `<p class="empty">No hook events recorded.</p>`}</section>
@@ -709,15 +1164,32 @@ $("list").addEventListener("keydown", e => {
   const row = e.target.closest(ROWS);
   if (row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); const sel = rowSelector(row); toggle(row); document.querySelector(sel)?.focus(); }
 });
-$("attention").addEventListener("click", e => {
+// Open an agent's row on the timeline, from the attention line or the Outputs tab.
+function gotoAgent(e) {
   const id = e.target.closest("[data-goto]")?.dataset.goto; if (!id) return;
   const a = DATA.agents.find(a => a.id === id);
   if (a) { state.groups.set(a.group, true); state.hide.delete(a.status); }
   if (foldedIds.has(id)) state.groups.set(EARLIER, true);
   state.open.add(id); state.q = ""; $("q").value = "";
-  render();
+  setView("timeline");
   document.querySelector(`.agent[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({block: "center"});
+}
+$("attention").addEventListener("click", gotoAgent);
+$("outputs").addEventListener("click", e => {
+  const mode = e.target.closest("[data-mode]"), dir = e.target.closest("[data-dir]"), file = e.target.closest("[data-file]");
+  if (mode) { state.fileMode = mode.dataset.mode; renderOutputs(); }
+  else if (dir) { state.folders.set(dir.dataset.dir, dir.dataset.open !== "true"); renderOutputs(); }
+  else if (file) selectFile(file.dataset.file);
+  else gotoAgent(e);
 });
+function setView(view) {
+  state.view = view;
+  document.querySelector("main").classList.toggle("view-outputs", view === "outputs");
+  for (const t of document.querySelectorAll(".tab")) t.setAttribute("aria-selected", String(t.dataset.view === view));
+  $("q").placeholder = view === "outputs" ? "Filter files, commits, agents" : "Filter agents";
+  if (DATA) render();
+}
+document.querySelector(".tabs").addEventListener("click", e => { const t = e.target.closest(".tab"); if (t) setView(t.dataset.view); });
 $("list").addEventListener("toggle", e => {
   const d = e.target; if (!d.dataset?.key) return;
   d.open ? state.details.add(d.dataset.key) : state.details.delete(d.dataset.key);
@@ -880,12 +1352,20 @@ def serve(session, port, open_browser, idle_minutes):
                 self.send_error(403)
                 return
             route, _, query = self.path.partition("?")
-            if route in ("/data.json", "/health"):
+            if route in ("/data.json", "/health", "/file.json"):
                 if not hmac.compare_digest(self.headers.get("X-Timeline-Token", ""), token):
                     self.send_error(403)
                     return
                 if route == "/health":
                     body = json.dumps({"app": "agent-timeline", "version": VERSION, "pid": os.getpid()}).encode()
+                elif route == "/file.json":
+                    target = session_for(query)
+                    rel = urllib.parse.parse_qs(query).get("path", [""])[0]
+                    detail = file_detail(target, rel) if target and rel else None
+                    if detail is None:
+                        self.send_error(404)
+                        return
+                    body = json.dumps(detail).encode()
                 else:
                     target = session_for(query)
                     if not target:
