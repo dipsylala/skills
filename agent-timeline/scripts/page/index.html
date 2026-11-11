@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent timeline</title>
+<script>
+// Apply a saved Light or Dark choice before the first paint, so the page doesn't flash the other theme.
+try { const t = localStorage.getItem("agent-timeline-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}
+</script>
+<style>
+/*__STYLE__*/</style>
+</head>
+<body>
+<main>
+<div class="theme" role="group" aria-label="Colour theme">
+  <button class="chip" data-set-theme="system" title="Follow the system setting">System</button>
+  <button class="chip" data-set-theme="light">Light</button>
+  <button class="chip" data-set-theme="dark">Dark</button>
+</div>
+<div class="sessions" id="sessions">
+  <h1>Sessions</h1>
+  <div class="controls">
+    <input type="search" id="sq" placeholder="Filter by title, prompt or project" aria-label="Filter sessions">
+    <button class="chip" id="back" hidden>Back to this session</button>
+  </div>
+  <div id="slist"><p class="empty">Loading sessions…</p></div>
+</div>
+<nav class="crumbs" id="crumbs" hidden><button class="goto" id="toSessions">← All sessions</button></nav>
+<h1 id="title">Agent timeline</h1>
+<p class="sub" id="sub"></p>
+<div class="stats" id="stats"></div>
+<div class="attention" id="attention" hidden></div>
+<div class="tabs" role="tablist">
+  <button class="tab" role="tab" data-view="timeline" aria-selected="true">Timeline</button>
+  <button class="tab" role="tab" data-view="outputs" aria-selected="false">Outputs</button>
+</div>
+<div class="controls">
+  <span id="chips"></span>
+  <input type="search" id="q" placeholder="Filter agents" aria-label="Filter agents">
+  <select id="range" aria-label="Time range">
+    <option value="fit">Fit to agents</option>
+    <option value="session">Whole session</option>
+    <option value="recent">Last 30 minutes</option>
+  </select>
+  <button class="chip" id="wide" aria-pressed="false" title="Use the full window width">⇔ Full width</button>
+  <span class="live" id="live"></span>
+</div>
+<div class="list" id="list"></div>
+<div class="outputs" id="outputs">
+  <p class="sub" id="osum"></p>
+  <div class="ofiles"><div class="otree" id="otree" role="tree" aria-label="Changed files"></div><div class="oviewer" id="oviewer"></div></div>
+  <div id="oextra"></div>
+</div>
+</main>
+<div class="tip" id="tip" role="tooltip" hidden></div>
+<script>
+/*__SCRIPT__*/</script>
+</body>
+</html>
