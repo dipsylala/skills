@@ -51,7 +51,7 @@ Separate agreed requirements and acceptance criteria from technical decisions an
 
 ## 4. Select execution model and propose team
 
-Choose the simplest effective topology **after initial investigation and clarification**, using workstream independence, shared-file contention, interface stability, integration risk, available agent/runtime capabilities, and expected coordination cost. Explain a proposed multi-agent composition and obtain user approval **before spawning a parallel engineering team or dedicated director**. For a multi-stage project, present the team proposal with the specification so one approval covers both. Specialist subagents under the single-owner model may be invoked selectively without a separate team-approval round.
+Choose the simplest effective topology **after initial investigation and clarification**, using workstream independence, shared-file contention, interface stability, integration risk, available agent/runtime capabilities, and expected coordination cost. Explain a proposed multi-agent composition and obtain user approval **before spawning a parallel engineering team or dedicated director**. For a multi-stage project, present the team proposal with the specification so one approval covers both. The proposal states when reviews run (at every stage end, step 6) and, when starting with a single implementer, the stage after which you expect workstreams to become independent, or why none will. Specialist subagents under the single-owner model may be invoked selectively without a separate team-approval round.
 
 ### A. Solo implementer
 
@@ -78,7 +78,7 @@ For multiple genuinely parallelisable implementation workstreams with clear owne
 
 **Do not choose director mode merely because a task is large.** High coupling, unstable interfaces, and shared ownership can make a single implementer more efficient.
 
-**Foundation first, then fan out.** When later workstreams all depend on a shared foundation (data schema, authentication, layout, core interfaces), build the foundation as a single implementer, then propose engineers for the workstreams that have become independent. In the initial team proposal, name the stage after which you expect to switch.
+**Foundation first, then fan out.** When later workstreams all depend on a shared foundation (data schema, authentication, layout, core interfaces), build the foundation as a single implementer, then propose engineers for the workstreams that have become independent.
 
 ### D. Dedicated subordinate director: exceptional
 
