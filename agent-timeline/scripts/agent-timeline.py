@@ -373,6 +373,58 @@ def clip(text):
     return text if len(text) <= CLIP_CHARS else text[:CLIP_CHARS] + f"\n... (cut at {CLIP_CHARS:,} characters)"
 
 
+_titles = {}
+
+
+def session_card(path):
+    """Title, project folder, last prompt and size of one session, read from the ends of its transcript (cached)."""
+    stat = path.stat()
+    key = (stat.st_mtime_ns, stat.st_size)
+    cached = _titles.get(path)
+    if cached and cached[0] == key:
+        return cached[1]
+    title = last_prompt = cwd = first_prompt = ""
+    with open(path, "rb") as f:
+        head = f.read(65536)
+        f.seek(max(0, stat.st_size - 262144))
+        tail = f.read()
+    for line in head.splitlines():
+        try:
+            entry = json.loads(line)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue  # a line cut off at the end of the read
+        cwd = cwd or entry.get("cwd") or ""
+        if entry.get("type") == "user" and not first_prompt:
+            first_prompt = text_of((entry.get("message") or {}).get("content"))
+    for line in tail.splitlines():
+        try:
+            entry = json.loads(line)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        if entry.get("type") == "custom-title":
+            title = entry.get("customTitle") or title
+        elif entry.get("type") == "last-prompt":
+            last_prompt = entry.get("lastPrompt") or last_prompt
+    subagents = path.parent / path.stem / "subagents"
+    # Slash commands are stored as markup ("<command-message>...</command-message> <command-name>/x</command-name>").
+    # App-injected <system-reminder> blocks are not what the user typed.
+    prompt = re.sub(r"<command-message>.*?</command-message>|<system-reminder>.*?(?:</system-reminder>|$)", "",
+                    last_prompt or first_prompt, flags=re.S)
+    prompt = " ".join(re.sub(r"</?(?:local-)?command-[a-z-]+>", " ", prompt).split())
+    card = {"id": path.stem, "project": cwd or path.parent.name, "title": title,
+            "prompt": prompt[:300], "mtime": stat.st_mtime,
+            "agents": len(list(subagents.glob("agent-*.jsonl"))) if subagents.is_dir() else 0}
+    _titles[path] = (key, card)
+    return card
+
+
+def list_sessions(limit=300):
+    """The user's sessions, most recently active first."""
+    paths = [p for p in PROJECTS.glob("*/*.jsonl") if SESSION_ID.fullmatch(p.stem)]
+    paths.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return [session_card(p) for p in paths[:limit]]
+
+
 def file_detail(session, rel):
     """What each agent did to one file, read back from the transcripts, and the file as it is now on disk.
 
@@ -474,6 +526,7 @@ def collect(session):
         "now": now,
         "session": session.stem,
         "project": session.parent.name,
+        "title": session_card(session)["title"],
         "main": {"running": now - main["end"] <= RUNNING_WINDOW, "transcript": str(session), "branch": "",
                  **outputs(main, [main["cwd"]]),
                  **{k: main[k] for k in ("start", "end", "segments", "active", "models", "tokens_in", "tokens_out",
@@ -564,6 +617,18 @@ input[type=search] { flex:1 1 180px; max-width:280px; }
   padding:6px 10px; color:var(--muted); cursor:pointer; }
 .tab[aria-selected="true"] { color:var(--fg); border-bottom-color:var(--run); font-weight:600; }
 main.view-outputs #chips, main.view-outputs #range, main.view-outputs #list { display:none; }
+main.view-sessions > :not(#sessions), main:not(.view-sessions) #sessions { display:none !important; }
+.crumbs { margin:0 0 6px; font-size:13px; } .crumbs .goto { color:var(--muted); text-decoration:none; } .crumbs .goto:hover { color:var(--fg); }
+.sproject { font-size:12px; font-weight:600; color:var(--muted); margin:14px 0 4px; }
+.srow { display:grid; grid-template-columns:14px minmax(0, 1fr) auto; gap:2px 10px; width:100%; text-align:left; font:inherit; color:inherit;
+  background:var(--card); border:1px solid var(--line); border-radius:6px; padding:7px 10px; margin:0 0 4px; cursor:pointer; }
+.srow:hover, .srow:focus-visible { background:var(--hover); outline:none; }
+.srow.current { box-shadow:inset 3px 0 0 var(--run); }
+.srow .dot { width:8px; height:8px; border-radius:50%; margin-top:6px; background:var(--line); }
+.srow .dot.live { background:var(--run); }
+.srow .stitle { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.srow .sprompt { grid-column:2 / 4; color:var(--muted); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.srow .smeta { color:var(--muted); font-size:12px; white-space:nowrap; font-variant-numeric:tabular-nums; }
 main:not(.view-outputs) #outputs { display:none; }
 .outputs section { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 14px; margin:0 0 12px; }
 .outputs h2 { font-size:13px; margin:0 0 8px; }
@@ -639,7 +704,16 @@ details summary { cursor:pointer; color:var(--muted); font-size:12px; margin-bot
 </head>
 <body>
 <main>
-<h1>Agent timeline</h1>
+<div class="sessions" id="sessions">
+  <h1>Sessions</h1>
+  <div class="controls">
+    <input type="search" id="sq" placeholder="Filter by title, prompt or project" aria-label="Filter sessions">
+    <button class="chip" id="back" hidden>Back to this session</button>
+  </div>
+  <div id="slist"><p class="empty">Loading sessions…</p></div>
+</div>
+<nav class="crumbs" id="crumbs" hidden><button class="goto" id="toSessions">← All sessions</button></nav>
+<h1 id="title">Agent timeline</h1>
 <p class="sub" id="sub"></p>
 <div class="stats" id="stats"></div>
 <div class="attention" id="attention" hidden></div>
@@ -1099,6 +1173,8 @@ function render() {
 
   const agentSecs = DATA.agents.reduce((s, a) => s + a.active, 0);
   $("sub").textContent = `${DATA.project} / ${DATA.session}`;
+  $("title").textContent = DATA.title || "Agent timeline";
+  document.title = DATA.title ? `${DATA.title} · Agent timeline` : "Agent timeline";
   const blocked = allHooks.filter(h => h.kind === "blocked").length;
   const totals = `Agent time ${dur(agentSecs)} · agent output tokens ${kt(DATA.agents.reduce((s, a) => s + a.tokens_out, 0))}`
     + ` · main output tokens ${kt(m.tokens_out)} · ${allHooks.length} hook events`;
@@ -1183,13 +1259,70 @@ $("outputs").addEventListener("click", e => {
   else gotoAgent(e);
 });
 function setView(view) {
+  if (view === "sessions" && state.view !== "sessions") state.back = state.view;
   state.view = view;
   document.querySelector("main").classList.toggle("view-outputs", view === "outputs");
+  document.querySelector("main").classList.toggle("view-sessions", view === "sessions");
+  if (view === "sessions") { renderSessions(); loadSessions(); return; }
   for (const t of document.querySelectorAll(".tab")) t.setAttribute("aria-selected", String(t.dataset.view === view));
   $("q").placeholder = view === "outputs" ? "Filter files, commits, agents" : "Filter agents";
   if (DATA) render();
 }
 document.querySelector(".tabs").addEventListener("click", e => { const t = e.target.closest(".tab"); if (t) setView(t.dataset.view); });
+
+// Sessions: step outside the current session to find another. The list comes from the server, which can
+// serve any of the user's sessions with the same token; picking one switches the page in place.
+let SESSIONS = null;
+const currentSession = () => new URLSearchParams(location.search).get("s") || DATA?.session || "";
+const ago = t => { const s = Date.now() / 1000 - t; return s < 90 ? "active now" : s < 5400 ? `${Math.round(s / 60)} min ago`
+  : s < 129600 ? `${Math.round(s / 3600)} h ago` : new Date(t * 1000).toLocaleDateString([], {month: "short", day: "numeric"}); };
+async function loadSessions() {
+  try {
+    const res = await fetch("sessions.json", {cache: "no-store", headers: {"X-Timeline-Token": TOKEN}});
+    if (!res.ok) throw new Error(res.status);
+    SESSIONS = await res.json();
+  } catch { if (!SESSIONS) $("slist").innerHTML = `<p class="empty">Couldn't load the sessions list.</p>`; return; }
+  if (state.view === "sessions") renderSessions();
+}
+function renderSessions() {
+  const here = currentSession();
+  $("back").hidden = !DATA;
+  $("back").textContent = `Back to ${DATA?.title || "this session"}`;
+  if (!SESSIONS) return;
+  const q = $("sq").value.toLowerCase();
+  const rows = SESSIONS.filter(r => !q || [r.title, r.prompt, r.project].join(" ").toLowerCase().includes(q));
+  const projects = new Map();
+  for (const r of rows) { if (!projects.has(r.project)) projects.set(r.project, []); projects.get(r.project).push(r); }
+  const live = r => Date.now() / 1000 - r.mtime <= 120;
+  $("slist").innerHTML = [...projects].map(([project, rs]) => `<div class="sproject">${esc(project)}</div>${rs.map(r =>
+    `<button class="srow${r.id === here ? " current" : ""}" data-session="${esc(r.id)}" title="${esc(r.id)}">
+      <span class="dot${live(r) ? " live" : ""}" title="${live(r) ? "Active in the last 2 minutes" : ""}"></span>
+      <span class="stitle">${esc(r.title || "(untitled)")}${r.id === here ? ` <small class="smeta">· viewing</small>` : ""}</span>
+      <span class="smeta">${r.agents ? `${r.agents} agent${r.agents === 1 ? "" : "s"} · ` : ""}${ago(r.mtime)}</span>
+      <span class="sprompt">${esc(r.prompt || "")}</span></button>`).join("")}`).join("")
+    || `<p class="empty">No sessions match.</p>`;
+}
+function resetForSession() {
+  for (const k of ["open", "details"]) state[k].clear();
+  state.groups.clear(); state.folders.clear();
+  state.file = ""; state.q = ""; $("q").value = "";
+  viewerKey = ""; fileCache.clear(); foldedIds = new Set();
+}
+function switchSession(id) {
+  if (id !== currentSession()) {
+    history.pushState(null, "", `?s=${encodeURIComponent(id)}${location.hash}`);
+    resetForSession();
+    DATA = null;
+    $("list").innerHTML = `<p class="empty">Loading…</p>`;
+  }
+  setView("timeline");
+  poll();
+}
+$("toSessions").addEventListener("click", () => setView("sessions"));
+$("back").addEventListener("click", () => setView(state.back || "timeline"));
+$("sq").addEventListener("input", renderSessions);
+$("slist").addEventListener("click", e => { const row = e.target.closest("[data-session]"); if (row) switchSession(row.dataset.session); });
+window.addEventListener("popstate", () => { resetForSession(); DATA = null; setView("timeline"); poll(); });
 $("list").addEventListener("toggle", e => {
   const d = e.target; if (!d.dataset?.key) return;
   d.open ? state.details.add(d.dataset.key) : state.details.delete(d.dataset.key);
@@ -1243,7 +1376,11 @@ async function poll() {
   }
 }
 if (DATA) { render(); setLive(true); }
-if (LIVE) { poll(); setInterval(poll, 5000); }
+if (LIVE) {
+  $("crumbs").hidden = false;  // a snapshot holds one session, so there is nowhere to step out to
+  poll();
+  setInterval(() => { poll(); if (state.view === "sessions") loadSessions(); }, 5000);
+}
 </script>
 </body>
 </html>
@@ -1352,12 +1489,15 @@ def serve(session, port, open_browser, idle_minutes):
                 self.send_error(403)
                 return
             route, _, query = self.path.partition("?")
-            if route in ("/data.json", "/health", "/file.json"):
+            if route in ("/data.json", "/health", "/file.json", "/sessions.json"):
                 if not hmac.compare_digest(self.headers.get("X-Timeline-Token", ""), token):
                     self.send_error(403)
                     return
                 if route == "/health":
                     body = json.dumps({"app": "agent-timeline", "version": VERSION, "pid": os.getpid()}).encode()
+                elif route == "/sessions.json":
+                    # The shared server can show any session under ~/.claude/projects; a separate one only its own.
+                    body = json.dumps(list_sessions() if shared else [session_card(session)]).encode()
                 elif route == "/file.json":
                     target = session_for(query)
                     rel = urllib.parse.parse_qs(query).get("path", [""])[0]
