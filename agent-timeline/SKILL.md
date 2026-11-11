@@ -34,7 +34,7 @@ The server stops itself 10 minutes after the last page showing any session is cl
 
 ## Privacy
 
-The page shows prompts, replies, commands, and file paths from the user's transcripts. The live server listens only on 127.0.0.1, uses a random port, and serves data only with the token in the URL. Because one server covers all of the user's sessions, its token opens any of them; the token is kept in `~/.claude/agent-timeline/server.json`, readable only by the user. Do not paste the page's content or the URL anywhere outside this conversation.
+The page shows prompts, replies, commands, and file paths from the user's transcripts. The live server listens only on 127.0.0.1, uses a random port, and serves data only with the token in the URL. Because one server covers all of the user's sessions, its token opens any of them; the token is kept in `~/.claude/agent-timeline/server.json`, readable only by the user. `--open` keeps the token off the browser's command line, which other local users can read on some systems: it opens a short-lived redirect file that only the user can read. Do not paste the page's content or the URL anywhere outside this conversation.
 
 ## Limits
 

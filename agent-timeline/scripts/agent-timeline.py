@@ -38,8 +38,10 @@ import json
 import os
 import re
 import secrets
+import shutil
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
 import webbrowser
@@ -656,6 +658,23 @@ def session_url(port, session, token):
     return f"http://127.0.0.1:{port}/?s={session.stem}#t={token}"
 
 
+def open_private(url, keep_seconds=10):
+    """Open url in the browser without putting it (and its token) on the browser's command line.
+
+    Other local users can read process command lines on some systems (Linux /proc). Instead,
+    write a redirect page only this user can read, open that file, and delete it shortly after.
+    """
+    folder = tempfile.mkdtemp(prefix="agent-timeline-")  # owner-only on POSIX; per-user %TEMP% on Windows
+    launcher = Path(folder) / "open.html"
+    target = json.dumps(url).replace("</", "<\\/")
+    fd = os.open(launcher, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(f"<!doctype html><meta charset=utf-8><script>location.replace({target})</script>")
+    webbrowser.open(launcher.as_uri())
+    # Non-daemon, so a process that is about to exit still waits to clean up.
+    threading.Timer(keep_seconds, shutil.rmtree, args=(folder,), kwargs={"ignore_errors": True}).start()
+
+
 def serve(session, port, open_browser, idle_minutes):
     """Serve the live page, reusing the shared server when one is already running.
 
@@ -670,7 +689,7 @@ def serve(session, port, open_browser, idle_minutes):
         url = session_url(existing["port"], session, existing["token"])
         print(f"Serving {session} at {url} (existing server, pid {existing['pid']})", flush=True)
         if open_browser:
-            webbrowser.open(url)
+            open_private(url)
         return
 
     token = secrets.token_urlsafe(32)
@@ -731,7 +750,7 @@ def serve(session, port, open_browser, idle_minutes):
     stop_note = f"stops after {idle_minutes:g} minutes with no page open" if idle_minutes > 0 else "runs until stopped"
     print(f"Serving {session} at {url} (new server, pid {os.getpid()}; {stop_note})", flush=True)
     if open_browser:
-        webbrowser.open(url)
+        open_private(url)
     try:
         while idle_minutes <= 0 or time.monotonic() - server.last_seen < idle_minutes * 60:
             server.handle_request()
