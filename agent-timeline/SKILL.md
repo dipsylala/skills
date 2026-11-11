@@ -19,11 +19,12 @@ python "<skill base directory>/scripts/agent-timeline.py" [TARGET] --serve --ope
 Use `python3` where `python` is not Python 3.9 or later.
 
 - With no `TARGET`, it shows the current session. Pass a project folder (its latest session) or a session ID when the user names one.
+- One server is shared across sessions. If one is already running, the command prints a URL for this session on it and exits at once; otherwise it starts the server and keeps running in the background.
 - Wait for the line `Serving <transcript> at <url>`, then give the user that URL. It contains a per-run access token: give it only to the user, and never publish or upload it.
 - `--open` also opens the URL in the user's default browser. Leave it out if the user only wants the link.
 - When the user asks for a file instead of a live view, drop `--serve`: the script writes a one-off HTML page and prints its path. Use `-o <path>` to choose where.
 
-Keep the server running until the user asks you to stop it, then stop that background task.
+The server stops itself 10 minutes after the last page showing any session is closed (`--idle-exit MINUTES` changes this; `0` keeps it running). When the user says they are done with it, stop the background task if this session started the server; otherwise it stops on its own. If the page shows "Disconnected", the server has stopped: run the command again for a new URL.
 
 ## What the page shows
 
@@ -33,7 +34,7 @@ Keep the server running until the user asks you to stop it, then stop that backg
 
 ## Privacy
 
-The page shows prompts, replies, commands, and file paths from the user's transcripts. The live server listens only on 127.0.0.1, uses a random port, and serves data only with the token in the URL. Do not paste the page's content or the URL anywhere outside this conversation.
+The page shows prompts, replies, commands, and file paths from the user's transcripts. The live server listens only on 127.0.0.1, uses a random port, and serves data only with the token in the URL. Because one server covers all of the user's sessions, its token opens any of them; the token is kept in `~/.claude/agent-timeline/server.json`, readable only by the user. Do not paste the page's content or the URL anywhere outside this conversation.
 
 ## Limits
 
