@@ -3,7 +3,12 @@
 
 Usage:
   agent-timeline.py [TARGET] [-o OUT.html] [--open]   write a snapshot page
-  agent-timeline.py [TARGET] --serve [--port N]       serve a live page on 127.0.0.1
+  agent-timeline.py [TARGET] --serve [--port N] [--idle-exit MINUTES]
+                                                      serve a live page on 127.0.0.1
+
+--serve reuses the server another run already started, printing a URL for this
+session, so one server covers every session you watch. It stops itself 10 minutes
+after the last page closes. Pass --port to run a separate server instead.
 
 TARGET is one of:
   - a session transcript (.jsonl)
@@ -27,6 +32,7 @@ to Claude Code can break this script.
 """
 
 import argparse
+import hashlib
 import hmac
 import json
 import os
@@ -35,6 +41,7 @@ import secrets
 import sys
 import tempfile
 import time
+import urllib.request
 import webbrowser
 from collections import deque
 from datetime import datetime
@@ -42,6 +49,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 PROJECTS = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects"
+STATE = PROJECTS.parent / "agent-timeline" / "server.json"  # the shared server's port, token and pid
+VERSION = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()[:12]  # an updated script starts a fresh server
+SESSION_ID = re.compile(r"[0-9a-fA-F-]{8,64}")
 SPAWN_TOOLS = {"Agent", "Task"}
 HANDBACK_TOOL = "SubagentHandback"
 IDLE_GAP = 600        # seconds without a transcript entry that split activity into separate bars
@@ -576,14 +586,14 @@ $("range").addEventListener("change", e => { state.range = e.target.value; rende
 
 function setLive(ok) {
   $("live").className = "live" + (ok ? "" : " off");
-  $("live").innerHTML = LIVE ? `<span class="dot"></span>${ok ? "Live" : "Disconnected"} · updated ${clock(DATA.now)}`
+  $("live").innerHTML = LIVE ? `<span class="dot"></span>${ok ? "Live" : "Disconnected (the server may have stopped; run /agent-timeline again)"} · updated ${clock(DATA.now)}`
     : `Snapshot taken ${clock(DATA.now)}`;
 }
 // The live server hands out data only with the per-run token from the URL fragment, which never leaves the browser.
 const TOKEN = new URLSearchParams(location.hash.slice(1)).get("t") || "";
 async function poll() {
   try {
-    const res = await fetch("data.json", {cache: "no-store", headers: {"X-Timeline-Token": TOKEN}});
+    const res = await fetch(`data.json${location.search}`, {cache: "no-store", headers: {"X-Timeline-Token": TOKEN}});
     if (!res.ok) throw new Error(res.status);
     DATA = await res.json(); render(); setLive(true);
   } catch {
@@ -604,10 +614,76 @@ def page(data, live):
     return PAGE.replace("__LIVE__", "true" if live else "false").replace("__DATA__", payload)
 
 
-def serve(session, port, open_browser):
-    """Serve the live page. Transcript data needs the per-run token, and only same-host requests are answered,
-    so other local users and DNS-rebinding web pages can't read it."""
+def is_shared(session):
+    """Only sessions under ~/.claude/projects can be served by id from the shared server."""
+    return session.resolve().parent.parent == PROJECTS.resolve() and SESSION_ID.fullmatch(session.stem)
+
+
+def find_server():
+    """The shared server's state, if one is running this script's version and answers with its token."""
+    try:
+        state = json.loads(STATE.read_text(encoding="utf-8"))
+        request = urllib.request.Request(f"http://127.0.0.1:{int(state['port'])}/health",
+                                         headers={"X-Timeline-Token": state["token"]})
+        with urllib.request.urlopen(request, timeout=2) as response:
+            health = json.load(response)
+        return state if health.get("app") == "agent-timeline" and health.get("version") == VERSION else None
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def save_state(state):
+    """Record the shared server where only this user can read it (the file holds the token)."""
+    STATE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if os.name == "posix":
+        os.chmod(STATE.parent, 0o700)
+    temp = STATE.with_name(f"server.{os.getpid()}.tmp")
+    fd = os.open(temp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(state, f)
+    os.replace(temp, STATE)
+
+
+def forget_state():
+    try:
+        if json.loads(STATE.read_text(encoding="utf-8")).get("pid") == os.getpid():
+            STATE.unlink()
+    except (OSError, ValueError):
+        pass
+
+
+def session_url(port, session, token):
+    return f"http://127.0.0.1:{port}/?s={session.stem}#t={token}"
+
+
+def serve(session, port, open_browser, idle_minutes):
+    """Serve the live page, reusing the shared server when one is already running.
+
+    Transcript data needs the server's token, and only same-host requests are answered, so other
+    local users and DNS-rebinding web pages can't read it. The shared server serves any session
+    under ~/.claude/projects by id. An open page polls every 5 seconds; once no page has asked
+    for idle_minutes, the server exits, so forgotten servers don't pile up.
+    """
+    shared = port == 0 and is_shared(session)
+    existing = find_server() if shared else None
+    if existing:
+        url = session_url(existing["port"], session, existing["token"])
+        print(f"Serving {session} at {url} (existing server, pid {existing['pid']})", flush=True)
+        if open_browser:
+            webbrowser.open(url)
+        return
+
     token = secrets.token_urlsafe(32)
+    sessions = {session.stem: session}
+
+    def session_for(query):
+        """The session a page asked for: the started one, or any transcript under PROJECTS by id."""
+        requested = dict(p.split("=", 1) for p in query.split("&") if "=" in p).get("s", session.stem)
+        if requested not in sessions and shared and SESSION_ID.fullmatch(requested):
+            hits = list(PROJECTS.glob(f"*/{requested}.jsonl"))
+            if len(hits) == 1:
+                sessions[requested] = hits[0]
+        return sessions.get(requested)
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -617,17 +693,26 @@ def serve(session, port, open_browser):
             if self.headers.get("Host") not in hosts or (origin is not None and origin not in {f"http://{h}" for h in hosts}):
                 self.send_error(403)
                 return
-            route = self.path.split("?", 1)[0]
-            if route == "/data.json":
+            route, _, query = self.path.partition("?")
+            if route in ("/data.json", "/health"):
                 if not hmac.compare_digest(self.headers.get("X-Timeline-Token", ""), token):
                     self.send_error(403)
                     return
-                body, ctype = json.dumps(collect(session)).encode(), "application/json"
+                if route == "/health":
+                    body = json.dumps({"app": "agent-timeline", "version": VERSION, "pid": os.getpid()}).encode()
+                else:
+                    target = session_for(query)
+                    if not target:
+                        self.send_error(404)
+                        return
+                    body = json.dumps(collect(target)).encode()
+                ctype = "application/json"
             elif route in ("/", "/index.html"):
                 body, ctype = page(None, live=True).encode(), "text/html; charset=utf-8"
             else:
                 self.send_error(404)
                 return
+            self.server.last_seen = time.monotonic()  # only accepted requests keep the server alive
             self.send_response(200)
             self.send_header("Content-Type", ctype)
             self.send_header("Cache-Control", "no-store")
@@ -638,14 +723,25 @@ def serve(session, port, open_browser):
             pass
 
     server = HTTPServer(("127.0.0.1", port), Handler)
-    url = f"http://127.0.0.1:{server.server_port}/#t={token}"
-    print(f"Serving {session} at {url} (Ctrl+C to stop)", flush=True)
+    server.timeout = 1  # handle_request returns at least this often, so the idle check runs
+    server.last_seen = time.monotonic()
+    if shared:
+        save_state({"port": server.server_port, "token": token, "pid": os.getpid(), "version": VERSION})
+    url = session_url(server.server_port, session, token)
+    stop_note = f"stops after {idle_minutes:g} minutes with no page open" if idle_minutes > 0 else "runs until stopped"
+    print(f"Serving {session} at {url} (new server, pid {os.getpid()}; {stop_note})", flush=True)
     if open_browser:
         webbrowser.open(url)
     try:
-        server.serve_forever()
+        while idle_minutes <= 0 or time.monotonic() - server.last_seen < idle_minutes * 60:
+            server.handle_request()
+        print(f"No page open for {idle_minutes:g} minutes; stopped.", flush=True)
     except KeyboardInterrupt:
         pass
+    finally:
+        server.server_close()
+        if shared:
+            forget_state()
 
 
 def main(argv):
@@ -654,12 +750,15 @@ def main(argv):
     parser.add_argument("-o", "--output", help="HTML file to write (default: system temp folder)")
     parser.add_argument("--open", action="store_true", help="open the page in your browser")
     parser.add_argument("--serve", action="store_true", help="serve a live page that refreshes every 5 seconds")
-    parser.add_argument("--port", type=int, default=0, help="port for --serve (default: a random free port)")
+    parser.add_argument("--port", type=int, default=0,
+                        help="run a separate server on this port instead of the shared one (default: shared, random port)")
+    parser.add_argument("--idle-exit", type=float, default=10, metavar="MINUTES",
+                        help="with --serve, stop after this many minutes with no page open (default: 10; 0 never stops)")
     args = parser.parse_args(argv)
 
     session = resolve(args.target)
     if args.serve:
-        serve(session, args.port, args.open)
+        serve(session, args.port, args.open, args.idle_exit)
         return
     data = collect(session)
     out = Path(args.output) if args.output else Path(tempfile.gettempdir()) / f"agent-timeline-{session.stem[:8]}.html"
