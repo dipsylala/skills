@@ -15,6 +15,11 @@ const tally = agents => Object.keys(STATUS).map(k => [k, agents.filter(a => a.st
 const statusOf = a => STATUS[a.status] || ["Idle", "·"];
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+// Copying: the raw text rides in data-copy (escaped), never the coloured HTML. copyable() puts a Copy button
+// on a block; copyIcon() is a small button beside an identifier. The page URL is never offered: it holds the token.
+const copyable = (text, html, label = "Copy") =>
+  `<div class="copyable"><button class="copy" data-copy="${esc(text)}" title="Copy to clipboard">${esc(label)}</button>${html}</div>`;
+const copyIcon = (text, title, label = "⧉") => `<button class="copy-icon" data-copy="${esc(text)}" title="${esc(title)}">${label}</button>`;
 const dur = s => { s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), r = s % 60;
   return h ? `${h}h ${m}m` : m ? `${m}m ${String(r).padStart(2, "0")}s` : `${r}s`; };
 const kt = n => n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : String(n);
@@ -124,9 +129,9 @@ function renderOutputs() {
 
   let extra = "";
   if (events.length) extra += `<section><h2>Commits and pull requests</h2><table class="otable">${events.map(e => e.pr
-    ? `<tr><td class="t">${when(e.t)}</td><td>${who(e.a)}</td><td colspan="2">Pull request <a href="${esc(e.url)}" target="_blank" rel="noopener noreferrer">${esc(e.url.replace("https://github.com/", ""))}</a></td></tr>`
+    ? `<tr><td class="t">${when(e.t)}</td><td>${who(e.a)}</td><td colspan="2">Pull request <a href="${esc(e.url)}" target="_blank" rel="noopener noreferrer">${esc(e.url.replace("https://github.com/", ""))}</a>${copyIcon(e.url, "Copy the pull request URL")}</td></tr>`
     : `<tr><td class="t">${when(e.t)}</td><td>${who(e.a)}</td><td>${esc(e.message) || "<small>(message not in the command)</small>"}</td>
-      <td class="p">${esc([e.branch || e.a.branch, e.hash].filter(Boolean).join(" "))}</td></tr>`).join("")}</table></section>`;
+      <td class="p">${esc([e.branch || e.a.branch, e.hash].filter(Boolean).join(" "))}${e.hash ? copyIcon(e.hash, "Copy the commit hash") : ""}</td></tr>`).join("")}</table></section>`;
   $("oextra").innerHTML = extra;
 }
 
@@ -142,12 +147,16 @@ function renderViewer(x) {
   if (!x) { v.innerHTML = `<p class="empty">Select a file to see what each agent changed.</p>`; return; }
   const modes = [["changes", "Changes"], ["current", "Current file"], ...(isMarkdown(x.path) ? [["preview", "Preview"]] : [])]
     .map(([m, label]) => `<button class="chip" data-mode="${m}" aria-pressed="${mode === m}">${label}</button>`).join(" ");
-  v.innerHTML = `<div class="vhead"><div class="p">${flag(x)}${esc(x.path)}</div>
+  v.innerHTML = `<div class="vhead"><div class="p">${flag(x)}${esc(x.path)}${copyIcon(x.path, "Copy the file path")}</div>
     <div class="vmeta">${x.by.map(b => `${who(b.a)} <small>${did(b.f)} · ${when(b.f.t1)}</small>`).join(" · ")}</div><div>${modes}</div></div>
     <div id="vbody"><p class="empty">${LIVE ? "Loading…" : "File contents need the live view: run the script with --serve."}</p></div>`;
   v.scrollTop = 0;
   if (!LIVE) return;
-  const show = d => { if (viewerKey === key) $("vbody").innerHTML = mode === "changes" ? changesHtml(d) : mode === "preview" ? previewHtml(d) : currentHtml(d, x.path); };
+  const show = d => {
+    if (viewerKey !== key) return;
+    $("vbody").innerHTML = mode === "changes" ? changesHtml(d) : mode === "preview" ? previewHtml(d) : currentHtml(d, x.path);
+    placeCopies($("vbody"));
+  };
   const cacheKey = `${x.key}|${x.last}`;
   if (fileCache.has(cacheKey)) return show(fileCache.get(cacheKey));
   fetch(`file.json${location.search}${location.search ? "&" : "?"}path=${encodeURIComponent(x.path)}`,
@@ -158,13 +167,14 @@ function renderViewer(x) {
 }
 
 const diffLines = (text, cls, sign) => text ? esc(text).split("\n").map(l => `<span class="${cls}">${sign} ${l}</span>`).join("") : "";
+const diffText = e => [[e.old, "-"], [e.new, "+"]].filter(([t]) => t).flatMap(([t, sign]) => t.split("\n").map(l => `${sign} ${l}`)).join("\n");
 function changesHtml(d) {
   if (!d.changes.length) return `<p class="empty">No recorded changes.</p>`;
   return d.changes.slice().reverse().map((c, i) => `<div class="change">
     <div class="chead">${when(c.t)} · <button class="goto" data-goto="${esc(c.agent)}">${esc(nameOf(c.agent))}</button> · `
     + `${c.edits ? `edit${c.edits.length > 1 ? ` in ${c.edits.length} places` : ""}` : c.tool === "Write" ? "wrote the whole file" : "notebook cell"}</div>`
-    + (c.edits ? c.edits.map(e => `<pre class="diff">${diffLines(e.old, "del", "-")}${diffLines(e.new, "add", "+")}</pre>`).join("")
-      : `<details${i === 0 ? " open" : ""}><summary>${c.content.split("\n").length} lines</summary><pre>${esc(c.content)}</pre></details>`)
+    + (c.edits ? c.edits.map(e => copyable(diffText(e), `<pre class="diff">${diffLines(e.old, "del", "-")}${diffLines(e.new, "add", "+")}</pre>`)).join("")
+      : `<details${i === 0 ? " open" : ""}><summary>${c.content.split("\n").length} lines</summary>${copyable(c.content, `<pre>${esc(c.content)}</pre>`)}</details>`)
     + `</div>`).join("");
 }
 const numbered = html => html.split("\n").map((l, i) => `<span class="ln">${i + 1}</span>${l}`).join("\n");
@@ -175,17 +185,17 @@ function currentHtml(d, path) {
     return `<p class="empty">This file isn't in the project or its worktrees now. It was probably deleted, renamed, or merged into
       another file by a shell command, or left in a worktree that has since been removed; the transcripts can't follow that.</p>`
       + (known === null ? "" : `<p class="sub">Last version an agent wrote, rebuilt from the transcript (its last full write plus later edits):</p>
-      <pre class="code">${numbered(highlight(known, path))}</pre>`);
+      ${copyable(known, `<pre class="code">${numbered(highlight(known, path))}</pre>`)}`);
   }
   if (c.binary) return `<p class="empty">Binary file: ${esc(c.path)}</p>`;
-  return `<p class="sub">${esc(c.path)}${c.truncated ? " (first 500 KB)" : ""}</p><pre class="code">${numbered(highlight(c.text, c.path))}</pre>`;
+  return `<p class="sub">${esc(c.path)}${c.truncated ? " (first 500 KB)" : ""}</p>${copyable(c.text, `<pre class="code">${numbered(highlight(c.text, c.path))}</pre>`)}`;
 }
 const isMarkdown = path => /\.(md|markdown|mdx)$/i.test(path);
 function previewHtml(d) {
   const c = d.current, text = c.missing ? lastKnown(d.changes) : c.binary ? null : c.text;
   if (text === null) return `<p class="empty">Nothing to preview.</p>`;
   return (c.missing ? `<p class="sub">Rebuilt from the transcript: this file isn't in the project now.</p>` : "")
-    + `<div class="md">${markdown(text)}</div>`;
+    + copyable(text, `<div class="md">${markdown(text)}</div>`, "Copy markdown");
 }
 
 // A small built-in markdown renderer. Everything is escaped first; only http(s) and mailto links are clickable,
@@ -426,10 +436,12 @@ function render() {
   $("list").innerHTML = html;
   for (const d of $("list").querySelectorAll("details[data-key]")) d.open = state.details.has(d.dataset.key);
   balance();
+  placeCopies($("list"));
   for (const el of $("list").querySelectorAll("[data-scroll]")) el.scrollTop = scrolls.get(el.dataset.scroll) || 0;
 
   const agentSecs = DATA.agents.reduce((s, a) => s + a.active, 0);
-  $("sub").textContent = `${DATA.project} / ${DATA.session}`;
+  $("sub").innerHTML = `${esc(DATA.project)} / ${esc(DATA.session)}${copyIcon(DATA.session, "Copy the session ID")}`
+    + copyIcon(`claude --resume ${DATA.session}`, `Copy a command that reopens this session (run it in ${m.cwd || "the project folder"})`, "⧉ resume command");
   $("title").textContent = DATA.title || "Agent timeline";
   document.title = DATA.title ? `${DATA.title} · Agent timeline` : "Agent timeline";
   const blocked = allHooks.filter(h => h.kind === "blocked").length;
@@ -447,7 +459,7 @@ function render() {
 // Give each column's scroll box (activity feed, reply) the slack, so neither leaves empty space.
 function balance() {
   const pairs = [...$("list").querySelectorAll(".cols")].flatMap(cols => [...cols.children].map(section =>
-    [section, section.querySelector(":scope > .feed, :scope > pre")]).filter(([, box]) => box));
+    [section, section.querySelector(":scope > .feed, :scope > pre, :scope > .copyable > pre")]).filter(([, box]) => box));
   for (const [, box] of pairs) { box.style.height = ""; box.style.maxHeight = ""; }
   for (const [section, box] of pairs) {
     const used = [...section.children].reduce((h, el) => { const s = getComputedStyle(el);
@@ -458,6 +470,36 @@ function balance() {
 }
 window.addEventListener("resize", () => { if (DATA) render(); });
 
+// Keep each Copy button clear of its block's scrollbar, which CSS alone can't detect.
+function placeCopies(root = document) {
+  for (const button of root.querySelectorAll(".copyable > .copy")) {
+    const box = button.nextElementSibling; if (!box) continue;
+    const s = getComputedStyle(box);
+    const bar = box.offsetWidth - box.clientWidth - parseFloat(s.borderLeftWidth) - parseFloat(s.borderRightWidth);
+    button.style.right = `${8 + Math.max(0, bar)}px`;
+  }
+}
+
+// One handler for every copy button, in the capture phase so a click never also toggles the row around it.
+document.addEventListener("click", async e => {
+  const button = e.target.closest("[data-copy]"); if (!button) return;
+  e.stopPropagation(); e.preventDefault();
+  const text = button.dataset.copy;
+  let ok = false;
+  try { await navigator.clipboard.writeText(text); ok = true; }
+  catch {  // no clipboard API (some file:// snapshots): fall back to a hidden textarea
+    const area = Object.assign(document.createElement("textarea"), {value: text});
+    area.style.cssText = "position:fixed;opacity:0";
+    document.body.appendChild(area); area.select();
+    try { ok = document.execCommand("copy"); } catch {}
+    area.remove();
+  }
+  const label = button.textContent;
+  button.textContent = ok ? (button.classList.contains("copy-icon") ? "✓" : "Copied") : "Copy failed";
+  button.classList.add("done");
+  setTimeout(() => { button.textContent = label; button.classList.remove("done"); }, 1200);
+}, true);
+
 function detail(a) {
   const feed = a.activity.slice().reverse().map(([t, tool, what]) =>
     `<li><span class="t">${clock(t)}</span><span class="tool" title="${esc(tool)}">${esc(tool.replace(/^mcp__.*?__/, ""))}</span><span class="what" title="${esc(what)}">${esc(what)}</span></li>`).join("");
@@ -465,21 +507,21 @@ function detail(a) {
   const hooks = a.hooks.slice().reverse().map((h, i) => `<li><div class="head"><span class="t">${clock(h.t)}</span>
       <span title="${esc(h.event)}">${esc(h.event)}</span><span class="tk-${h.kind}">${esc(h.kind)}</span>
       <span title="${esc(h.hook)}">${esc(h.hook)}</span><span class="t">${h.ms ? dur(h.ms / 1000) : ""}</span></div>
-      ${h.texts.length ? `<details data-key="hook-${a.id}-${h.t}-${i}"><summary>${esc(h.texts[0].split("\n")[0].slice(0, 120))}</summary><pre>${esc(h.texts.join("\n\n"))}</pre></details>` : ""}</li>`).join("");
+      ${h.texts.length ? `<details data-key="hook-${a.id}-${h.t}-${i}"><summary>${esc(h.texts[0].split("\n")[0].slice(0, 120))}</summary>${copyable(h.texts.join("\n\n"), `<pre>${esc(h.texts.join("\n\n"))}</pre>`)}</details>` : ""}</li>`).join("");
   const prompt = a.id === "main" ? "First prompt" : "Prompt";
   return `<div class="detail">
   <p class="statusline"><span class="s-${a.status}">${statusOf(a)[0]}</span> · ${esc(a.type)}${a.background ? " · background" : ""} · ${esc(a.model)}
     · started ${clock(a.start)} · ${dur(a.active)} active${a.segments.length > 1 ? ` in ${a.segments.length} parts` : ""} · last activity ${clock(a.end)}</p>
   <div class="cols">
     <section><h3>Latest activity</h3>${feed ? `<ol class="feed" data-scroll="feed-${a.id}">${feed}</ol>` : `<p class="empty">No tool calls yet.</p>`}</section>
-    <section><h3>${a.status === "done" ? "Result" : "Latest reply"}</h3>${a.final ? `<pre data-scroll="final-${a.id}">${esc(a.final)}</pre>` : `<p class="empty">Nothing yet.</p>`}</section>
+    <section><h3>${a.status === "done" ? "Result" : "Latest reply"}</h3>${a.final ? copyable(a.final, `<pre data-scroll="final-${a.id}">${esc(a.final)}</pre>`) : `<p class="empty">Nothing yet.</p>`}</section>
   </div>
   <details class="more" data-key="more-${a.id}"><summary>More: tokens, tools, ${prompt.toLowerCase()}, hooks (${a.hooks.length})</summary>
     <dl><dt title="Input includes cached context re-read on each turn">Tokens</dt><dd>${kt(a.tokens_in)} in / ${kt(a.tokens_out)} out</dd>
       <dt>Tools</dt><dd>${esc(tools)}</dd>
       <dt>Outputs</dt><dd>${a.files.length} file${a.files.length === 1 ? "" : "s"} changed · ${a.commits.length} commit${a.commits.length === 1 ? "" : "s"}${a.branch ? ` · branch ${esc(a.branch)}` : ""}${a.prs.map(p => ` · <a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.url.replace(/^.*\/pull\//, "PR #"))}</a>`).join("")}</dd>
-      <dt>Transcript</dt><dd>${esc(a.transcript)}</dd></dl>
-    <details data-key="prompt-${a.id}"><summary>${prompt}</summary><pre data-scroll="prompt-${a.id}">${esc(a.prompt)}</pre></details>
+      <dt>Transcript</dt><dd>${esc(a.transcript)}${copyIcon(a.transcript, "Copy the transcript path")}</dd></dl>
+    <details data-key="prompt-${a.id}"><summary>${prompt}</summary>${copyable(a.prompt, `<pre data-scroll="prompt-${a.id}">${esc(a.prompt)}</pre>`)}</details>
     <section class="hookbox"><h3>Hooks (${a.hooks.length})</h3>${hooks ? `<ol class="hooks" data-scroll="hooks-${a.id}">${hooks}</ol>` : `<p class="empty">No hook events recorded.</p>`}</section>
   </details></div>`;
 }
@@ -584,6 +626,7 @@ $("list").addEventListener("toggle", e => {
   const d = e.target; if (!d.dataset?.key) return;
   d.open ? state.details.add(d.dataset.key) : state.details.delete(d.dataset.key);
   balance();
+  placeCopies($("list"));
 }, true);
 $("chips").addEventListener("click", e => {
   const chip = e.target.closest(".chip"); if (!chip) return;

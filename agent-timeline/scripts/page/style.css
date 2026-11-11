@@ -6,6 +6,14 @@
 :root[data-theme="dark"] { --bg:#181816; --fg:#ecebe7; --muted:#a09e98; --line:#34332f; --card:#211f1d;
   --hover:#2a2826; --main:#6f6d68; --run:#6ea1f2; --quiet:#b294f7; --stall:#f0b85a; --done:#4ccf7f; --chapter:#f87171; }
 :root { color-scheme:light dark; } :root[data-theme="light"] { color-scheme:light; } :root[data-theme="dark"] { color-scheme:dark; }
+.copyable { position:relative; margin:0 0 10px; } .copyable > pre { margin-bottom:0; }
+.copy { position:absolute; top:6px; right:8px; z-index:1; font:inherit; font-size:11px; padding:2px 8px; border:1px solid var(--line);
+  border-radius:5px; background:var(--card); color:var(--muted); cursor:pointer; opacity:0; transition:opacity .12s; }
+.copyable:hover > .copy, .copy:focus-visible, .copy.done { opacity:1; } .copy:hover { color:var(--fg); }
+@media (hover:none) { .copy { opacity:1; } }
+.copy-icon { font:inherit; font-size:12px; line-height:1; background:none; border:1px solid transparent; border-radius:4px; color:var(--muted);
+  cursor:pointer; padding:1px 4px; margin-left:4px; vertical-align:baseline; }
+.copy-icon:hover, .copy-icon:focus-visible { color:var(--fg); border-color:var(--line); outline:none; } .copy-icon.done { color:var(--done); }
 .theme { float:right; display:flex; gap:4px; margin:0 0 8px 12px; }
 .theme .chip { font-size:12px; padding:2px 9px; }
 * { box-sizing:border-box; }
