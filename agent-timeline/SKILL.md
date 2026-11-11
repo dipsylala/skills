@@ -1,12 +1,12 @@
 ---
 name: agent-timeline
-description: Show a live timeline of a Claude Code session's subagents and hook events, with each agent's status, recent activity, and result. Claude Code only.
+description: Show a live timeline of a Claude Code session's subagents and hook events, with each agent's status, recent activity, and result, plus the files, commits, and pull requests they produced. Claude Code only.
 disable-model-invocation: true
 ---
 
 # Agent Timeline
 
-Show the user a timeline of the subagents and hook events in a Claude Code session. The script only reads the transcripts Claude Code already writes under `~/.claude/projects`; it changes nothing about how agents run. It does not read Codex or other tools' sessions.
+Show the user a timeline of the subagents and hook events in a Claude Code session, and what they produced. The script reads the transcripts Claude Code already writes under `~/.claude/projects` and, for the live file viewer, the current copies of files those transcripts show agents changing; it writes nothing and changes nothing about how agents run. It does not read Codex or other tools' sessions.
 
 ## Run it
 
@@ -34,10 +34,11 @@ The server stops itself 10 minutes after the last page showing any session is cl
 - Hovering a bar shows that agent's status, result, start and finish, tokens, and top tools; hovering a hook marker shows its output, with hooks too close to tell apart listed together.
 - Clicking a row shows its latest tool calls and its result or latest reply; "More" adds tokens, tools, the prompt, and hook events.
 - "Full width" removes the page's width limit; the browser remembers the choice while the same server runs.
+- The Outputs tab lists the files agents changed as a folder tree, marking files that several agents changed (and those changed by agents running at the same time, a likely merge conflict). Selecting a file shows each agent's changes as diffs, the file as it is now with syntax colouring, and, for markdown, a rendered preview. If the file no longer exists, the viewer rebuilds its last known version from the transcript. Commits and pull requests are listed below the tree. Files come from Write and Edit calls only; changes made through shell commands are not tracked. The file viewer needs the live view.
 
 ## Privacy
 
-The page shows prompts, replies, commands, and file paths from the user's transcripts. The live server listens only on 127.0.0.1, uses a random port, and serves data only with the token in the URL. Because one server covers all of the user's sessions, its token opens any of them; the token is kept in `~/.claude/agent-timeline/server.json`, readable only by the user. `--open` keeps the token off the browser's command line, which other local users can read on some systems: it opens a short-lived redirect file that only the user can read. Do not paste the page's content or the URL anywhere outside this conversation.
+The page shows prompts, replies, commands, file paths, and file contents from the user's transcripts. The file viewer also reads current files from disk, but only files that the session's transcripts show agents changing; it refuses any other path. The page loads no third-party code: syntax colouring and markdown rendering are built in, markdown images are not loaded, and only http(s) and mailto links are clickable. The live server listens only on 127.0.0.1, uses a random port, and serves data only with the token in the URL. Because one server covers all of the user's sessions, its token opens any of them; the token is kept in `~/.claude/agent-timeline/server.json`, readable only by the user. `--open` keeps the token off the browser's command line, which other local users can read on some systems: it opens a short-lived redirect file that only the user can read. Do not paste the page's content or the URL anywhere outside this conversation.
 
 ## Limits
 
