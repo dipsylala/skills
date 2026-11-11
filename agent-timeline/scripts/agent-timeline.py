@@ -533,7 +533,7 @@ def collect(session):
         "main": {"running": now - main["end"] <= RUNNING_WINDOW, "transcript": str(session), "branch": "",
                  **outputs(main, [main["cwd"]]),
                  **{k: main[k] for k in ("start", "end", "segments", "active", "models", "tokens_in", "tokens_out",
-                                         "tools", "prompt", "final", "activity", "hooks")}},
+                                         "tools", "prompt", "final", "activity", "hooks", "cwd")}},
         "chapters": main["chapters"],
         "agents": agents,
     }
