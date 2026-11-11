@@ -60,7 +60,6 @@ IDLE_GAP = 600        # seconds without a transcript entry that split activity i
 RUNNING_WINDOW = 120  # seconds since the last entry for an unfinished agent to count as running
 STALL_AFTER = 600     # seconds of silence after which an unfinished agent counts as stalled
 RESULT_LINE = re.compile(r"^\s*(STATUS|VERDICT):", re.M)
-STAGE = re.compile(r"^\s*(?:S|Stage\s*)(\d+)\b", re.I)
 HOOK_KINDS = ["ran", "context", "message", "cancelled", "error", "blocked"]  # least to most severe
 BRIEF_KEYS = ("command", "file_path", "path", "pattern", "url", "description", "query", "title", "message", "prompt")
 
@@ -229,7 +228,7 @@ def summarise_uncached(path):
                 elif name.endswith("mark_chapter") and t is not None:
                     chapters.append({"t": t, "title": tool_input.get("title", "")})
                 elif name in SPAWN_TOOLS:
-                    spawns[block.get("id")] = {"t": t, "input": tool_input}
+                    spawns[block.get("id")] = {"t": t, "input": tool_input, "message": message.get("id")}
     segments = []
     for t in sorted(times):
         if segments and t - segments[-1][1] <= IDLE_GAP:
@@ -267,29 +266,46 @@ def summarise(path):
 
 
 def status_of(info, meta, meta_mtime, now):
-    finished = meta.get("finished") is True if "finished" in meta else info["ended"]
-    if finished and meta_mtime and info["mtime"] > meta_mtime + 5:
-        finished = False  # resumed after it last finished
+    if "finished" in meta:  # newer Claude Code rewrites the meta file when the agent finishes
+        finished = meta["finished"] is True
+        if finished and meta_mtime and info["mtime"] > meta_mtime + 5:
+            finished = False  # resumed after it last finished
+    else:  # older versions write it once at the start, so only the transcript can tell
+        finished = info["ended"]
     age = now - info["end"]
     if finished:
         return "done"
     return "running" if age <= RUNNING_WINDOW else "quiet" if age <= STALL_AFTER else "stalled"
 
 
-def group_of(description, start, chapters):
-    stage = STAGE.match(description)
-    if stage:
-        return f"Stage {int(stage.group(1))}"
-    titles = [c["title"] for c in chapters if c["t"] <= start]
-    return titles[-1] if titles else "Agents"
+def batch_label(descriptions):
+    """The words every description starts with (stopping after a "Name:" word), else the first one.
+
+    When the descriptions differ by a number right after those words ("Ticket 28 ...", "Ticket 29 ..."),
+    the shared words alone say nothing, so the first description is used instead.
+    """
+    if len(descriptions) == 1:
+        return descriptions[0]
+    words = [d.split() for d in descriptions]
+    common = []
+    for column in zip(*words):
+        if len({w.lower() for w in column}) > 1:
+            break
+        common.append(column[0])
+        if column[0].endswith(":"):
+            break
+    numbered = all(len(w) > len(common) and w[len(common)][:1].isdigit() for w in words)
+    label = "" if numbered else " ".join(common).rstrip(":-– ")
+    return label or f"{descriptions[0]} + {len(descriptions) - 1} more"
 
 
 def collect(session):
     now = time.time()
     main = summarise(session)
-    agents = []
+    agents, spawned_in = [], {}
     for transcript in sorted((session.parent / session.stem / "subagents").glob("agent-*.jsonl")):
         info = summarise(transcript)
+        spawned_in.update({k: s.get("message") for k, s in info["spawns"].items()})  # agents started by this agent
         if info["start"] is None:
             continue
         meta_path = transcript.with_suffix(".meta.json")
@@ -302,7 +318,7 @@ def collect(session):
         agents.append({
             "id": agent_id,
             "description": description,
-            "group": group_of(description, info["start"], main["chapters"]),
+            "spawn_id": meta.get("toolUseId") or launch.get("tool_use_id"),
             "status": status_of(info, meta, meta_path.stat().st_mtime if meta else None, now),
             "type": meta.get("agentType") or spawn_input.get("subagent_type") or "",
             "model": ", ".join(info["models"]) or meta.get("pickedEffortModel") or launch.get("model") or "",
@@ -313,6 +329,15 @@ def collect(session):
                                     "tokens_out", "prompt", "final", "result", "activity", "hooks")},
         })
     agents.sort(key=lambda a: a["start"])
+    # Agents started from the same message (launched together) form one group; others stand alone.
+    spawned_in.update({k: s.get("message") for k, s in main["spawns"].items()})
+    batches = {}
+    for a in agents:
+        batches.setdefault(spawned_in.get(a.pop("spawn_id")) or a["id"], []).append(a)
+    for key, members in batches.items():
+        label = batch_label([a["description"] for a in members])
+        for a in members:
+            a["group"], a["group_label"] = key, label
     return {
         "now": now,
         "session": session.stem,
@@ -343,10 +368,13 @@ PAGE = r"""<!doctype html>
 body { margin:0; padding:24px 16px 48px; background:var(--bg); color:var(--fg);
   font:14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
 main { max-width:1280px; margin:0 auto; }
+main.wide { max-width:none; }
+[hidden] { display:none !important; }
 h1 { font-size:20px; margin:0 0 2px; }
 .sub { color:var(--muted); margin:0 0 12px; word-break:break-all; font-size:12px; }
 .stats { display:flex; flex-wrap:wrap; gap:6px 22px; margin:0 0 14px; }
 .stats b { font-variant-numeric:tabular-nums; }
+.stats [title] { text-decoration:underline dotted var(--muted); text-underline-offset:3px; cursor:help; }
 .live { font-size:12px; color:var(--muted); }
 .live .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--run); margin-right:6px; animation:pulse 1.6s infinite; }
 .live.off .dot { background:var(--stall); animation:none; }
@@ -360,10 +388,18 @@ input[type=search] { flex:1 1 180px; max-width:280px; }
 .list { background:var(--card); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
 .row { display:grid; grid-template-columns:22px minmax(140px, 26%) 1fr 84px; gap:8px; align-items:center; padding:0 10px; min-height:30px; }
 .axis { position:sticky; top:0; z-index:2; background:var(--card); border-bottom:1px solid var(--line); height:26px; }
-.group { font-size:12px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; padding:10px 10px 4px; border-top:1px solid var(--line); }
-.group:first-of-type { border-top:0; }
+.grouprow { cursor:pointer; border-top:1px solid var(--line); }
+.grouprow .name { font-weight:600; }
+.grouprow .name small { font-weight:400; }
+.grouprow .chev { color:var(--muted); }
 .agent { cursor:pointer; border-top:1px solid transparent; }
-.agent:hover, .agent:focus-visible, .agent.hl { background:var(--hover); outline:none; }
+.agent:hover, .agent:focus-visible, .agent.hl, .grouprow:hover, .grouprow:focus-visible { background:var(--hover); outline:none; }
+.attention { margin:0 0 12px; padding:6px 10px; border:1px solid var(--stall); border-radius:6px; font-size:13px; }
+.attention small { color:var(--muted); }
+.goto { font:inherit; color:inherit; background:none; border:0; padding:0; text-decoration:underline; cursor:pointer; }
+.statusline { font-size:12px; color:var(--muted); margin:0 0 10px; }
+.more { margin-top:12px; }
+.more > summary { margin-bottom:8px; }
 .agent[aria-expanded="true"] { background:var(--hover); }
 .badge { font-size:13px; text-align:center; }
 .name { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:13px; }
@@ -374,14 +410,23 @@ input[type=search] { flex:1 1 180px; max-width:280px; }
 .nowline { position:absolute; top:0; bottom:0; border-left:2px solid var(--run); opacity:.5; }
 .chapter { position:absolute; top:0; bottom:0; border-left:2px solid var(--chapter); opacity:.5; }
 .bar { position:absolute; top:9px; height:12px; border-radius:3px; min-width:3px; }
+.bar::after { content:""; position:absolute; inset:-6px 0; }  /* taller hover area for the tooltip */
 .bar.running { background-image:repeating-linear-gradient(45deg, transparent 0 5px, rgba(255,255,255,.35) 5px 10px); background-size:14px 14px; animation:slide 1s linear infinite; }
 @keyframes slide { to { background-position:14px 0; } }
 .num { text-align:right; font-variant-numeric:tabular-nums; font-size:12px; color:var(--muted); white-space:nowrap; }
 .s-running { color:var(--run); } .s-quiet { color:var(--quiet); } .s-stalled { color:var(--stall); } .s-done { color:var(--done); }
 .b-running { background-color:var(--run); } .b-quiet { background-color:var(--quiet); } .b-stalled { background-color:var(--stall); } .b-done { background-color:var(--done); } .b-main { background-color:var(--main); }
-.hook { position:absolute; top:2px; width:7px; height:7px; margin-left:-3px; transform:rotate(45deg); border-radius:1px; z-index:1; }
-.k-blocked, .k-error { background:var(--chapter); } .k-message, .k-context { background:var(--stall); }
-.k-cancelled { background:var(--muted); } .k-ran { background:var(--muted); opacity:.45; }
+/* The marker is a 16px-wide hit area; the small diamond is drawn inside it. */
+.hook { position:absolute; top:0; width:16px; height:16px; margin-left:-8px; z-index:1; }
+.hook::before { content:""; position:absolute; left:4px; top:3px; width:8px; height:8px; transform:rotate(45deg); border-radius:1px; background:var(--k); }
+.hook.multi::before { box-shadow:0 0 0 2px var(--card); }
+.hook:hover::before { transform:rotate(45deg) scale(1.4); }
+.k-blocked, .k-error { --k:var(--chapter); } .k-message, .k-context { --k:var(--stall); }
+.k-cancelled { --k:var(--muted); } .k-ran { --k:var(--muted); } .k-ran::before { opacity:.45; }
+.tip { position:fixed; z-index:10; max-width:420px; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--card);
+  box-shadow:0 4px 14px rgba(0,0,0,.18); font-size:12px; white-space:pre-line; pointer-events:none; }
+.tip b { font-weight:600; }
+.tip .entry + .entry { border-top:1px solid var(--muted); margin-top:7px; padding-top:7px; }
 .tk-blocked, .tk-error { color:var(--chapter); } .tk-message, .tk-context { color:var(--stall); } .tk-cancelled, .tk-ran { color:var(--muted); }
 .hooks { list-style:none; margin:0; padding:0; font-size:12px; max-height:280px; overflow:auto; }
 .hooks li { padding:3px 0; border-bottom:1px dotted var(--line); }
@@ -393,7 +438,7 @@ input[type=search] { flex:1 1 180px; max-width:280px; }
 .cols { display:grid; grid-template-columns:minmax(0, 1.1fr) minmax(0, 1fr); gap:20px; }
 @media (max-width:760px) { .cols { grid-template-columns:1fr; } .row { grid-template-columns:22px minmax(110px, 38%) 1fr 64px; } .detail { padding-left:14px; } }
 .detail h3 { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 6px; }
-.feed { list-style:none; margin:0; padding:0; font-size:12px; max-height:320px; overflow:auto; }
+.feed { list-style:none; margin:0; padding:0; font-size:12px; max-height:180px; overflow:auto; }
 .feed li { display:grid; grid-template-columns:62px 110px 1fr; gap:8px; padding:2px 0; border-bottom:1px dotted var(--line); }
 .feed .t { color:var(--muted); font-variant-numeric:tabular-nums; }
 .feed .tool { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -410,6 +455,7 @@ details summary { cursor:pointer; color:var(--muted); font-size:12px; margin-bot
 <h1>Agent timeline</h1>
 <p class="sub" id="sub"></p>
 <div class="stats" id="stats"></div>
+<div class="attention" id="attention" hidden></div>
 <div class="controls">
   <span id="chips"></span>
   <input type="search" id="q" placeholder="Filter agents" aria-label="Filter agents">
@@ -418,15 +464,26 @@ details summary { cursor:pointer; color:var(--muted); font-size:12px; margin-bot
     <option value="session">Whole session</option>
     <option value="recent">Last 30 minutes</option>
   </select>
+  <button class="chip" id="wide" aria-pressed="false" title="Use the full window width">⇔ Full width</button>
   <span class="live" id="live"></span>
 </div>
 <div class="list" id="list"></div>
 </main>
+<div class="tip" id="tip" role="tooltip" hidden></div>
 <script>
 const LIVE = __LIVE__;
 let DATA = __DATA__;
 const STATUS = {running: ["Running", "●"], quiet: ["Quiet", "◐"], stalled: ["Stalled", "⚠"], done: ["Done", "✓"]};
-const state = {open: new Set(), details: new Set(), hide: new Set(), hooks: true, q: "", range: "fit"};
+// Hook markers: "notable" hides routine runs that printed nothing; the Hooks chip cycles through the modes.
+const NOTABLE = new Set(["blocked", "error", "message", "context"]);
+const HOOK_MODES = {notable: ["Notable hooks", "all"], all: ["All hooks", "off"], off: ["Hooks off", "notable"]};
+const state = {open: new Set(), details: new Set(), hide: new Set(), groups: new Map(), hooks: "notable", q: "", range: "fit"};
+const SEVERITY = ["ran", "context", "message", "cancelled", "error", "blocked"];  // least to most, as in HOOK_KINDS
+const KEEP = 8, EARLIER = "earlier";  // groups or rows kept outside the Earlier fold; its state key
+let foldedIds = new Set();
+const groupStatus = agents => ["running", "stalled", "quiet"].find(s => agents.some(a => a.status === s)) || "done";
+const tally = agents => Object.keys(STATUS).map(k => [k, agents.filter(a => a.status === k).length]).filter(([, n]) => n)
+  .map(([k, n]) => `${n} ${STATUS[k][0].toLowerCase()}`).join(" · ");
 const statusOf = a => STATUS[a.status] || ["Idle", "·"];
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
@@ -438,6 +495,23 @@ const clock = t => new Date(t * 1000).toLocaleTimeString([], {hour: "2-digit", m
 function segmentsOf(a) {
   // A running agent is still working: draw its last bar up to now.
   return a.status === "running" ? a.segments.map((s, i, all) => i === all.length - 1 ? [s[0], Math.max(s[1], DATA.now)] : s) : a.segments;
+}
+
+// Times on other days than the data's "now" carry their date.
+const when = t => new Date(t * 1000).toDateString() === new Date(DATA.now * 1000).toDateString() ? clock(t)
+  : new Date(t * 1000).toLocaleString([], {month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"});
+
+// Tooltip for one bar: who and how it ended, when, and what it used.
+function barTip(a) {
+  const tools = Object.entries(a.tools).sort((p, q) => q[1] - p[1]);
+  const calls = tools.reduce((sum, [, v]) => sum + v, 0);
+  const top = tools.slice(0, 3).map(([k, v]) => `${k.replace(/^mcp__.*?__/, "")} ${v}`).join(", ");
+  const [name] = statusOf(a);
+  const finish = a.status === "running" ? "still running" : a.status === "done" ? `finished ${when(a.end)}` : `${name.toLowerCase()} since ${when(a.end)}`;
+  return `<div class="entry"><b>${esc(a.description)}</b> · <span class="s-${a.status}">${name}</span>${a.result ? "\n" + esc(a.result.slice(0, 200)) : ""}</div>`
+    + `<div class="entry">Started ${when(a.start)} · ${finish}\n${dur(a.active)} active</div>`
+    + `<div class="entry">${kt(a.tokens_out)} output tokens · ${kt(a.tokens_in)} input (including cached context)\n`
+    + `${esc(a.model)}${a.type ? " · " + esc(a.type) : ""}\n${calls} tool call${calls === 1 ? "" : "s"}${top ? ": " + esc(top) : ""}</div>`;
 }
 
 function range() {
@@ -454,10 +528,12 @@ function range() {
 function render() {
   const [lo, hi] = range();
   const x = t => Math.min(100, Math.max(0, (t - lo) / (hi - lo) * 100));
-  const bar = (s, e, cls) => e < lo || s > hi ? "" :
-    `<div class="bar ${cls}" style="left:${x(s)}%;width:${Math.max(0, x(e) - x(s))}%"></div>`;
+  const bar = (s, e, cls, tip) => e < lo || s > hi ? "" :
+    `<div class="bar ${cls}" style="left:${x(s)}%;width:${Math.max(0, x(e) - x(s))}%" data-tip="${esc(tip)}"></div>`;
+  const bars = (a, cls) => { const tip = barTip(a); return segmentsOf(a).map(([s, e]) => bar(s, e, cls, tip)).join(""); };
   const steps = [10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400, 21600, 43200, 86400, 172800, 604800];
-  const step = steps.find(s => (hi - lo) / s <= 7) || 1209600;
+  const maxTicks = Math.max(4, Math.floor($("list").clientWidth * 0.6 / 130));  // more labels on wide screens
+  const step = steps.find(s => (hi - lo) / s <= maxTicks) || 1209600;
   const label = t => step >= 86400 ? new Date(t * 1000).toLocaleDateString([], {month: "short", day: "numeric"})
     : hi - lo > 86400 ? new Date(t * 1000).toLocaleString([], {weekday: "short", hour: "2-digit", minute: "2-digit"})
     : new Date(t * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", ...(step < 60 ? {second: "2-digit"} : {})});
@@ -470,43 +546,98 @@ function render() {
   const counts = {running: 0, quiet: 0, stalled: 0, done: 0};
   DATA.agents.forEach(a => counts[a.status]++);
   const allHooks = [DATA.main, ...DATA.agents].flatMap(a => a.hooks);
+  const notableCount = allHooks.filter(h => NOTABLE.has(h.kind)).length;
   $("chips").innerHTML = Object.entries(STATUS).map(([k, [name, icon]]) =>
     `<button class="chip" data-status="${k}" aria-pressed="${!state.hide.has(k)}"><span class="s-${k}">${icon}</span> ${name}<span class="n">${counts[k]}</span></button>`).join(" ")
-    + ` <button class="chip" data-hooks aria-pressed="${state.hooks}" title="Show hook events on the timeline"><span class="tk-message">◆</span> Hooks<span class="n">${allHooks.length}</span></button>`;
-  const markers = a => !state.hooks ? "" : a.hooks.filter(h => h.t >= lo && h.t <= hi).map(h =>
-    `<div class="hook k-${h.kind}" style="left:${x(h.t)}%" title="${esc(`${clock(h.t)} · ${h.event} · ${h.kind}${h.hook ? " · " + h.hook : ""}${h.texts[0] ? "\n" + h.texts[0].slice(0, 240) : ""}`)}"></div>`).join("");
+    + ` <button class="chip" data-hooks aria-pressed="${state.hooks !== "off"}" title="Hook markers: notable only, all, or none (click to cycle)"><span class="tk-message">◆</span> ${HOOK_MODES[state.hooks][0]}<span class="n">${state.hooks === "all" ? allHooks.length : notableCount}</span></button>`;
+  // Hooks closer than a marker's width share one marker, coloured by the most severe; its tooltip lists them all.
+  const near = 12 / Math.max(200, $("list").clientWidth * 0.65) * 100;  // 12px as a share of the track
+  const markers = hooks => {
+    if (state.hooks === "off") return "";
+    const clusters = [];
+    hooks.filter(h => h.t >= lo && h.t <= hi && (state.hooks === "all" || NOTABLE.has(h.kind)))
+      .sort((a, b) => a.t - b.t).forEach(h => {
+        const last = clusters.at(-1);
+        if (last && x(h.t) - x(last.hooks[0].t) < near) last.hooks.push(h); else clusters.push({hooks: [h]});
+      });
+    return clusters.map(({hooks: hs}) => {
+      const kind = hs.map(h => h.kind).reduce((a, b) => SEVERITY.indexOf(b) > SEVERITY.indexOf(a) ? b : a);
+      const tip = hs.slice(0, 6).map(h => `<div class="entry"><b>${clock(h.t)} · ${esc(h.event)} · ${esc(h.kind)}</b>${h.hook ? " · " + esc(h.hook) : ""}`
+        + (h.texts[0] ? "\n" + esc(h.texts[0].slice(0, 240)) : "") + "</div>").join("")
+        + (hs.length > 6 ? `<div class="entry">+${hs.length - 6} more</div>` : "");
+      return `<div class="hook k-${kind}${hs.length > 1 ? " multi" : ""}" style="left:${x(hs[0].t)}%" data-tip="${esc(tip)}"></div>`;
+    }).join("");
+  };
 
   const q = state.q.toLowerCase();
   const shown = DATA.agents.filter(a => !state.hide.has(a.status) &&
-    (!q || [a.description, a.type, a.model, a.result, a.group].join(" ").toLowerCase().includes(q)));
+    (!q || [a.description, a.type, a.model, a.result, a.group_label].join(" ").toLowerCase().includes(q)));
+  // Agents launched from the same message share a group; one launched alone is a plain row.
   const groups = [];
-  shown.forEach(a => { let g = groups.find(g => g.name === a.group); if (!g) groups.push(g = {name: a.group, agents: []}); g.agents.push(a); });
+  shown.forEach(a => { let g = groups.find(g => g.name === a.group); if (!g) groups.push(g = {name: a.group, label: a.group_label, agents: []}); g.agents.push(a); });
+  // Finished groups start collapsed in long runs; a search, or the user's own choice, overrides that.
+  const groupOpen = g => q ? true : state.groups.has(g.name) ? state.groups.get(g.name)
+    : shown.length <= 6 || groupStatus(g.agents) !== "done";
 
   const m = DATA.main;
   const mainRow = {...m, id: "main", description: "Main session", status: m.running ? "running" : "idle",
     type: "main session", model: m.models.join(", "), depth: 1, background: false};
+
+  // Stalled agents and recent blocked or failed hooks; older ones only count in the stats.
+  const urgent = h => (h.kind === "blocked" || h.kind === "error") && DATA.now - h.t < 900;
+  const attention = [mainRow, ...DATA.agents].filter(a => a.status === "stalled" || a.hooks.some(urgent)).map(a =>
+    `<button class="goto" data-goto="${esc(a.id)}">${esc(a.description)}</button> <small>(${a.status === "stalled" ? "stalled" : `hook ${a.hooks.filter(urgent).at(-1).kind}`})</small>`);
+  $("attention").hidden = !attention.length;
+  $("attention").innerHTML = attention.length ? `<b>Needs attention:</b> ${attention.join(", ")}` : "";
   const mainOpen = state.open.has("main");
   let html = `<div class="row axis"><span></span><span class="name" style="color:var(--muted);font-size:12px">${shown.length} of ${DATA.agents.length} agents</span>
       <div class="track">${tickTimes.map(t => `<div class="tick" style="left:${x(t)}%">${label(t)}</div>`).join("")}</div><span class="num">active</span></div>
     <div class="row agent" data-id="main" tabindex="0" role="button" aria-expanded="${mainOpen}">
       <span class="badge s-${mainRow.status}" title="${m.running ? "Main session active" : "Main session idle"}">${statusOf(mainRow)[1]}</span>
       <span class="name">Main session<small>${esc(mainRow.model.replace(/^claude-/, ""))}</small></span>
-      <div class="track">${grid}${segmentsOf(mainRow).map(([s, e]) => bar(s, e, "b-main")).join("")}${markers(m)}</div>
+      <div class="track">${grid}${bars(mainRow, "b-main")}${markers(m.hooks)}</div>
       <span class="num">${dur(m.active)}</span></div>${mainOpen ? detail(mainRow) : ""}`;
   if (!DATA.agents.length) html += `<div class="empty">No subagents in this session yet.</div>`;
   else if (!shown.length) html += `<div class="empty">No agents match the filters.</div>`;
-  for (const g of groups) {
-    html += `<div class="group">${esc(g.name)}</div>`;
-    for (const a of g.agents) {
-      const open = state.open.has(a.id);
-      html += `<div class="row agent" data-id="${a.id}" tabindex="0" role="button" aria-expanded="${open}">
-        <span class="badge s-${a.status}" title="${STATUS[a.status][0]}">${STATUS[a.status][1]}</span>
-        <span class="name" title="${esc(a.description)}">${"&nbsp;&nbsp;".repeat(Math.max(0, a.depth - 1))}${esc(a.description)}<small>${esc(a.model.replace(/^claude-/, ""))}</small></span>
-        <div class="track">${grid}${segmentsOf(a).map(([s, e]) => bar(s, e, `b-${a.status}${a.status === "running" ? " running" : ""}`)).join("")}${markers(a)}</div>
-        <span class="num">${dur(a.active)}</span></div>`;
-      if (open) html += detail(a);
-    }
+  // A collapsible header row; collapsed, it draws all its agents' bars and hooks on one line.
+  const hhmm = t => new Date(t * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+  const header = (key, label, agents, open, note) => {
+    const track = open ? "" : agents.map(a => bars(a, `b-${a.status}`)).join("")
+      + markers(agents.flatMap(a => a.hooks));
+    return `<div class="row grouprow" data-group="${esc(key)}" tabindex="0" role="button" aria-expanded="${open}">
+      <span class="badge chev">${open ? "▾" : "▸"}</span>
+      <span class="name" title="${esc(label)}">${esc(label)}<small>${agents.length} agents · ${groupStatus(agents) === "done" ? "all done" : tally(agents)} · ${note}</small></span>
+      <div class="track">${grid}${track}</div>
+      <span class="num">${dur(agents.reduce((s, a) => s + a.active, 0))}</span></div>`;
+  };
+  const agentRow = a => {
+    const open = state.open.has(a.id);
+    return `<div class="row agent" data-id="${a.id}" tabindex="0" role="button" aria-expanded="${open}">
+      <span class="badge s-${a.status}" title="${STATUS[a.status][0]}">${STATUS[a.status][1]}</span>
+      <span class="name" title="${esc(a.description)}">${"&nbsp;&nbsp;".repeat(Math.max(0, a.depth - 1))}${esc(a.description)}<small>${esc(a.model.replace(/^claude-/, ""))}</small></span>
+      <div class="track">${grid}${bars(a, `b-${a.status}${a.status === "running" ? " running" : ""}`)}${markers(a.hooks)}</div>
+      <span class="num">${dur(a.active)}</span></div>${open ? detail(a) : ""}`;
+  };
+  const unit = g => {
+    if (g.agents.length === 1) return agentRow(g.agents[0]);
+    const open = groupOpen(g);
+    return header(g.name, g.label, g.agents, open, hhmm(g.agents[0].start)) + (open ? g.agents.map(agentRow).join("") : "");
+  };
+  // Long runs fold finished work before the latest KEEP groups or rows into one "Earlier" row.
+  // Anything unfinished stays visible, and a search shows every match.
+  const foldable = q ? [] : groups.slice(0, -KEEP).filter(g => groupStatus(g.agents) === "done");
+  const folded = new Set(foldable.length >= 3 ? foldable : []);
+  foldedIds = new Set([...folded].flatMap(g => g.agents.map(a => a.id)));
+  if (folded.size) {
+    const agents = [...folded].flatMap(g => g.agents), open = state.groups.get(EARLIER) === true;
+    const last = Math.max(...agents.map(a => a.end));
+    const day = t => new Date(t * 1000).toLocaleDateString([], {month: "short", day: "numeric"});
+    const span = day(agents[0].start) === day(last) ? `${hhmm(agents[0].start)}–${hhmm(last)}`
+      : `${day(agents[0].start)} ${hhmm(agents[0].start)} – ${day(last)} ${hhmm(last)}`;
+    html += header(EARLIER, "Earlier", agents, open, span)
+      + (open ? [...folded].map(unit).join("") : "");
   }
+  html += groups.filter(g => !folded.has(g)).map(unit).join("");
   const scrolls = new Map([...$("list").querySelectorAll("[data-scroll]")].map(el => [el.dataset.scroll, el.scrollTop]));
   $("list").innerHTML = html;
   for (const d of $("list").querySelectorAll("details[data-key]")) d.open = state.details.has(d.dataset.key);
@@ -515,14 +646,14 @@ function render() {
 
   const agentSecs = DATA.agents.reduce((s, a) => s + a.active, 0);
   $("sub").textContent = `${DATA.project} / ${DATA.session}`;
+  const blocked = allHooks.filter(h => h.kind === "blocked").length;
+  const totals = `Agent time ${dur(agentSecs)} · agent output tokens ${kt(DATA.agents.reduce((s, a) => s + a.tokens_out, 0))}`
+    + ` · main output tokens ${kt(m.tokens_out)} · ${allHooks.length} hook events`;
   $("stats").innerHTML = [
     ["Session", `${dur(m.active)} active over ${dur((m.running ? DATA.now : m.end) - m.start)}`],
-    ["Agents", DATA.agents.length],
-    ["Agent time", dur(agentSecs)],
-    ["Agent output tokens", kt(DATA.agents.reduce((s, a) => s + a.tokens_out, 0))],
-    ["Main output tokens", kt(m.tokens_out)],
-    ["Hooks", `${allHooks.length} · ${allHooks.filter(h => h.kind === "blocked").length} blocked`],
-  ].map(([k, v]) => `<span>${k}: <b>${v}</b></span>`).join("");
+    ["Agents", tally(DATA.agents) || "none", totals],
+    ...(blocked ? [["Blocked hooks", blocked]] : []),
+  ].map(([k, v, title]) => `<span${title ? ` title="${esc(title)}"` : ""}>${k}: <b>${v}</b></span>`).join("");
 }
 
 // The two detail columns share a grid row, so both are as tall as the taller one.
@@ -538,7 +669,7 @@ function balance() {
     if (slack > 1) { const height = box.offsetHeight + slack; box.style.maxHeight = "none"; box.style.height = `${height}px`; }
   }
 }
-window.addEventListener("resize", balance);
+window.addEventListener("resize", () => { if (DATA) render(); });
 
 function detail(a) {
   const feed = a.activity.slice().reverse().map(([t, tool, what]) =>
@@ -548,29 +679,44 @@ function detail(a) {
       <span title="${esc(h.event)}">${esc(h.event)}</span><span class="tk-${h.kind}">${esc(h.kind)}</span>
       <span title="${esc(h.hook)}">${esc(h.hook)}</span><span class="t">${h.ms ? dur(h.ms / 1000) : ""}</span></div>
       ${h.texts.length ? `<details data-key="hook-${a.id}-${h.t}-${i}"><summary>${esc(h.texts[0].split("\n")[0].slice(0, 120))}</summary><pre>${esc(h.texts.join("\n\n"))}</pre></details>` : ""}</li>`).join("");
-  return `<div class="detail"><div class="cols">
+  const prompt = a.id === "main" ? "First prompt" : "Prompt";
+  return `<div class="detail">
+  <p class="statusline"><span class="s-${a.status}">${statusOf(a)[0]}</span> · ${esc(a.type)}${a.background ? " · background" : ""} · ${esc(a.model)}
+    · started ${clock(a.start)} · ${dur(a.active)} active${a.segments.length > 1 ? ` in ${a.segments.length} parts` : ""} · last activity ${clock(a.end)}</p>
+  <div class="cols">
     <section><h3>Latest activity</h3>${feed ? `<ol class="feed" data-scroll="feed-${a.id}">${feed}</ol>` : `<p class="empty">No tool calls yet.</p>`}</section>
-    <section><h3>${a.status === "done" ? "Result" : "Latest reply"}</h3>${a.final ? `<pre data-scroll="final-${a.id}">${esc(a.final)}</pre>` : `<p class="empty">Nothing yet.</p>`}
-      <dl><dt>Status</dt><dd class="s-${a.status}">${statusOf(a)[0]} · last activity ${clock(a.end)}</dd>
-        <dt>Agent</dt><dd>${esc(a.type)}${a.background ? " · background" : ""} · ${esc(a.model)}</dd>
-        <dt>Started</dt><dd>${clock(a.start)} · ${dur(a.active)} active${a.segments.length > 1 ? ` in ${a.segments.length} parts` : ""}</dd>
-        <dt title="Input includes cached context re-read on each turn">Tokens</dt><dd>${kt(a.tokens_in)} in / ${kt(a.tokens_out)} out</dd>
-        <dt>Tools</dt><dd>${esc(tools)}</dd>
-        <dt>Transcript</dt><dd>${esc(a.transcript)}</dd></dl>
-      <details data-key="prompt-${a.id}"><summary>${a.id === "main" ? "First prompt" : "Prompt"}</summary><pre data-scroll="prompt-${a.id}">${esc(a.prompt)}</pre></details></section>
+    <section><h3>${a.status === "done" ? "Result" : "Latest reply"}</h3>${a.final ? `<pre data-scroll="final-${a.id}">${esc(a.final)}</pre>` : `<p class="empty">Nothing yet.</p>`}</section>
   </div>
-  <section class="hookbox"><h3>Hooks (${a.hooks.length})</h3>${hooks ? `<ol class="hooks" data-scroll="hooks-${a.id}">${hooks}</ol>` : `<p class="empty">No hook events recorded.</p>`}</section></div>`;
+  <details class="more" data-key="more-${a.id}"><summary>More: tokens, tools, ${prompt.toLowerCase()}, hooks (${a.hooks.length})</summary>
+    <dl><dt title="Input includes cached context re-read on each turn">Tokens</dt><dd>${kt(a.tokens_in)} in / ${kt(a.tokens_out)} out</dd>
+      <dt>Tools</dt><dd>${esc(tools)}</dd>
+      <dt>Transcript</dt><dd>${esc(a.transcript)}</dd></dl>
+    <details data-key="prompt-${a.id}"><summary>${prompt}</summary><pre data-scroll="prompt-${a.id}">${esc(a.prompt)}</pre></details>
+    <section class="hookbox"><h3>Hooks (${a.hooks.length})</h3>${hooks ? `<ol class="hooks" data-scroll="hooks-${a.id}">${hooks}</ol>` : `<p class="empty">No hook events recorded.</p>`}</section>
+  </details></div>`;
 }
 
+const ROWS = ".agent, .grouprow";
+const rowSelector = row => "group" in row.dataset ? `.grouprow[data-group="${CSS.escape(row.dataset.group)}"]`
+  : `.agent[data-id="${CSS.escape(row.dataset.id)}"]`;
 function toggle(row) {
-  const id = row.dataset.id;
-  state.open.has(id) ? state.open.delete(id) : state.open.add(id);
+  if ("group" in row.dataset) state.groups.set(row.dataset.group, row.getAttribute("aria-expanded") !== "true");
+  else { const id = row.dataset.id; state.open.has(id) ? state.open.delete(id) : state.open.add(id); }
   render();
 }
-$("list").addEventListener("click", e => { const row = e.target.closest(".agent"); if (row) toggle(row); });
+$("list").addEventListener("click", e => { const row = e.target.closest(ROWS); if (row) toggle(row); });
 $("list").addEventListener("keydown", e => {
-  const row = e.target.closest(".agent");
-  if (row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); toggle(row); row.blur(); document.querySelector(`.agent[data-id="${row.dataset.id}"]`)?.focus(); }
+  const row = e.target.closest(ROWS);
+  if (row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); const sel = rowSelector(row); toggle(row); document.querySelector(sel)?.focus(); }
+});
+$("attention").addEventListener("click", e => {
+  const id = e.target.closest("[data-goto]")?.dataset.goto; if (!id) return;
+  const a = DATA.agents.find(a => a.id === id);
+  if (a) { state.groups.set(a.group, true); state.hide.delete(a.status); }
+  if (foldedIds.has(id)) state.groups.set(EARLIER, true);
+  state.open.add(id); state.q = ""; $("q").value = "";
+  render();
+  document.querySelector(`.agent[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({block: "center"});
 });
 $("list").addEventListener("toggle", e => {
   const d = e.target; if (!d.dataset?.key) return;
@@ -579,12 +725,33 @@ $("list").addEventListener("toggle", e => {
 }, true);
 $("chips").addEventListener("click", e => {
   const chip = e.target.closest(".chip"); if (!chip) return;
-  if ("hooks" in chip.dataset) state.hooks = !state.hooks;
+  if ("hooks" in chip.dataset) state.hooks = HOOK_MODES[state.hooks][1];
   else { const k = chip.dataset.status; state.hide.has(k) ? state.hide.delete(k) : state.hide.add(k); }
   render();
 });
 $("q").addEventListener("input", e => { state.q = e.target.value; render(); });
+
+// Hook and bar tooltips show at once (a native title waits about a second) and stay inside the window.
+$("list").addEventListener("mousemove", e => {
+  const hook = e.target.closest(".hook, .bar[data-tip]"), tip = $("tip");
+  if (!hook) { tip.hidden = true; return; }
+  if (tip.hidden || tip.dataset.for !== hook.dataset.tip) { tip.innerHTML = hook.dataset.tip; tip.dataset.for = hook.dataset.tip; tip.hidden = false; }
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  tip.style.left = `${Math.max(8, Math.min(e.clientX + 14, innerWidth - w - 8))}px`;
+  tip.style.top = `${e.clientY + 18 + h > innerHeight - 8 ? e.clientY - h - 10 : e.clientY + 18}px`;
+});
+$("list").addEventListener("mouseleave", () => { $("tip").hidden = true; });
 $("range").addEventListener("change", e => { state.range = e.target.value; render(); });
+
+// Full width is remembered in this browser (per server port, since the port is the origin).
+const WIDE_KEY = "agent-timeline-wide";
+function setWide(on) {
+  document.querySelector("main").classList.toggle("wide", on);
+  $("wide").setAttribute("aria-pressed", String(on));
+  try { localStorage.setItem(WIDE_KEY, on ? "1" : "0"); } catch {}
+}
+try { setWide(localStorage.getItem(WIDE_KEY) === "1"); } catch { setWide(false); }
+$("wide").addEventListener("click", () => { setWide($("wide").getAttribute("aria-pressed") !== "true"); if (DATA) render(); });
 
 function setLive(ok) {
   $("live").className = "live" + (ok ? "" : " off");
