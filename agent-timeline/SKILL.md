@@ -28,9 +28,12 @@ The server stops itself 10 minutes after the last page showing any session is cl
 
 ## What the page shows
 
-- One row per agent: status (Running, Quiet, Stalled, Done), active time, and bars for when it was busy. The main session is the first row.
-- Hook events as markers on each row: every Stop hook run, and any hook output on other events. Hooks that print nothing on events other than Stop are not recorded by Claude Code, so they cannot appear.
-- Clicking a row shows its latest tool calls, its result or latest reply, its prompt, tokens, and hook events.
+- One row per agent: status (Running, Quiet, Stalled, Done), active time, and bars for when it was busy. The main session is the first row. Agents launched together (from the same message) form a group, labelled by the words their descriptions share; in longer runs, a group whose agents are all done starts collapsed to a single row. Beyond the latest 8 groups or rows, finished work folds into one "Earlier" row; anything unfinished stays visible, and a search shows every match.
+- A "Needs attention" line names stalled agents and agents whose hooks blocked or failed in the last 15 minutes.
+- Hook events as markers on each row. By default only blocked, failed, and message-producing hooks are marked; the Hooks chip switches to all hook runs, or none. Hooks that print nothing on events other than Stop are not recorded by Claude Code, so they cannot appear.
+- Hovering a bar shows that agent's status, result, start and finish, tokens, and top tools; hovering a hook marker shows its output, with hooks too close to tell apart listed together.
+- Clicking a row shows its latest tool calls and its result or latest reply; "More" adds tokens, tools, the prompt, and hook events.
+- "Full width" removes the page's width limit; the browser remembers the choice while the same server runs.
 
 ## Privacy
 
