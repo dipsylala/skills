@@ -73,6 +73,7 @@ For multiple genuinely parallelisable implementation workstreams with clear owne
 - Engineering agents own explicitly bounded implementation areas and their local tests. Assign distinct files/modules or isolated worktrees; define expected outputs and interfaces before parallel work.
 - Start with one engineer per independent workstream, at most 5, and give each self-contained tasks with a clear deliverable. Check progress at meaningful milestones and redirect work that is going off course.
 - Define a merge/integration owner, shared-file policy, dependency order, and integration tests. Do not allow uncoordinated concurrent edits or conflicting build operations. The director must not concurrently modify files owned by engineering agents; resolve ownership changes explicitly before making overlapping edits.
+- Integrate workstreams one at a time as each finishes, rather than all at the end: review it independently (step 6), fix its blocking findings, merge it, run the integration tests, then bring the remaining workstreams up to date with the merged result.
 - Use researcher and tester only where they add value. Step 6 sets when independent review applies; for each review, the director spawns fresh adversarial reviewers as defined in model B, one per lens step 6 selects, never standing team members. Neither an engineer's self-review nor the director's review of integration is independent.
 - Prefer direct director-to-engineer communication and short evidence-based updates over repeated narrative relays.
 
@@ -110,7 +111,7 @@ Choose review lenses by what the change touches: correctness always; security wh
 
 For multi-stage projects, finish every stage with these checks before starting the next:
 
-1. Run an independent review of the stage, with lenses chosen as above; after the final stage, review the integrated system.
+1. Run an independent review of the stage, with lenses chosen as above; in a parallel stage, each workstream is reviewed before it merges (model C), and the stage review covers the integrated result. After the final stage, review the integrated system.
 2. Update the progress file: the stage completed, acceptance criteria verified with evidence, review outcomes, decisions, and the next stage.
 3. Reassess the execution model against step 4 and state the result in one line: why the current model still fits, or a proposed team for the user to approve.
 
