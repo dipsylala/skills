@@ -498,6 +498,7 @@ function render() {
   const scrolls = new Map([...$("list").querySelectorAll("[data-scroll]")].map(el => [el.dataset.scroll, el.scrollTop]));
   $("list").innerHTML = html;
   for (const d of $("list").querySelectorAll("details[data-key]")) d.open = state.details.has(d.dataset.key);
+  balance();
   for (const el of $("list").querySelectorAll("[data-scroll]")) el.scrollTop = scrolls.get(el.dataset.scroll) || 0;
 
   const agentSecs = DATA.agents.reduce((s, a) => s + a.active, 0);
@@ -511,6 +512,21 @@ function render() {
     ["Hooks", `${allHooks.length} · ${allHooks.filter(h => h.kind === "blocked").length} blocked`],
   ].map(([k, v]) => `<span>${k}: <b>${v}</b></span>`).join("");
 }
+
+// The two detail columns share a grid row, so both are as tall as the taller one.
+// Give each column's scroll box (activity feed, reply) the slack, so neither leaves empty space.
+function balance() {
+  const pairs = [...$("list").querySelectorAll(".cols")].flatMap(cols => [...cols.children].map(section =>
+    [section, section.querySelector(":scope > .feed, :scope > pre")]).filter(([, box]) => box));
+  for (const [, box] of pairs) { box.style.height = ""; box.style.maxHeight = ""; }
+  for (const [section, box] of pairs) {
+    const used = [...section.children].reduce((h, el) => { const s = getComputedStyle(el);
+      return h + el.offsetHeight + parseFloat(s.marginTop) + parseFloat(s.marginBottom); }, 0);
+    const slack = section.clientHeight - used;
+    if (slack > 1) { const height = box.offsetHeight + slack; box.style.maxHeight = "none"; box.style.height = `${height}px`; }
+  }
+}
+window.addEventListener("resize", balance);
 
 function detail(a) {
   const feed = a.activity.slice().reverse().map(([t, tool, what]) =>
@@ -547,6 +563,7 @@ $("list").addEventListener("keydown", e => {
 $("list").addEventListener("toggle", e => {
   const d = e.target; if (!d.dataset?.key) return;
   d.open ? state.details.add(d.dataset.key) : state.details.delete(d.dataset.key);
+  balance();
 }, true);
 $("chips").addEventListener("click", e => {
   const chip = e.target.closest(".chip"); if (!chip) return;
