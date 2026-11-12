@@ -378,9 +378,13 @@ function render() {
     type: "main session", model: m.models.join(", "), depth: 1, background: false};
 
   // Stalled agents and recent blocked or failed hooks; older ones only count in the stats.
-  const urgent = h => (h.kind === "blocked" || h.kind === "error") && DATA.now - h.t < 900;
-  const attention = [mainRow, ...DATA.agents].filter(a => a.status === "stalled" || a.hooks.some(urgent)).map(a =>
-    `<button class="goto" data-goto="${esc(a.id)}">${esc(a.description)}</button> <small>(${a.status === "stalled" ? "stalled" : `hook ${a.hooks.filter(urgent).at(-1).kind}`})</small>`);
+  // A block or failure is cleared once the same hook on the same event has since run without one.
+  const bad = h => h.kind === "blocked" || h.kind === "error";
+  const urgent = (h, hooks) => bad(h) && DATA.now - h.t < 900
+    && !hooks.some(l => l.t > h.t && l.event === h.event && l.hook === h.hook && !bad(l));
+  const urgentHooks = a => a.hooks.filter(h => urgent(h, a.hooks));
+  const attention = [mainRow, ...DATA.agents].filter(a => a.status === "stalled" || urgentHooks(a).length).map(a =>
+    `<button class="goto" data-goto="${esc(a.id)}">${esc(a.description)}</button> <small>(${a.status === "stalled" ? "stalled" : `hook ${urgentHooks(a).at(-1).kind}`})</small>`);
   $("attention").hidden = !attention.length;
   $("attention").innerHTML = attention.length ? `<b>Needs attention:</b> ${attention.join(", ")}` : "";
   const mainOpen = state.open.has("main");
