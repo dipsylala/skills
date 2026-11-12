@@ -51,7 +51,7 @@ Separate agreed requirements and acceptance criteria from technical decisions an
 
 ## 4. Select execution model and propose team
 
-Choose the simplest effective topology **after initial investigation and clarification**, using workstream independence, shared-file contention, interface stability, integration risk, available agent/runtime capabilities, and expected coordination cost. Explain a proposed multi-agent composition and obtain user approval **before spawning a parallel engineering team or dedicated director**. For a multi-stage project, present the team proposal with the specification so one approval covers both. The proposal states when reviews run (at every stage end, step 6) and, when starting with a single implementer, the stage after which you expect workstreams to become independent, or why none will. Specialist subagents under the single-owner model may be invoked selectively without a separate team-approval round.
+Choose the simplest effective topology **after initial investigation and clarification**, using workstream independence, shared-file contention, interface stability, integration risk, available agent/runtime capabilities, and expected coordination cost. Explain a proposed multi-agent composition and obtain user approval **before spawning a parallel engineering team or dedicated director**. For a multi-stage project, present the team proposal with the specification so one approval covers both. The proposal states when reviews run (at every stage end, step 6), each role's model (see "Choosing models"), and, when starting with a single implementer, the stage after which you expect workstreams to become independent, or why none will. Specialist subagents under the single-owner model may be invoked selectively without a separate team-approval round.
 
 ### A. Solo implementer
 
@@ -91,6 +91,16 @@ Before proposing one, identify its scope, authority, subordinate agents, decisio
 
 Give every spawned agent its task and inputs, plus the absolute path to its role's brief in [references/briefs/](references/briefs/): `researcher.md`, `tester.md`, `engineer.md`, or `reviewer.md`. Each brief has the agent read `all-agents.md` beside it, which carries the untrusted-input rule and the report format. If the agent cannot read files, paste both. Act on each report's first line (`STATUS: READY|BLOCKED` or `VERDICT: PASS|CHANGES`) and read further only when acting on it. For multi-stage work, name a report file in the effort's artifact folder so reports survive the context.
 
+### Choosing models
+
+Where the runtime lets you choose each agent's model, choose by how much judgement its task needs; otherwise every agent runs on the session's model.
+
+- **Fast model:** a researcher searching code or summarising documents; a tester running suites and reporting results.
+- **Mid-tier model:** an engineer making mechanical edits from a precise specification; a user-experience reviewer; a tester writing tests for subtle behaviour.
+- **Strongest model:** design; foundation stages; an engineer on shared or core code or intricate logic; a correctness or security reviewer of a risky change. A correctness or security reviewer is never on a weaker model than the engineer whose work it reviews.
+
+When unsure, choose the stronger model.
+
 ### Reassess sparingly
 
 Beyond the stage-end check in step 6, reconsider topology only when discoveries or progress materially change independence, dependencies, or coordination costs, such as a shared interface stabilising. Do not reorganise for minor changes. If the runtime lacks parallel agents, run subagents one at a time. Without subagents, work as the single owner, skip independent review, and offer one in a fresh session. Never pretend parallel work or independent review occurred.
@@ -107,7 +117,7 @@ Follow the chosen ownership model. Implement in dependency order; update the pla
 
 Run relevant tests and verify acceptance criteria against observable evidence. Review only work that passes the repository's relevant tests, lint, type checks, and build, apart from pre-existing failures found in step 1; fix new failures before spawning any reviewer, and give reviewers the results. Then run a genuinely independent review for security-sensitive changes, complex logic, significant regression risk (including data migrations and breaking interface changes), architectural changes, or substantial changes spanning multiple components. Otherwise, including small low-risk fixes, routine tests suffice.
 
-Choose review lenses by what the change touches: correctness always; security when it touches authentication, authorisation, secrets, payments, or untrusted input reaching queries, shells, file paths, or HTML; user experience and visual consistency when users will see it. Run each selected lens as its own fresh adversarial reviewer, in parallel where supported, and wait for all of them before acting on findings. Where the runtime lets you choose models, match reviewer capability to risk.
+Choose review lenses by what the change touches: correctness always; security when it touches authentication, authorisation, secrets, payments, or untrusted input reaching queries, shells, file paths, or HTML; user experience and visual consistency when users will see it. Run each selected lens as its own fresh adversarial reviewer, in parallel where supported, and wait for all of them before acting on findings. Choose each reviewer's model as step 4's "Choosing models" describes.
 
 For multi-stage projects, finish every stage with these checks before starting the next:
 
