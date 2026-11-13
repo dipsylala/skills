@@ -145,9 +145,9 @@ Retest confirmed blocking defects. Respect explicitly accepted issues only while
 
 ## 7. Finish
 
-Report what changed, each acceptance criterion with the evidence that it is met or the reason it is not, tests actually run and results, independent review outcomes including rejected findings and unfixed non-blocking findings (or why review was skipped), any differences from the ticket, and unresolved risks or follow-ups. Do not claim evidence you lack.
+Report what changed, each acceptance criterion with the evidence that it is met or the reason it is not, tests actually run and results, independent review outcomes (or why review was skipped), any differences from the ticket, and unresolved risks or follow-ups. Name each rejected finding and each unfixed non-blocking finding, or say there were none. With more than ten acceptance criteria, put the criterion-by-criterion evidence in a table in the progress file, link it, and list in the report only the criteria not met. Do not claim evidence you lack.
 
-Commits inside isolated engineer worktrees are fine. Commit to the user's branch, push, or open a PR only if the user or repository instructions ask for it; offer `/pr` for the PR body when installed.
+Commits inside isolated engineer worktrees are fine, and so are commits to a repository this run created, such as a new project it ran `git init` for. In a repository that existed before the run, commit to the user's branch, push, or open a PR only if the user or repository instructions ask for it; offer `/pr` for the PR body when installed.
 
 For issue-backed work, offer an approved completion comment or design/code references via an available write integration. Never automatically transition or close the ticket.
 

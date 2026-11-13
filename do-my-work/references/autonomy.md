@@ -20,7 +20,7 @@ Set the level at step 1 and state it with your plan. It changes what you do wher
 | Progress updates | On request (**checkpoint**) | A short checkpoint at each stage end, without waiting for a reply | Keep the progress file current |
 | Issue tracker (step 5) | Offer an update | Offer an update | Write nothing; put the proposed update in the report |
 | Agent timeline (step 4) | Start it | Start it | Skip it |
-| Commits and PRs (step 7) | As the user or repository instructions say | As the user or repository instructions say | Commit to a new branch named after the effort. Push it and open a draft PR only when the request or runtime is set up to produce one. Leave the default branch and merging to the user |
+| Commits and PRs (step 7) | As step 7 says | As step 7 says | Commit to a new branch named after the effort. Push it and open a draft PR only when the request or runtime is set up to produce one. Leave the default branch and merging to the user |
 
 ## The unattended report
 
