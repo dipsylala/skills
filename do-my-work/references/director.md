@@ -7,7 +7,7 @@ Read this when you choose model C in step 4, before proposing the team. As direc
 - **Workstreams:** give each engineer an explicitly bounded implementation area and its local tests, in distinct files or modules or an isolated worktree, with its expected outputs and interfaces defined before work starts. Workstreams that need substantial changes to the same files are not independent; run them one after another. Give small shared touch points (a route table, an index) to one owner under the shared-file policy.
 - **Team size:** one engineer per independent workstream, at most 5, each with self-contained tasks and a clear deliverable.
 - **Integration plan:** define the merge and integration owner, the shared-file policy, the dependency order, and the integration tests. Keep edits and build operations coordinated: you never modify files an engineer owns while it works, and ownership changes are agreed explicitly before overlapping edits.
-- **Rollback point:** before starting parallel engineers, commit the work they build on to the effort branch (step 6), since worktrees start from a commit, and record that commit in the progress file as the point to return to if the stage fails. Commits on the effort branch need no go-ahead (step 7).
+- **Rollback point:** before starting parallel engineers, commit the work they build on to the effort branch ([multi-stage.md](multi-stage.md)), since worktrees start from a commit, and record that commit in the progress file as the point to return to if the stage fails. Commits on the effort branch need no go-ahead (step 7).
 
 ## Decisions log
 
@@ -24,8 +24,12 @@ When an engineer reports `BLOCKED` on a decision another workstream could see th
 
 ## Integrating
 
-Integrate on the effort branch (step 6), not the user's branch; bringing it into the user's branch follows step 7. Integrate workstreams one at a time as each finishes, rather than all at the end: pass its completion gate, review it independently, fix its blocking findings, merge it, run the integration tests, then tell each remaining engineer to merge the integrated result into its worktree at the start of its next round.
-
-If the integration tests fail after a merge, tell no other engineer to merge yet. Revert that merge on the effort branch, or return the failure to the engineer whose workstream broke it as its next round; fix it yourself only when no engineer owns the files involved.
+Integrate on the effort branch (`multi-stage.md`), not the user's branch; bringing it into the user's branch follows step 7. Integrate workstreams one at a time as each finishes, rather than all at the end: pass its completion gate, review it independently, fix its blocking findings, then merge it with `git merge --no-commit --no-ff` and run the integration tests before committing. If they pass, commit the merge and tell each remaining engineer to merge the integrated result into its worktree at the start of its next round. If they fail, `git merge --abort`, tell no other engineer to merge, and return the failure to the engineer whose workstream it is as its next round; fix it yourself only when no engineer owns the files involved. If a merge that already landed has to be reverted, revert the revert before merging that workstream again, or its original changes stay out.
 
 Review each workstream with the correctness lens plus any other lens its own changes trigger (step 6). The stage review then covers the integration: correctness across workstreams, plus lenses that changes spanning workstreams trigger. Skip the stage review when the stage was a single workstream that has already been reviewed. Spawn fresh adversarial reviewers as model B defines them, one per lens, never standing team members. Use researchers and testers only where they add value. Neither an engineer's self-review nor your review of integration is independent.
+
+## Subordinate director (model D)
+
+Exceptional: only for a substantial, independently bounded programme or repository within a larger effort, owning a distinct outcome rather than duplicating your coordination. Before proposing one, identify its scope, authority, subordinate agents, decision and escalation boundaries, communication contract, and why direct coordination is insufficient, and get explicit user approval. If nested delegation is unsupported, keep coordination yourself.
+
+Brief it with `SKILL.md`, this file, and `briefs/all-agents.md`. It runs at your autonomy level and treats you as its user. Answer its questions yourself, but relay always-ask actions, product decisions, and team changes to the user. It skips step 1's level and runtime detection and the tracker and commit actions of steps 5 and 7, which stay yours, and it may spawn the team you approved for it.

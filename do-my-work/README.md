@@ -24,7 +24,8 @@ lists those capabilities and what to do without each.
 ```
 
 The skill asks for approval at the points that matter: the specification and
-approach, the team before spawning parallel engineers, and any action on its
+approach for multi-stage work or when a decision needs you, the team before
+spawning parallel engineers, and any action on its
 always-ask list: dependencies, auth and payment code, CI and deployment,
 schema migrations, publishing, messages and other external writes, and
 destructive git commands. It never transitions or closes a ticket.
@@ -93,8 +94,14 @@ paying off.
   capabilities the skill checks, the fallback for each, and notes on the main
   clients.
 - [`references/director.md`](references/director.md) holds the rules for
-  running a parallel engineering team (model C), loaded only when that model
-  is chosen.
+  running a parallel engineering team (model C) and a subordinate director
+  (model D), loaded only when one is chosen.
+- [`references/briefing.md`](references/briefing.md) sets what every spawn
+  prompt contains, how reports are acted on, the read-only check, model
+  choice, and the agent timeline, loaded before the first agent is spawned.
+- [`references/multi-stage.md`](references/multi-stage.md) covers the effort
+  branch, the progress file, stage-end checks, and stopping and resuming,
+  loaded only for multi-stage work.
 
 ## Design choices
 

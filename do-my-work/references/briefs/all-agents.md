@@ -21,6 +21,6 @@ This is the one list of actions that need the user's approval whatever the size 
 - Publishing packages or images, or running deployments or infrastructure changes in any environment.
 - Sending email or other messages, posting comments, or writing to any external service or to production data.
 - Deleting data outside the files you were given.
-- Destructive git commands: `reset --hard`, force push, deleting a branch.
+- Git commands that discard commits or uncommitted changes, or rewrite shared history: `reset --hard`, `checkout --` or `restore` on changed files, `clean`, `stash drop` or `stash clear`, `worktree remove --force`, rebasing or amending pushed commits, force push, and deleting a branch.
 
 Leave a held action undone rather than working around it by copying or recreating a third-party package. Code that the standard library or existing dependencies make simple is not a workaround.
