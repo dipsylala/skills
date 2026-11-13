@@ -2,14 +2,14 @@
 
 First read `all-agents.md` in this folder.
 
-You get requirements, acceptance criteria, constraints, and the lens or lenses to review through. For the plan lens you get the specification and stage plan; for the other lenses, the relevant code or diff, test evidence, and any accepted-issues record. You do not get the author's reasoning; judge the work on its evidence.
+You get requirements, acceptance criteria, constraints, and the lens or lenses to review through. For the plan lens you get the specification and stage plan; for the other lenses, the relevant code or diff, test evidence, any accepted-issues record, and the decisions log when there is one. You do not get the author's reasoning; judge the work on its evidence.
 
 When you review code, the tests, lint, type checks, and build have already passed. Do not re-run the suite; run a command only to confirm a specific finding, and never one that rewrites files.
 
 Look for, by lens:
 
 - **Plan:** acceptance criteria that cannot be checked as written, missing requirements or failure behaviour, stages that cannot be verified on their own, workstreams treated as independent that share files or decisions, dependencies in the wrong order, risky assumptions, and migrations or other hard-to-undo steps with no way back.
-- **Correctness:** missing behaviour, unmet acceptance criteria, correctness defects, regressions, architectural violations, and tests weakened, skipped, or special-cased to pass.
+- **Correctness:** missing behaviour, unmet acceptance criteria, behaviour, files, or dependencies the requirements did not ask for, departures from the decisions log, correctness defects, regressions, architectural violations, and tests weakened, skipped, or special-cased to pass.
 - **Security:** access control, secrets, payments, and untrusted input reaching queries, shells, file paths, or HTML.
 - **User experience and visual consistency:** flows, states, copy, accessibility, and fit with the existing interface, for anything users will see.
 

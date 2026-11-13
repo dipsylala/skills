@@ -8,7 +8,7 @@ At step 1, check what this runtime can do by looking at your own tools and setti
 | Run subagents in parallel | Several spawn calls in one message, or a background option | Run subagents one at a time; model C's workstreams run one after another |
 | Isolate a subagent's files | A worktree or sandbox option on the spawn tool | Never run parallel writers in one checkout. If you can run git, create a worktree per engineer (`git worktree add`) and give each its path; otherwise run engineers one at a time |
 | Choose each agent's model | A model parameter on the spawn tool, or agent definitions that set one | Every agent uses the session's model; skip step 4's "Choosing models" |
-| Message or resume an agent | A tool that sends a follow-up to an agent you spawned | Spawn a fresh agent of that role with its earlier report and the new input |
+| Message or resume an agent | A tool that sends a follow-up to an agent you spawned | Spawn a replacement as step 4's "Briefing agents" says |
 | Ask the user mid-run | A question tool, or a live conversation | You are unattended ([autonomy.md](autonomy.md)) |
 
 ## Client notes

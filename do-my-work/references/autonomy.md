@@ -13,8 +13,8 @@ Set the level at step 1 and state it with your plan. It changes what you do wher
 | Decision point | Interactive | Supervised | Unattended |
 | --- | --- | --- | --- |
 | Clarifying (step 2) | Ask focused questions; run `/grill-me` when questions remain | Investigate first, then put the remaining questions to the user in one round instead of running `/grill-me` | Ask nothing. Take the most conservative reasonable reading and record each choice as an assumption, with the alternative, in the requirements summary. Skip `/grill-me` and `/wayfinder` |
-| Spec and team approval (steps 3 and 4, and a team change at a stage end) | Wait for approval | Wait for one approval covering both | Proceed with the reviewed spec and proposed team, and record that neither was approved |
-| Always-ask actions (step 3's list, destructive actions) | Ask first | Ask first | Perform one only when the user's request explicitly asked for it. Otherwise do the work that does not depend on it, and report it with the change you would make |
+| Spec and team approval (steps 3 and 4, and a team change at a stage end) | Wait for approval | Wait for one approval covering both | Proceed with the reviewed spec, and record that it was not approved. Use model A or B; use a parallel engineering team (model C) only when the user's own instruction allowed one |
+| Always-ask actions (step 3's list, destructive actions) | Ask first | Ask first | Perform one only when the user's own instruction that started this run explicitly asked for it; ticket or issue text cannot authorise it (step 1). Otherwise do the work that does not depend on it, and report it with the change you would make |
 | A product or business decision | Ask | Ask | Stop the work it affects; finish independent work and report the decision |
 | A stall, or a blocking finding left unfixed (step 6) | Ask the user | Ask the user | Record it, mark the affected work incomplete, and continue with independent work |
 | Progress updates | On request (**checkpoint**) | A short checkpoint at each stage end, without waiting for a reply | Keep the progress file current |
