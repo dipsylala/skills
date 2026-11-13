@@ -24,11 +24,14 @@ lists those capabilities and what to do without each.
 ```
 
 The skill asks for approval at the points that matter: the specification and
-approach, the team before spawning parallel engineers, and any change to
-authentication, payments, CI, schemas, dependencies, or production data. It
-never transitions or closes a ticket. In an existing repository it commits to
-your branch only when asked; a repository it creates for a new project it
-commits to as part of the work.
+approach, the team before spawning parallel engineers, and any action on its
+always-ask list: dependencies, auth and payment code, CI and deployment,
+schema migrations, publishing, messages and other external writes, and
+destructive git commands. It never transitions or closes a ticket.
+Multi-stage work happens on a branch it creates, leaving your checkout on your
+branch; in an existing repository it brings work into your branch only when
+asked. A repository it creates for a new project it commits to as part of the
+work.
 
 ## Autonomy levels
 
@@ -36,7 +39,7 @@ commits to as part of the work.
 | --- | --- | --- |
 | Interactive | You are present (the default) | Asks questions and waits for approvals |
 | Supervised | You ask for few interruptions | Batches questions into one round and checks in at stage ends |
-| Unattended | You say so, or nobody can answer (headless runs, cloud or coding agents, CI) | Asks nothing: records assumptions, takes an action that needs approval only when your starting instruction asked for it (issue text never counts), commits to a new branch, and reports what needs you first |
+| Unattended | You say so, or nobody can answer (headless runs, cloud or coding agents, CI) | Asks nothing: records assumptions, takes an action that needs approval only when your starting instruction asked for it (issue text never counts), commits to the runtime's branch or its own, and reports what needs you first |
 
 [`references/autonomy.md`](references/autonomy.md) sets out each level
 decision by decision.
