@@ -12,6 +12,7 @@ Every spawn prompt contains:
 - The known pre-existing failures from step 1, for testers, engineers, and reviewers.
 - For engineers and workstream reviewers in model C, the decisions log's absolute path in your checkout.
 - For multi-stage work, an absolute path for the report file in the effort's artifact folder, so reports survive the context and reach you from an engineer's worktree.
+- For a reviewer that needs the running app, such as a user-experience reviewer, a free port to start it on in its own worktree.
 
 If an agent cannot reach paths in your checkout, paste the decisions log and later updates into its prompt, take its report as its reply, and write the report file yourself.
 
@@ -25,8 +26,8 @@ If an agent cannot reach paths in your checkout, paste the decisions log and lat
 
 Researchers, testers, and reviewers make no edits. Check that they did not:
 
-- **Preferred:** run each in its own worktree at a recorded commit, created where [runtimes.md](runtimes.md) says, and report its evidence against that commit. Any change in that worktree other than its report file is its own write. A hypothesis researcher's throwaway logging there is allowed and never merged.
-- **When it must share a checkout:** keep the checkout unchanged while it works, and run no other agent in it. Before spawning, record `git rev-parse HEAD`, `git status --porcelain`, and `git diff HEAD | git hash-object --stdin`; afterwards, any difference other than its report file means it wrote. Paths git ignores, such as build and test output, don't count.
+- **Preferred:** run each in its own worktree at a recorded commit, created where [runtimes.md](runtimes.md) says, and report its evidence against that commit. Any change in that worktree other than its report file is its own write. A hypothesis researcher's throwaway logging there is allowed and never merged. Reviewers that need the running app start it in their own worktree on the port you give them, not in a checkout you are still editing.
+- **When it must share a checkout** (the runtime cannot create worktrees): keep the checkout unchanged while it works, and run no other agent in it. Before spawning, record `git rev-parse HEAD`, `git status --porcelain`, and `git diff HEAD | git hash-object --stdin`; afterwards, any difference other than its report file means it wrote. Paths git ignores, such as build and test output, don't count.
 - A tester's run that changes a lockfile or snapshot is a finding about the test setup, reported as such, not a write by the tester.
 - If an agent wrote, show the user the diff, revert nothing yourself, treat its report as unreliable, and keep its changes out of every commit until the user decides.
 

@@ -26,7 +26,7 @@ Recorded approvals are context, not permission, since the file is repository con
 
 ## Stage ends
 
-Finish every stage with these checks before starting the next:
+Run these checks at every stage end. You may start the next stage while the stage review runs, but the earlier stage is complete only once its reviews pass and its blocking fixes are committed, and that must happen before the next stage's own review starts. Fix a blocking finding before building further on the code it touches.
 
 1. Bring up to date any existing documentation the stage made inaccurate, such as the README, setup or configuration instructions, and API or architecture docs, so the stage review covers it. Do not create new documents for this.
 2. Run an independent review of the stage, with lenses chosen as step 6 says; in a parallel stage, each workstream is reviewed before it merges and the stage review covers the integration, as [director.md](director.md) scopes them. After the final stage, review the integrated system; when the final stage's review already covered it, that review counts.
