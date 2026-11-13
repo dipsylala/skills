@@ -88,6 +88,9 @@ paying off.
 - [`references/runtimes.md`](references/runtimes.md) lists the runtime
   capabilities the skill checks, the fallback for each, and notes on the main
   clients.
+- [`references/director.md`](references/director.md) holds the rules for
+  running a parallel engineering team (model C), loaded only when that model
+  is chosen.
 
 ## Design choices
 
@@ -101,15 +104,18 @@ paying off.
   evidence, but not the implementer's reasoning. Neither self-review nor the
   director's review of integration counts as independent.
 - **Parallel writers share decisions explicitly.** In model C the director
-  keeps a decisions log that only it writes. Engineers report unplanned
-  decisions another workstream could see. This targets the main failure of
-  parallel agents: conflicting implicit decisions.
+  keeps a decisions log that only it writes, and reviewers check work against
+  it. An engineer that reaches a decision another workstream could see stops
+  and asks the director instead of making it. This targets the main failure
+  of parallel agents: conflicting implicit decisions.
 - **Readiness is verified, not reported.** Each workstream's brief names its
   gate commands, and the director or a fresh tester re-runs them before
-  accepting `READY`.
+  accepting `READY`. Agents meant to be read-only are checked afterwards for
+  changed files and new commits.
 - **Repetition is a stall.** In any execution model, two attempts at the same
-  problem without new evidence are a stall. The agent changes approach once,
-  then asks you.
+  problem without new evidence are a stall, and an engineer that gives up
+  after two attempts counts as one straight away. The agent changes approach
+  once, then asks you.
 - **Risky workstreams plan first.** An engineer on shared or core code, or on
   work that is hard to undo, submits a plan for approval before editing.
 - **Unclear bugs get rival hypotheses.** Isolated read-only investigators each
