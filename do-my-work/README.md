@@ -26,8 +26,9 @@ lists those capabilities and what to do without each.
 The skill asks for approval at the points that matter: the specification and
 approach, the team before spawning parallel engineers, and any change to
 authentication, payments, CI, schemas, dependencies, or production data. It
-never transitions or closes a ticket, and commits to your branch only when
-asked.
+never transitions or closes a ticket. In an existing repository it commits to
+your branch only when asked; a repository it creates for a new project it
+commits to as part of the work.
 
 ## Autonomy levels
 
