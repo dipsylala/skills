@@ -26,8 +26,8 @@ Establish the desired outcome, in/out of scope, existing behaviour to preserve, 
 
 Investigate questions answerable from the repository before asking the user. Ask focused questions only when answers could materially affect the solution. Challenge unnecessary complexity. If investigation and focused questions cannot make every acceptance criterion observable, escalate by how much planning remains:
 
-- **Fits one context:** offer `/grill-with-docs` or `/grill-me`. If neither is installed or the user declines, grill the user yourself.
-- **Too large for one context:** offer `/wayfinder`. Say that the user runs it, that it creates a map issue and child tickets on the repo's tracker, and that it hands off through `/to-spec`. For ticket-backed work, agree how the map relates to the ticket. Resume from the resulting spec.
+- **Fits one context:** if the `grill-me` skill is available, tell the user you are starting `/grill-me` and invoke it; otherwise grill the user yourself. A user who also wants ADRs and a glossary can run `/grill-with-docs` themselves instead.
+- **Too large for one context:** offer `/wayfinder`. Say that the user runs it and that it creates a map issue and child tickets on the repo's tracker. For ticket-backed work, agree how the map relates to the ticket. Resume from the resulting spec.
 - **Too large, and wayfinder is unavailable or declined:** plan across sessions in the effort's artifact folder. Keep the destination, decisions made, and open questions in the progress file, and write the specification once no open question would change the outcome.
 
 **Requirements-summary guarantee:** Discovery is done when every acceptance criterion is observable and every open question is answered, put to the user, or listed as an assumption. In multi-session planning, a question that would change the outcome stays open until answered; it cannot be listed as an assumption. At that point, ensure the user has a clear summary of the agreed objective, scope, acceptance criteria, constraints, important decisions, and unresolved questions. For a small change, one or two sentences covering objective and verification satisfy this. Reuse a complete summary already produced by `/grill-with-docs` or `/grill-me`; if missing or incomplete, provide or complete it.
@@ -44,7 +44,7 @@ Once discovery is done, present the proposed approach, verification strategy, im
 
 When an effort warrants persistent artifacts (specification, design, progress file, research notes), keep them in one folder, so they map back to the work. If the work comes from a ticket, name the folder after its identifier, using the parent ticket if there are several, e.g. `docs/work/PROJ-123/`. Otherwise name it after the feature, e.g. `docs/work/csv-export/`. Keep the folder's name once created, even if tickets are created later. A repository convention for the location overrides `docs/work/`.
 
-If a spec or tickets already exist for this effort, use them as the specification and work units. For multi-stage work, offer `/to-spec` and `/to-tickets` when installed; they write to the same folder and publish to a remote issue tracker only when authorized.
+If a spec or tickets already exist for this effort, use them as the specification and work units.
 
 Present the requirements summary and proposed approach before substantial implementation. Proceed when requirements are clear and no decision requiring approval remains; what you presented is the agreed specification. Otherwise, and always for a multi-stage project's specification, wait for the user's approval; what they approve is the agreed specification.
 
@@ -112,7 +112,7 @@ Beyond the stage-end check in step 6, reconsider topology only when discoveries 
 
 ## 5. Offer issue synchronisation
 
-For issue-backed tasks, retain the original ticket as the authoritative record of its recorded scope. A local design document, or wayfinder, `/to-spec` or `/to-tickets` issues the user approves, supplement it; create no other competing issue.
+For issue-backed tasks, retain the original ticket as the authoritative record of its recorded scope. A local design document, or issues the user approves (such as wayfinder's), supplement it; create no other competing issue.
 
 When a write-capable integration exists, **offer** to update the issue with agreed clarifications, acceptance criteria, or design references. Show the proposed change and obtain explicit approval before writing. Re-read to detect intervening edits, preserve unrelated content, make targeted changes, and verify the result. With read-only access, provide a copyable proposed update. Do not change status, assignee, priority, or create issues without approval. Surface disagreements between ticket and agreed specification rather than silently choosing one. Once the user resolves a disagreement, implement and report against the agreed specification.
 

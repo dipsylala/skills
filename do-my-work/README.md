@@ -28,9 +28,9 @@ asked.
 
 1. **Understand** the request, reading the ticket, code, and tests, and
    reproducing any bug.
-2. **Clarify** until every acceptance criterion says how to check it. This step
-   offers `/grill-me`, `/grill-with-docs`, or `/wayfinder` when questions
-   remain.
+2. **Clarify** until every acceptance criterion says how to check it. When
+   questions remain, this step runs `/grill-me` if it is installed, or offers
+   `/wayfinder` for planning too large for one session.
 3. **Specify** and present the approach. Multi-stage work gets a spec and
    progress file in `docs/work/<ticket-or-feature>/`.
 4. **Choose an execution model** and propose the team.
