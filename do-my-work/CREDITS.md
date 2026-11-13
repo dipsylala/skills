@@ -28,6 +28,17 @@ Reviewed November 2026.
   adopted: it reviews after implementation rather than gating plans per
   worker.
 
+## Runtime notes
+
+The client notes in [`references/runtimes.md`](references/runtimes.md) were
+checked against these, reviewed November 13, 2026:
+
+- OpenAI, [Codex subagents](https://developers.openai.com/codex/subagents)
+- Visual Studio Code, [Custom agents](https://code.visualstudio.com/docs/agent-customization/custom-agents)
+- Cursor, [Subagents](https://cursor.com/docs/subagents)
+- Gemini CLI, [Subagents](https://geminicli.com/docs/core/subagents/) and
+  [CLI documentation](https://google-gemini.github.io/gemini-cli/docs/cli/)
+
 ## Spec review, rollback point, and documentation updates
 
 Reviewed November 13, 2026.

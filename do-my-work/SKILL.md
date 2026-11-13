@@ -12,6 +12,7 @@ Take responsibility for delivering the user's software development task. Adapt p
 
 Accept a free-form idea, issue reference, bug report, existing code, or specification.
 
+- **Run conditions:** set the autonomy level (interactive, supervised, or unattended) as [references/autonomy.md](references/autonomy.md) describes, and check what the runtime can do as [references/runtimes.md](references/runtimes.md) describes. At the supervised and unattended levels, follow `autonomy.md` wherever this skill says to ask the user, run `/grill-me`, wait for approval, stop and ask, or commit and open a PR; where the two differ, `autonomy.md` decides.
 - For tracker issues (Jira, Linear, GitHub, or similar), discover available authenticated skills, connectors, MCP tools, or CLIs. Read the issue description, acceptance criteria, relevant comments, attachments, and linked issues where accessible. Preserve the identifier and URL. If access is unavailable, request the necessary content; never invent it.
 - Check for an existing spec, tickets, and progress file for this effort, in a folder named after its ticket or feature or on the issue tracker, and resume from them rather than repeating discovery.
 - Inspect relevant repository code, tests, conventions, and architectural constraints before committing to an approach. Before changing code, run the relevant tests; report pre-existing failures separately and fix them only when in scope.
@@ -46,7 +47,7 @@ When an effort warrants persistent artifacts (specification, design, progress fi
 
 If a spec or tickets already exist for this effort, use them as the specification and work units.
 
-**Spec review:** for a multi-stage project, before asking the user to approve the specification, give it and the stage plan to a fresh reviewer with the plan lens (`reviewer.md`, step 4's "Briefing agents"). Fix blocking findings in the draft, or present them with it for the user to decide; mention non-blocking ones briefly. Step 4's "Reassess sparingly" covers runtimes without subagents.
+**Spec review:** for a multi-stage project, before asking the user to approve the specification, give it and the stage plan to a fresh reviewer with the plan lens (`reviewer.md`, step 4's "Briefing agents"). Fix blocking findings in the draft, or present them with it for the user to decide; mention non-blocking ones briefly. `runtimes.md` covers runtimes without subagents.
 
 Present the requirements summary and proposed approach before substantial implementation. Proceed when requirements are clear and no decision requiring approval remains; what you presented is the agreed specification. Otherwise, and always for a multi-stage project's specification, wait for the user's approval; what they approve is the agreed specification.
 
@@ -54,7 +55,7 @@ Separate agreed requirements and acceptance criteria from technical decisions an
 
 ## 4. Select execution model and propose team
 
-Choose the simplest effective topology **after initial investigation and clarification**, using workstream independence, shared-file contention, interface stability, integration risk, available agent/runtime capabilities, and expected coordination cost. Explain a proposed multi-agent composition and obtain user approval **before spawning a parallel engineering team or dedicated director**. For a multi-stage project, present the team proposal with the specification so one approval covers both. The proposal states when reviews run (at every stage end, step 6), each role's model (see "Choosing models"), and, when starting with a single implementer, the stage after which you expect workstreams to become independent, or why none will. Specialist subagents under the single-owner model may be invoked selectively without a separate team-approval round.
+Choose the simplest effective topology **after initial investigation and clarification**, using workstream independence, shared-file contention, interface stability, integration risk, the runtime capabilities found in step 1, and expected coordination cost. Explain a proposed multi-agent composition and obtain user approval **before spawning a parallel engineering team or dedicated director**. For a multi-stage project, present the team proposal with the specification so one approval covers both. The proposal states when reviews run (at every stage end, step 6), each role's model (see "Choosing models"), and, when starting with a single implementer, the stage after which you expect workstreams to become independent, or why none will. Specialist subagents under the single-owner model may be invoked selectively without a separate team-approval round.
 
 ### A. Solo implementer
 
@@ -113,7 +114,7 @@ When unsure, choose the stronger model.
 
 ### Reassess sparingly
 
-Beyond the stage-end check in step 6, reconsider topology only when discoveries or progress materially change independence, dependencies, or coordination costs, such as a shared interface stabilising. Do not reorganise for minor changes. If the runtime lacks parallel agents, run subagents one at a time. Without subagents, work as the single owner, skip independent review, offer one in a fresh session, and continue without waiting for it. Never pretend parallel work or independent review occurred.
+Beyond the stage-end check in step 6, reconsider topology only when discoveries or progress materially change independence, dependencies, or coordination costs, such as a shared interface stabilising. Do not reorganise for minor changes. When the runtime lacks subagents, parallel agents, or file isolation, follow `runtimes.md`. Never pretend parallel work or independent review occurred.
 
 ## 5. Offer issue synchronisation
 
@@ -132,7 +133,7 @@ Choose review lenses by what the change touches: correctness always; security wh
 For multi-stage projects, finish every stage with these checks before starting the next:
 
 1. Bring up to date any existing documentation the stage made inaccurate, such as the README, setup or configuration instructions, and API or architecture docs, so the stage review covers it. Do not create new documents for this.
-2. Run an independent review of the stage, with lenses chosen as above (step 4's "Reassess sparingly" covers runtimes without subagents); in a parallel stage, each workstream is reviewed before it merges (model C), and the stage review covers the integrated result. After the final stage, review the integrated system; when the final stage's review already covered it, that review counts.
+2. Run an independent review of the stage, with lenses chosen as above (`runtimes.md` covers runtimes without subagents); in a parallel stage, each workstream is reviewed before it merges (model C), and the stage review covers the integrated result. After the final stage, review the integrated system; when the final stage's review already covered it, that review counts.
 3. Update the progress file: the stage completed, acceptance criteria verified with evidence, review outcomes, decisions, and the next stage.
 4. Reassess the execution model against step 4 and state the result in one line: why the current model still fits, or a proposed team for the user to approve.
 
