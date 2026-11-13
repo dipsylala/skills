@@ -46,6 +46,8 @@ When an effort warrants persistent artifacts (specification, design, progress fi
 
 If a spec or tickets already exist for this effort, use them as the specification and work units.
 
+**Spec review:** for a multi-stage project, before asking the user to approve the specification, give it and the stage plan to a fresh reviewer with the plan lens (`reviewer.md`, step 4's "Briefing agents"). Fix blocking findings in the draft, or present them with it for the user to decide; mention non-blocking ones briefly. Step 4's "Reassess sparingly" covers runtimes without subagents.
+
 Present the requirements summary and proposed approach before substantial implementation. Proceed when requirements are clear and no decision requiring approval remains; what you presented is the agreed specification. Otherwise, and always for a multi-stage project's specification, wait for the user's approval; what they approve is the agreed specification.
 
 Separate agreed requirements and acceptance criteria from technical decisions and open assumptions. The agreed specification is the implementation contract; do not alter it to match the code. Obtain approval for material scope changes, consequential architectural choices, destructive actions, or unresolved decisions affecting the outcome. Whatever the size of the change, also obtain approval before touching authentication, authorisation, or payments; changing CI, deployment, or hosting configuration; migrating a database schema; adding a dependency; sending email or writing production data; or settling an assumption that is really a product or business decision. Routine implementation choices need no additional approval; do not seek approval merely to be safe.
@@ -74,6 +76,7 @@ For multiple genuinely parallelisable implementation workstreams with clear owne
 - **Decisions log:** the director keeps one in the effort's artifact folder, holding the interface contracts and every decision that binds more than one workstream. Only the director writes it. Give each engineer its absolute path in your checkout, not in the engineer's worktree, so it always reads the current version, and add any unplanned decision an engineer reports that another workstream could see.
 - Engineering agents own explicitly bounded implementation areas and their local tests. Assign distinct files/modules or isolated worktrees; define expected outputs and interfaces before parallel work. Workstreams that need substantial changes to the same files are not independent; run them one after another. Give small shared touch points (a route table, an index) to one owner under the shared-file policy.
 - Start with one engineer per independent workstream, at most 5, and give each self-contained tasks with a clear deliverable. Check progress at meaningful milestones and redirect work that is going off course.
+- **Rollback point:** before starting parallel engineers, make sure the work they build on is committed, since worktrees start from a commit, and record that commit in the progress file as the point to return to if the stage fails. When the commit needs the user's go-ahead (step 7), ask for it in the team proposal.
 - Define a merge/integration owner, shared-file policy, dependency order, and integration tests. Do not allow uncoordinated concurrent edits or conflicting build operations. The director must not concurrently modify files owned by engineering agents; resolve ownership changes explicitly before making overlapping edits.
 - **Plan-first:** for a risky workstream (shared or core code, anything step 3 requires approval for, a change many other parts depend on, or one that is hard to undo), tell the engineer to plan first; the engineer brief says what the plan contains. Approve the plan when it covers the workstream's acceptance criteria, agrees with the decisions log, stays inside the workstream's files, gives every step a check, and leaves no open questions or TBDs; otherwise return it with reasons. Returned plans count as rounds under the stall rule. Do not rely on a runtime's plan mode to enforce this, since some approve plans automatically.
 - **Completion gate:** put each workstream's gate commands (the tests, lint, type checks, and build it must pass) in its brief. Before accepting an engineer's `STATUS: READY`, the director or a fresh tester re-runs them in the engineer's worktree. If the re-run fails, return it to the engineer with the output; that is a round.
@@ -96,13 +99,15 @@ Before proposing one, identify its scope, authority, subordinate agents, decisio
 
 Give every spawned agent its task and inputs, plus the absolute path to its role's brief in [references/briefs/](references/briefs/): `researcher.md`, `tester.md`, `engineer.md`, or `reviewer.md`. Each brief has the agent read `all-agents.md` beside it, which carries the untrusted-input rule and the report format. If the agent cannot read files, paste both. Act on each report's first line (`STATUS: READY|PLAN|BLOCKED` or `VERDICT: PASS|CHANGES`) and read further only when acting on it. For multi-stage work, name a report file by its absolute path in the effort's artifact folder in your checkout, so reports survive the context and reach you from an engineer's worktree. Send follow-up work (an approved or returned plan, a failed gate, review fixes) to the same agent where the runtime allows; otherwise spawn a fresh agent of that role with its earlier report and the new input in its prompt.
 
+**Agent timeline:** when you first spawn a subagent in a run, if an `agent-timeline` skill folder sits beside this skill's folder, follow the "Run it" section of its `SKILL.md` without `--open`, and give the user the URL once. It only reads, and changes nothing about how agents run. It works only on Claude Code; skip it elsewhere.
+
 ### Choosing models
 
 Where the runtime lets you choose each agent's model, choose by how much judgement its task needs; otherwise every agent runs on the session's model.
 
 - **Fast model:** a researcher searching code or summarising documents; a tester running suites and reporting results.
 - **Mid-tier model:** a researcher testing a debugging hypothesis; an engineer making mechanical edits from a precise specification; a user-experience reviewer; a tester writing tests for subtle behaviour.
-- **Strongest model:** design; foundation stages; an engineer on shared or core code or intricate logic; a correctness or security reviewer of a risky change. A correctness or security reviewer is never on a weaker model than the engineer whose work it reviews.
+- **Strongest model:** design; a plan reviewer; foundation stages; an engineer on shared or core code or intricate logic; a correctness or security reviewer of a risky change. A correctness or security reviewer is never on a weaker model than the engineer whose work it reviews.
 
 When unsure, choose the stronger model.
 
@@ -126,9 +131,10 @@ Choose review lenses by what the change touches: correctness always; security wh
 
 For multi-stage projects, finish every stage with these checks before starting the next:
 
-1. Run an independent review of the stage, with lenses chosen as above (step 4's "Reassess sparingly" covers runtimes without subagents); in a parallel stage, each workstream is reviewed before it merges (model C), and the stage review covers the integrated result. After the final stage, review the integrated system; when the final stage's review already covered it, that review counts.
-2. Update the progress file: the stage completed, acceptance criteria verified with evidence, review outcomes, decisions, and the next stage.
-3. Reassess the execution model against step 4 and state the result in one line: why the current model still fits, or a proposed team for the user to approve.
+1. Bring up to date any existing documentation the stage made inaccurate, such as the README, setup or configuration instructions, and API or architecture docs, so the stage review covers it. Do not create new documents for this.
+2. Run an independent review of the stage, with lenses chosen as above (step 4's "Reassess sparingly" covers runtimes without subagents); in a parallel stage, each workstream is reviewed before it merges (model C), and the stage review covers the integrated result. After the final stage, review the integrated system; when the final stage's review already covered it, that review counts.
+3. Update the progress file: the stage completed, acceptance criteria verified with evidence, review outcomes, decisions, and the next stage.
+4. Reassess the execution model against step 4 and state the result in one line: why the current model still fits, or a proposed team for the user to approve.
 
 Reviewers grade each finding blocking (it breaks an acceptance criterion, or adds a regression or security problem) or non-blocking; the responsible implementer fixes code, and the director/main agent decides integration and disposition. Reject a finding only with evidence it is wrong. A confirmed blocking finding left unfixed needs the user's acceptance; record it and its assumptions in the spec or requirements summary. Fix a non-blocking finding when it is in scope and the benefit justifies the effort and regression risk; otherwise leave it for the final report.
 

@@ -32,12 +32,17 @@ asked.
    questions remain, this step runs `/grill-me` if it is installed, or offers
    `/wayfinder` for planning too large for one session.
 3. **Specify** and present the approach. Multi-stage work gets a spec and
-   progress file in `docs/work/<ticket-or-feature>/`.
-4. **Choose an execution model** and propose the team.
+   progress file in `docs/work/<ticket-or-feature>/`, and a fresh reviewer
+   checks the spec and stage plan before you approve them.
+4. **Choose an execution model** and propose the team. Before parallel
+   engineers start, the commit they build on is recorded as a rollback point.
+   If the `agent-timeline` skill is installed, its live view starts when the
+   first agent is spawned.
 5. **Offer to update the ticket** with agreed clarifications.
 6. **Execute and verify**: tests first, then, for risky or substantial
    changes, independent review by fresh reviewers, one per lens (correctness,
-   security, user experience).
+   security, user experience). Each stage of multi-stage work ends by bringing
+   affected docs up to date before its review.
 7. **Finish** with each acceptance criterion and its evidence.
 
 | Execution model | When |
