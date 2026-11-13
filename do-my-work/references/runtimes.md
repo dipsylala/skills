@@ -6,10 +6,12 @@ At step 1, check what this runtime can do by looking at your own tools and setti
 | --- | --- | --- |
 | Spawn subagents | A tool that starts another agent with its own context | Work as the single owner (model A). For a review the skill requires, do it yourself as a separate pass against the reviewer brief, say it was not independent, offer an independent review in a fresh session, and continue without waiting |
 | Run subagents in parallel | Several spawn calls in one message, or a background option | Run subagents one at a time; model C's workstreams run one after another |
-| Isolate a subagent's files | A worktree or sandbox option on the spawn tool | Never run parallel writers in one checkout. If you can run git, create a worktree per engineer (`git worktree add`) and give each its path; otherwise run engineers one at a time |
+| Isolate a subagent's files | A worktree or sandbox option on the spawn tool | Never run parallel writers in one checkout. If you can run git, create a worktree per engineer outside the repository folder, for example `git worktree add ../<repo>-<workstream>`, and give each its path; otherwise run engineers one at a time |
 | Choose each agent's model | A model parameter on the spawn tool, or agent definitions that set one | Every agent uses the session's model; skip step 4's "Choosing models" |
 | Message or resume an agent | A tool that sends a follow-up to an agent you spawned | Spawn a replacement as step 4's "Briefing agents" says |
 | Ask the user mid-run | A question tool, or a live conversation | You are unattended ([autonomy.md](autonomy.md)) |
+
+Use the agent definitions a runtime already has. Gaining a capability by creating or editing agent definition files (such as `.agent.md` or `.cursor/agents/*.md`) changes the user's configuration, so leave those files alone and use the fallback instead.
 
 ## Client notes
 

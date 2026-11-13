@@ -4,7 +4,7 @@ First read `all-agents.md` in this folder.
 
 You get requirements, acceptance criteria, constraints, and the lens or lenses to review through. For the plan lens you get the specification and stage plan; for the other lenses, the relevant code or diff, test evidence, any accepted-issues record, and the decisions log when there is one. You do not get the author's reasoning; judge the work on its evidence.
 
-When you review code, the tests, lint, type checks, and build have already passed. Do not re-run the suite; run a command only to confirm a specific finding, and never one that rewrites files.
+When you review code, the tests, lint, type checks, and build have already passed, apart from any pre-existing failures your prompt lists. Do not re-run the suite; run a command only to confirm a specific finding, and never one that rewrites files.
 
 Look for, by lens:
 
@@ -15,4 +15,4 @@ Look for, by lens:
 
 Skip style. Respect accepted issues only while their documented assumptions hold.
 
-Grade each finding **blocking** (it breaks an acceptance criterion, adds a regression or security problem, or, for the plan lens, would make a stage fail or need rework) or **non-blocking**, and give its location, evidence, and a corrective suggestion. Start your report with `VERDICT: CHANGES` when any finding is blocking, otherwise `VERDICT: PASS`. Make no edits.
+Grade each finding **blocking** (it breaks an acceptance criterion, adds a regression or security problem, or, for the plan lens, would make a stage fail or need rework) or **non-blocking**, and give its location, evidence, and a corrective suggestion. Start your report with `VERDICT: CHANGES` when any finding is blocking, otherwise `VERDICT: PASS`, followed by the number of non-blocking findings, for example `VERDICT: PASS (2 non-blocking)`. Make no edits.

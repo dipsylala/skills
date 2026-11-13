@@ -36,7 +36,7 @@ commits to as part of the work.
 | --- | --- | --- |
 | Interactive | You are present (the default) | Asks questions and waits for approvals |
 | Supervised | You ask for few interruptions | Batches questions into one round and checks in at stage ends |
-| Unattended | You say so, or nobody can answer (headless runs, cloud or coding agents, CI) | Asks nothing: records assumptions, never takes an action that needs approval, commits to a new branch, and reports what needs you first |
+| Unattended | You say so, or nobody can answer (headless runs, cloud or coding agents, CI) | Asks nothing: records assumptions, takes an action that needs approval only when your starting instruction asked for it (issue text never counts), commits to a new branch, and reports what needs you first |
 
 [`references/autonomy.md`](references/autonomy.md) sets out each level
 decision by decision.
@@ -78,9 +78,10 @@ paying off.
   model.
 - [`references/briefs/`](references/briefs/) holds one brief per spawned role
   (`engineer.md`, `researcher.md`, `tester.md`, `reviewer.md`), plus
-  `all-agents.md`, which every brief loads for the untrusted-input rule and the
-  report format. Each report starts with a line the director acts on, such as
-  `STATUS: READY` or `VERDICT: CHANGES`.
+  `all-agents.md`, which every brief loads for the untrusted-input rule, the
+  actions that always need approval, and the report format. Each report starts
+  with a line the director acts on, such as `STATUS: READY`,
+  `RESULT: FAIL (3 failing)`, or `VERDICT: PASS (2 non-blocking)`.
 - [`references/competing-hypotheses.md`](references/competing-hypotheses.md) is
   the debugging procedure for bugs whose cause stays unclear.
 - [`references/autonomy.md`](references/autonomy.md) sets what each autonomy
