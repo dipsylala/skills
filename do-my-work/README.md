@@ -7,8 +7,12 @@ work: one agent for a small fix, an implementer with specialists for a
 coherent task, and a director with parallel engineers only when workstreams
 are genuinely independent.
 
-The skill is user-invoked. It runs on Claude Code and Codex, and relies on no
-feature that only one of them has.
+The skill is user-invoked. It is written for any client that supports Agent
+Skills, such as Claude Code, Codex, GitHub Copilot, Cursor, and Gemini CLI. At
+the start of each run it checks what the client can do (spawn subagents, run
+them in parallel, isolate their files, choose a model per agent, ask you
+questions) and adapts; [`references/runtimes.md`](references/runtimes.md)
+lists those capabilities and what to do without each.
 
 ## Usage
 
@@ -16,6 +20,7 @@ feature that only one of them has.
 /do-my-work PROJ-123
 /do-my-work Fix the CSV export dropping rows with commas in quoted fields
 /do-my-work docs/work/csv-export/spec.md
+/do-my-work unattended: add CSV export to the reports page
 ```
 
 The skill asks for approval at the points that matter: the specification and
@@ -23,6 +28,17 @@ approach, the team before spawning parallel engineers, and any change to
 authentication, payments, CI, schemas, dependencies, or production data. It
 never transitions or closes a ticket, and commits to your branch only when
 asked.
+
+## Autonomy levels
+
+| Level | When | What changes |
+| --- | --- | --- |
+| Interactive | You are present (the default) | Asks questions and waits for approvals |
+| Supervised | You ask for few interruptions | Batches questions into one round and checks in at stage ends |
+| Unattended | You say so, or nobody can answer (headless runs, cloud or coding agents, CI) | Asks nothing: records assumptions, never takes an action that needs approval, commits to a new branch, and reports what needs you first |
+
+[`references/autonomy.md`](references/autonomy.md) sets out each level
+decision by decision.
 
 ## Workflow
 
@@ -66,6 +82,11 @@ paying off.
   `STATUS: READY` or `VERDICT: CHANGES`.
 - [`references/competing-hypotheses.md`](references/competing-hypotheses.md) is
   the debugging procedure for bugs whose cause stays unclear.
+- [`references/autonomy.md`](references/autonomy.md) sets what each autonomy
+  level changes at every point where the skill would ask or wait.
+- [`references/runtimes.md`](references/runtimes.md) lists the runtime
+  capabilities the skill checks, the fallback for each, and notes on the main
+  clients.
 
 ## Design choices
 
