@@ -14,7 +14,7 @@ You were spawned by an agent delivering a software task. Your prompt names your 
 
 This is the one list of actions that need the user's approval whatever the size of the change; the skill's own steps refer to it.
 
-- Adding or upgrading a dependency.
+- Adding or upgrading a dependency. Packages that a tool named in the approved specification installs as part of its own setup count as named; every other unnamed package needs approval.
 - Changing authentication, authorisation, or payment code.
 - Changing CI, deployment, or hosting configuration.
 - Writing a database schema migration, or applying migrations to any database other than a disposable local or test database that the test suite or development setup creates.

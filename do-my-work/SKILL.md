@@ -56,6 +56,7 @@ Separate agreed requirements and acceptance criteria from technical decisions an
 - Obtain approval for material scope changes, consequential architectural choices, destructive actions, and unresolved decisions affecting the outcome.
 - Whatever the size of the change, also obtain approval before any always-ask action (the one list, in [references/briefs/all-agents.md](references/briefs/all-agents.md), which applies to you as well as to spawned agents) and before settling an assumption that is really a product or business decision.
 - Dependencies, schema changes, CI, and authentication or authorisation changes that the approved specification names are approved with it.
+- Tell the user about any departure from the approved specification in your next message, not only in the progress file.
 - Routine implementation choices need no additional approval; do not seek approval merely to be safe.
 
 ## 4. Select execution model and propose team
