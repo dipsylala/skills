@@ -64,6 +64,7 @@ IDLE_GAP = 600        # seconds without a transcript entry that split activity i
 RUNNING_WINDOW = 120  # seconds since the last entry for an unfinished agent to count as running
 STALL_AFTER = 600     # seconds of silence after which an unfinished agent counts as stalled
 RESULT_LINE = re.compile(r"^\s*(STATUS|VERDICT):", re.M)
+TOOL_ID = re.compile(r"toolu_[A-Za-z0-9]+")  # a hook's toolUseID can carry a suffix, e.g. toolu_…-context
 HOOK_KINDS = ["ran", "context", "message", "cancelled", "error", "blocked"]  # least to most severe
 FILE_TOOLS = {"Write": "file_path", "Edit": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
 SHELL_TOOLS = {"Bash", "PowerShell"}
@@ -167,6 +168,12 @@ def hook_record(entry, t):
         "ms": attachment.get("durationMs") or 0}
 
 
+def call_of(calls, hook_id):
+    """The tool call [t, name, brief, id] a hook fired on, or None (Stop and other hooks fire on no call)."""
+    match = TOOL_ID.match(str(hook_id))
+    return calls.get(match.group()) if match else None
+
+
 def merge_hook(hooks, key, record):
     """One record per hook firing: keep the most severe outcome and every message."""
     current = hooks.get(key)
@@ -209,6 +216,7 @@ def summarise_uncached(path):
     prompt = final = ""
     ended = False
     activity = deque(maxlen=30)
+    calls = {}  # every tool call by id, so a hook can name the call it fired on
     chapters, spawns, launched, hooks = [], {}, {}, {}
     files, commits, prs, shell = {}, [], [], {}  # outputs; shell: git commands awaiting their result
     cwd = None
@@ -262,7 +270,9 @@ def summarise_uncached(path):
                 tool_input = block.get("input") or {}
                 tools[name] = tools.get(name, 0) + 1
                 if t is not None:
-                    activity.append([t, name, brief(tool_input)])
+                    call = [t, name, brief(tool_input), block.get("id")]
+                    activity.append(call)
+                    calls[block.get("id")] = call
                 if name in FILE_TOOLS and t is not None and tool_input.get(FILE_TOOLS[name]):
                     f = files.setdefault(tool_input[FILE_TOOLS[name]], {"t0": t, "t1": t, "writes": 0, "edits": 0, "at": {}})
                     if block.get("id") in f["at"]:
@@ -297,7 +307,8 @@ def summarise_uncached(path):
         "prompt": prompt[:3000], "final": final[:4000], "result": result, "ended": ended,
         "activity": list(activity), "chapters": chapters, "spawns": spawns, "launched": launched,
         "files": files, "commits": commits, "prs": prs, "cwd": cwd,
-        "hooks": [{**h, "texts": [x[:3000] for x in h["texts"]]} for h in sorted(hooks.values(), key=lambda h: h["t"])][-300:],
+        "hooks": [{**h, "texts": [x[:3000] for x in h["texts"]], "call": call_of(calls, key[0])}
+                  for key, h in sorted(hooks.items(), key=lambda kv: kv[1]["t"])][-300:],
     }
 
 

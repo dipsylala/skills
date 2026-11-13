@@ -72,7 +72,7 @@ input[type=search] { flex:1 1 180px; max-width:280px; }
 .s-running { color:var(--run); } .s-quiet { color:var(--quiet); } .s-stalled { color:var(--stall); } .s-done { color:var(--done); }
 .b-running { background-color:var(--run); } .b-quiet { background-color:var(--quiet); } .b-stalled { background-color:var(--stall); } .b-done { background-color:var(--done); } .b-main { background-color:var(--main); }
 /* The marker is a 16px-wide hit area; the small diamond is drawn inside it. */
-.hook { position:absolute; top:0; width:16px; height:16px; margin-left:-8px; z-index:1; }
+.hook { position:absolute; top:0; width:16px; height:16px; margin-left:-8px; z-index:1; cursor:pointer; }
 .hook::before { content:""; position:absolute; left:4px; top:3px; width:8px; height:8px; transform:rotate(45deg); border-radius:1px; background:var(--k); }
 .hook.multi::before { box-shadow:0 0 0 2px var(--card); }
 .hook:hover::before { transform:rotate(45deg) scale(1.4); }
@@ -164,6 +164,8 @@ pre.code .ln { display:inline-block; min-width:3em; margin-right:12px; text-alig
 .feed .t { color:var(--muted); font-variant-numeric:tabular-nums; }
 .feed .tool { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .feed .what { font-family:ui-monospace, Consolas, monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.feed li.gap { display:block; text-align:center; color:var(--muted); }
+.feed li.focus, .hooks li.focus { background:var(--hover); box-shadow:inset 3px 0 var(--stall); }
 pre { white-space:pre-wrap; word-break:break-word; font-size:12px; margin:0 0 10px; max-height:260px; overflow:auto; background:var(--card); border:1px solid var(--line); border-radius:6px; padding:8px; }
 dl { display:grid; grid-template-columns:auto 1fr; gap:2px 12px; font-size:12px; margin:0 0 10px; }
 dt { color:var(--muted); } dd { margin:0; word-break:break-all; }
