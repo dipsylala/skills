@@ -61,6 +61,9 @@ input[type=search] { flex:1 1 180px; max-width:280px; }
 .axis .tick { border-left:0; font-size:11px; color:var(--muted); padding-top:6px; white-space:nowrap; transform:translateX(-50%); }
 .nowline { position:absolute; top:0; bottom:0; border-left:2px solid var(--run); opacity:.5; }
 .chapter { position:absolute; top:0; bottom:0; border-left:2px solid var(--chapter); opacity:.5; }
+.chapter::after { content:""; position:absolute; top:0; bottom:0; left:-5px; width:8px; }  /* wider hover area for the tooltip */
+.chapter-num { position:absolute; bottom:1px; min-width:14px; height:14px; padding:0 3px; box-sizing:border-box; transform:translateX(-50%);
+  border-radius:7px; background:var(--chapter); color:var(--bg); font-size:10px; font-weight:600; line-height:14px; text-align:center; cursor:default; }
 .bar { position:absolute; top:9px; height:12px; border-radius:3px; min-width:3px; }
 .bar::after { content:""; position:absolute; inset:-6px 0; }  /* taller hover area for the tooltip */
 .bar.running { background-image:repeating-linear-gradient(45deg, transparent 0 5px, rgba(255,255,255,.35) 5px 10px); background-size:14px 14px; animation:slide 1s linear infinite; }

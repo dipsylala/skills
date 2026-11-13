@@ -333,8 +333,12 @@ function render() {
     : new Date(t * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", ...(step < 60 ? {second: "2-digit"} : {})});
   const tickTimes = [];
   for (let t = Math.ceil(lo / step) * step; t < hi; t += step) tickTimes.push(t);
+  // Chapters are numbered across the whole session, so a number stays the same at any zoom.
+  const chapters = DATA.chapters.map((c, i) => ({...c, n: i + 1,
+    tip: `<div class="entry"><b>Chapter ${i + 1} · ${clock(c.t)}</b>${c.title ? "\n" + esc(c.title) : ""}${c.summary ? "\n" + esc(c.summary) : ""}</div>`}))
+    .filter(c => c.t > lo && c.t < hi);
   const grid = tickTimes.map(t => `<div class="tick" style="left:${x(t)}%"></div>`).join("")
-    + DATA.chapters.filter(c => c.t > lo && c.t < hi).map(c => `<div class="chapter" style="left:${x(c.t)}%" title="${esc(c.title)}"></div>`).join("")
+    + chapters.map(c => `<div class="chapter" style="left:${x(c.t)}%" data-tip="${esc(c.tip)}"></div>`).join("")
     + (LIVE && DATA.now < hi ? `<div class="nowline" style="left:${x(DATA.now)}%" title="now"></div>` : "");
 
   const counts = {running: 0, quiet: 0, stalled: 0, done: 0};
@@ -389,7 +393,7 @@ function render() {
   $("attention").innerHTML = attention.length ? `<b>Needs attention:</b> ${attention.join(", ")}` : "";
   const mainOpen = state.open.has("main");
   let html = `<div class="row axis"><span></span><span class="name" style="color:var(--muted);font-size:12px">${shown.length} of ${DATA.agents.length} agents</span>
-      <div class="track">${tickTimes.map(t => `<div class="tick" style="left:${x(t)}%">${label(t)}</div>`).join("")}</div><span class="num">active</span></div>
+      <div class="track">${tickTimes.map(t => `<div class="tick" style="left:${x(t)}%">${label(t)}</div>`).join("")}${chapters.map(c => `<div class="chapter-num" style="left:${x(c.t)}%" data-tip="${esc(c.tip)}">${c.n}</div>`).join("")}</div><span class="num">active</span></div>
     <div class="row agent" data-id="main" tabindex="0" role="button" aria-expanded="${mainOpen}">
       <span class="badge s-${mainRow.status}" title="${m.running ? "Main session active" : "Main session idle"}">${statusOf(mainRow)[1]}</span>
       <span class="name">Main session<small>${esc(mainRow.model.replace(/^claude-/, ""))}</small></span>
@@ -640,9 +644,9 @@ $("chips").addEventListener("click", e => {
 });
 $("q").addEventListener("input", e => { state.q = e.target.value; render(); });
 
-// Hook and bar tooltips show at once (a native title waits about a second) and stay inside the window.
+// Hook, bar and chapter tooltips show at once (a native title waits about a second) and stay inside the window.
 $("list").addEventListener("mousemove", e => {
-  const hook = e.target.closest(".hook, .bar[data-tip]"), tip = $("tip");
+  const hook = e.target.closest(".hook, .bar[data-tip], .chapter, .chapter-num"), tip = $("tip");
   if (!hook) { tip.hidden = true; return; }
   if (tip.hidden || tip.dataset.for !== hook.dataset.tip) { tip.innerHTML = hook.dataset.tip; tip.dataset.for = hook.dataset.tip; tip.hidden = false; }
   const w = tip.offsetWidth, h = tip.offsetHeight;

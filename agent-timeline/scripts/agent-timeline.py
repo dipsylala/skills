@@ -276,7 +276,7 @@ def summarise_uncached(path):
                 if name == HANDBACK_TOOL:
                     final, ended = str(tool_input.get("message", "")).strip(), True
                 elif name.endswith("mark_chapter") and t is not None:
-                    chapters.append({"t": t, "title": tool_input.get("title", "")})
+                    chapters.append({"t": t, "title": tool_input.get("title", ""), "summary": tool_input.get("summary", "")})
                 elif name in SPAWN_TOOLS:
                     spawns[block.get("id")] = {"t": t, "input": tool_input, "message": message.get("id")}
     segments = []
