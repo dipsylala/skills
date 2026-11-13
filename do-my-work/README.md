@@ -94,28 +94,7 @@ paying off.
   test one hypothesis that makes a prediction, so the investigation does not
   anchor on the first plausible cause.
 
-## Sources
+## Credits
 
-The team techniques were drawn from the following, reviewed November 2026:
-
-- Cognition, "Don't Build Multi-Agents", on conflicting implicit decisions
-  between parallel agents: the decisions log.
-- Cemri et al., "Why Do Multi-Agent LLM Systems Fail?" (UC Berkeley), which
-  found step repetition common and verification effective: the stall rule and
-  completion gate.
-- [Claude Code agent teams](https://code.claude.com/docs/en/agent-teams): plan
-  approval for teammates and investigation with competing hypotheses.
-- [Agent Team Topologies, "Risky Refactor"](https://eirwin.github.io/agent-team-topologies/topologies/risky-refactor),
-  GSD's plan checker, [BMAD Method](https://github.com/bmad-code-org/BMAD-METHOD),
-  and [Gas Town](https://github.com/steveyegge/gastown): plan contents and
-  approval criteria, the "won't touch" list, and `BLOCKED` reports that list
-  what was tried.
-- [shhac/skills competing-hypotheses](https://github.com/shhac/skills/tree/main/skills/competing-hypotheses),
-  [rune](https://github.com/vinhnxv/rune/tree/main/plugins/rune/skills/debug),
-  [npow/claude-skills deep-debug](https://github.com/npow/claude-skills/tree/main/deep-debug),
-  [Compound Engineering](https://github.com/EveryInc/compound-engineering-plugin)
-  `ce-debug`, and Gas City's read-only review check: isolated investigators,
-  predictions, verdicts, and the `git status` check.
-- [obra/superpowers](https://github.com/obra/superpowers), compared but not
-  adopted: it reviews after implementation rather than gating plans per
-  worker.
+The team techniques and other ideas this skill adopts are credited in
+[CREDITS.md](CREDITS.md).
