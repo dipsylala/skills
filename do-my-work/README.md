@@ -31,12 +31,8 @@ spawning parallel engineers, and any action on its
 always-ask list: dependencies, auth and payment code, CI and deployment,
 schema migrations, publishing, messages and other external writes, and
 destructive git commands. It never changes a ticket's status or closes it
-without your approval.
-Multi-stage work happens on a branch it creates (or a cloud runner's own
-branch), normally in its own worktree so your checkout stays on your branch; if
-it can't make one, it asks before switching your checkout; in an existing repository it brings work into your branch only when
-asked. A repository it creates for a new project it commits to as part of the
-work.
+without your approval. [How the team works](#how-the-team-works) covers what
+it does to your repository.
 
 ## Autonomy levels
 
@@ -124,6 +120,39 @@ runs ask nothing; they record assumptions and leave held actions undone (see
 
 Say **checkpoint** at any time for progress, blockers, and whether the team is
 paying off.
+
+## How the team works
+
+Agents never talk to each other. The director (the agent you invoked) gives
+each one a spawn prompt with its brief, and each sends back a report whose
+first line the director acts on. Fix rounds go back to the engineer that wrote
+the code. In model C the decisions log is the only shared record, and only the
+director writes it.
+
+In your repository:
+
+- **Your branch:** in a repository that existed before the run, it brings work
+  into your branch, pushes, or opens a PR only when you or the project
+  instruction files ask. A repository it creates for a new project it commits
+  to as part of the work.
+- **Your uncommitted changes:** at the start it records your checkout as a
+  snapshot commit under `refs/do-my-work/baseline`, leaving your files and
+  index alone, so reviews and commits can keep your changes and its own apart.
+  A branch built on that snapshot needs your approval to push.
+- **Branches and worktrees:** multi-stage work goes on a branch named
+  `do-my-work/<feature>`, normally in its own worktree, so your checkout stays
+  on your branch; if it can't make one, it asks before switching your checkout.
+  Unattended runs commit to the runtime's branch or a `do-my-work/` branch of
+  their own. Worktrees go next to the repository (`../<repo>-<name>`) when it
+  can write there, otherwise inside the git directory.
+- **Parallel engineers:** each gets its own branch and worktree. The director
+  re-runs each workstream's gates, has it reviewed, and merges it into the
+  effort branch one at a time.
+- **Reviewers and testers:** each works in a read-only worktree at the commit
+  it checks, and is checked afterwards for changed files and new commits.
+- **Cleanup:** at the end it lists the worktrees, branches, and refs it created
+  and offers to remove them. Unattended runs leave them and list them in the
+  report.
 
 ## Structure
 
