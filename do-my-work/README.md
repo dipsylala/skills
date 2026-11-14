@@ -7,12 +7,14 @@ work: one agent for a small fix, an implementer with specialists for a
 coherent task, and a director with parallel engineers only when workstreams
 are genuinely independent.
 
-The skill is user-invoked. It is written for any client that supports Agent
-Skills, such as Claude Code, Codex, GitHub Copilot, Cursor, and Gemini CLI (now Antigravity CLI). At
-the start of each run it checks what the client can do (spawn subagents, run
-them in parallel, isolate their files, choose a model per agent, ask you
-questions) and adapts; [`references/runtimes.md`](references/runtimes.md)
-lists those capabilities and what to do without each.
+The skill runs only when you ask for it by name: `/do-my-work`, `$do-my-work`,
+or an issue asking a cloud coding agent to use do-my-work. It is written for
+any client that supports Agent Skills, such as Claude Code, Codex, GitHub
+Copilot, Cursor, and Gemini CLI (now Antigravity CLI). At the start of each run
+it checks what the client can do (spawn subagents, run them in parallel,
+isolate their files, choose a model per agent, ask you questions) and adapts;
+[`references/runtimes.md`](references/runtimes.md) lists those capabilities and
+what to do without each.
 
 ## Usage
 
