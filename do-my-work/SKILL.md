@@ -123,7 +123,7 @@ Reviewers grade each finding blocking (it breaks an acceptance criterion, or add
 
 Report what changed, each acceptance criterion with the evidence that it is met or the reason it is not, tests actually run and results, independent review outcomes (or why review was skipped), any differences from the ticket, and unresolved risks or follow-ups. Do not claim evidence you lack.
 
-- Name each rejected finding and each unfixed non-blocking finding, or say there were none.
+- Name each rejected finding and each unfixed non-blocking finding, or say there were none. Gather them from every stage's reviews in the progress file, not only the final review's.
 - With more than ten acceptance criteria, put the criterion-by-criterion evidence in a table in the progress file (creating one in the effort's artifact folder if there is none), link it, and list in the report only the criteria not met.
 - List the worktrees and branches this run created and offer to remove them.
 
