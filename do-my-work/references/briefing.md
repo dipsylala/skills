@@ -21,7 +21,7 @@ If an agent cannot reach paths in your checkout, paste the decisions log and lat
 ## Acting on reports
 
 - Act on each report's first line and read further only when acting on it: `STATUS: READY|PLAN|BLOCKED` from engineers and researchers (and `STATUS: READY|BLOCKED` from a subordinate director), `RESULT: PASS|FAIL|BLOCKED` from testers, `VERDICT: PASS|CHANGES|BLOCKED` from reviewers.
-- Always read a reviewer's findings, which step 7 reports. A `VERDICT: BLOCKED` review did not happen: remove what blocked it, or ask the user, and spawn a fresh reviewer; never count it as passed.
+- Always read a reviewer's findings and any checks it could not make, both of which step 7 reports. A `VERDICT: BLOCKED` review did not happen: remove what blocked it, or ask the user, and spawn a fresh reviewer; never count it as passed.
 - If an agent replies `BLOCKED: brief unreadable`, spawn it again with both briefs pasted into the prompt.
 - Send follow-up work (an approved or returned plan, a failed gate, review fixes) to the same agent where the runtime allows. Otherwise spawn a fresh agent of that role with its earlier report and the new input and, for an engineer, its original worktree path and branch.
 
