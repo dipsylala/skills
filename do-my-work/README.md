@@ -8,7 +8,7 @@ coherent task, and a director with parallel engineers only when workstreams
 are genuinely independent.
 
 The skill is user-invoked. It is written for any client that supports Agent
-Skills, such as Claude Code, Codex, GitHub Copilot, Cursor, and Gemini CLI. At
+Skills, such as Claude Code, Codex, GitHub Copilot, Cursor, and Gemini CLI (now Antigravity CLI). At
 the start of each run it checks what the client can do (spawn subagents, run
 them in parallel, isolate their files, choose a model per agent, ask you
 questions) and adapts; [`references/runtimes.md`](references/runtimes.md)

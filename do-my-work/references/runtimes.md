@@ -20,7 +20,7 @@ Use the agent definitions a runtime already has. Gaining a capability by creatin
 Reviewed November 2026. Clients change quickly; when these notes disagree with your tools, trust your tools.
 
 - **Claude Code:** subagents through its agent tool, in parallel when several calls are sent in one message, with optional worktree isolation, a model per agent, and follow-up messages to running agents. `claude -p` and cloud sessions started without a user are unattended. `agent-timeline` works only here.
-- **Codex:** subagents in local clients when the `multi_agent` feature is enabled, with custom agents that set their own model. `codex exec` and Codex cloud are unattended.
+- **Codex:** subagents in local clients, on by default in current releases (older ones need the `multi_agent` feature), with custom agents that set their own model. `codex exec` and Codex cloud are unattended.
 - **GitHub Copilot:** in VS Code agent mode, subagents run through the `runSubagent` tool, and custom agents (`.agent.md`) can give one its own model; the Copilot CLI runs custom agents as subagents. The cloud coding agent works from an issue and opens a pull request, so it is unattended.
 - **Cursor:** subagents through its task tool, in the foreground or background, in parallel when several are started in one message, with a model set per agent in `.cursor/agents/*.md`. Background and cloud agents work in worktrees or on remote machines and are unattended.
-- **Gemini CLI:** subagents and Agent Skills. `gemini -p` is unattended.
+- **Gemini CLI and Antigravity CLI:** Google replaced Gemini CLI with Antigravity CLI (`agy`) in 2026; both have subagents and Agent Skills. `gemini -p` and other non-interactive runs are unattended.
