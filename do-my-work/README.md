@@ -47,6 +47,49 @@ decision by decision.
 
 ## Workflow
 
+```mermaid
+flowchart TD
+    U["Understand<br/>read the ticket and code, run the checks, reproduce any bug"]
+    C["Clarify<br/>until every acceptance criterion says how to check it"]
+    Size{"How big?"}
+    Plan["Present the approach<br/>wait only if a decision needs you"]
+    Build["Build and test"]
+    Risky{"Risky or<br/>substantial?"}
+    Review["Fresh reviewers, one per lens<br/>fix blocking findings"]
+    Spec["Spec and stage plan<br/>checked by a fresh reviewer"]
+    Approve["You approve the spec and team"]
+    Stage["Build and test the stage"]
+    Commit["Update affected docs<br/>commit to the effort branch"]
+    StageReview["Fresh reviewers, one per lens<br/>fix and commit blocking findings"]
+    More{"More stages?"}
+    Finish["Finish<br/>each acceptance criterion with its evidence"]
+
+    U --> C
+    C --> Size
+    Size -- "small change or<br/>coherent task" --> Plan
+    Plan --> Build
+    Build --> Risky
+    Risky -- yes --> Review
+    Risky -- no --> Finish
+    Review --> Finish
+    Size -- multi-stage --> Spec
+    Spec --> Approve
+    Approve --> Stage
+    Stage --> Commit
+    Commit --> StageReview
+    StageReview --> More
+    More -- "yes: reassess the team" --> Stage
+    More -- no --> Finish
+
+    classDef you stroke-width:3px
+    class C,Plan,Approve you
+```
+
+Thick borders mark where an interactive run can stop for you. An always-ask
+action, such as adding a dependency, stops it wherever it comes up. Unattended
+runs ask nothing; they record assumptions and leave held actions undone (see
+[Autonomy levels](#autonomy-levels)).
+
 1. **Understand** the request, reading the ticket, code, and tests, and
    reproducing any bug.
 2. **Clarify** until every acceptance criterion says how to check it. When
