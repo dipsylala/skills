@@ -63,6 +63,7 @@ flowchart TD
     Commit["Update affected docs<br/>commit to the effort branch"]
     StageReview["Fresh reviewers, one per lens<br/>fix and commit blocking findings"]
     More{"More stages?"}
+    Reassess["Reassess the team"]
     Finish["Finish<br/>each acceptance criterion with its evidence"]
 
     U --> C
@@ -79,7 +80,8 @@ flowchart TD
     Stage --> Commit
     Commit --> StageReview
     StageReview --> More
-    More -- "yes: reassess the team" --> Stage
+    More -- yes --> Reassess
+    Reassess --> Stage
     More -- no --> Finish
 
     classDef you stroke-width:3px
