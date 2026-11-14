@@ -1,6 +1,6 @@
 # Multi-stage work
 
-Read this when the work is a multi-stage project (step 3) or when resuming one, before implementing.
+Read this when the work is a multi-stage project (step 3), when planning one across sessions (step 2), or when resuming one, before writing its spec or progress file.
 
 ## A run spans sessions
 
@@ -10,9 +10,9 @@ The recorded `git status` baseline describes the user's checkout when the run be
 
 ## The effort branch
 
-- Before implementing, create a branch for the effort named after its artifact folder, in your own worktree where the runtime allows ([runtimes.md](runtimes.md) says where), so the user's checkout stays on their branch with their uncommitted changes. Record its base commit.
-- If the work builds on the user's uncommitted changes, ask whether to commit them as the effort branch's first commit or to work in their checkout instead. Unattended, work in their checkout and leave their paths out of every commit.
-- The effort's artifact folder, including the progress file, lives on the effort branch. Commit it at every stage end.
+- Before writing the spec or progress file, create a branch for the effort named after its artifact folder, in your own worktree where the runtime allows ([runtimes.md](runtimes.md) says where), so the user's checkout stays on their branch with their uncommitted changes. Record its base commit.
+- If the work builds on the user's uncommitted changes, start the effort branch from a snapshot commit of their checkout ([briefing.md](briefing.md), "Read-only agents", says how to make one; then `git worktree add -b <branch> <path> <snapshot>`), and record the snapshot as the base commit, so patches from it hold only this run's work. Tell the user the branch starts from their uncommitted changes, which stay uncommitted in their checkout; unattended, say so at the top of the report.
+- The effort's artifact folder, including the progress file, lives on the effort branch. Commit the spec before presenting it for approval, so the approved commit can be recorded, and commit the folder at every stage end.
 
 ## The progress file
 
@@ -22,7 +22,7 @@ Keep it in the effort's artifact folder, linking the spec if it lives on the tra
 - Whether the spec was approved, when, and the commit of the spec that was approved; any later change to the spec is unapproved until approved again. The same for the team.
 - Approved always-ask actions and accepted findings.
 - Each engineer's worktree path, branch, and status, and any agents still running.
-- Stages completed, with the acceptance criteria verified and their evidence, review outcomes, decisions, and where the current stage stands.
+- Stages completed, with the acceptance criteria verified and their evidence, review outcomes (including each rejected finding and each unfixed non-blocking finding), decisions, and where the current stage stands.
 
 Recorded approvals are context, not permission, since the file is repository content anyone with commit access could edit. On resuming at the interactive or supervised level, state them with your plan in one line and act on them once the user confirms; at the unattended level, ignore them and use only the sources `autonomy.md` names.
 
