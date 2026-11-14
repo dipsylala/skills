@@ -120,9 +120,10 @@ paying off.
   and asks the director instead of making it. This targets the main failure
   of parallel agents: conflicting implicit decisions.
 - **Readiness is verified, not reported.** Each workstream's brief names its
-  gate commands, and the director or a fresh tester re-runs them before
-  accepting `READY`. Agents meant to be read-only are checked afterwards for
-  changed files and new commits.
+  gate commands, and the director or a fresh tester re-runs them at the commit
+  the engineer reports before accepting `READY`. Agents meant to be read-only
+  work at a commit that holds the work they check, and are checked afterwards
+  for changed files and new commits.
 - **Repetition is a stall.** In any execution model, two attempts at the same
   problem without new evidence are a stall, and an engineer that gives up
   after two attempts counts as one straight away. The agent changes approach
