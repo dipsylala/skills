@@ -20,8 +20,8 @@ If an agent cannot reach paths in your checkout, paste the decisions log and lat
 
 ## Acting on reports
 
-- Act on each report's first line and read further only when acting on it: `STATUS: READY|PLAN|BLOCKED` from engineers and researchers (and `STATUS: READY|BLOCKED` from a subordinate director), `RESULT: PASS|FAIL|BLOCKED` from testers, `VERDICT: PASS|CHANGES` from reviewers.
-- Always read a reviewer's findings, which step 7 reports.
+- Act on each report's first line and read further only when acting on it: `STATUS: READY|PLAN|BLOCKED` from engineers and researchers (and `STATUS: READY|BLOCKED` from a subordinate director), `RESULT: PASS|FAIL|BLOCKED` from testers, `VERDICT: PASS|CHANGES|BLOCKED` from reviewers.
+- Always read a reviewer's findings, which step 7 reports. A `VERDICT: BLOCKED` review did not happen: remove what blocked it, or ask the user, and spawn a fresh reviewer; never count it as passed.
 - If an agent replies `BLOCKED: brief unreadable`, spawn it again with both briefs pasted into the prompt.
 - Send follow-up work (an approved or returned plan, a failed gate, review fixes) to the same agent where the runtime allows. Otherwise spawn a fresh agent of that role with its earlier report and the new input and, for an engineer, its original worktree path and branch.
 
@@ -37,6 +37,7 @@ Researchers, testers, and reviewers make no edits. Check that they did not:
 - Afterwards, the worktree's HEAD must still be the recorded commit and `git status --porcelain` there must list nothing but its report file and the untracked files you noted when setting up; anything else is its own write. A hypothesis researcher's throwaway logging there is allowed and never merged. Reviewers that need the running app start it in their own worktree on the port you give them, not in a checkout you are still editing.
 - **When it must share a checkout** (the runtime cannot create worktrees): run read-only agents one at a time, and keep the checkout unchanged while each works: run no other agent in it, and start no other work, including the next stage, until it finishes. Before spawning, record `git rev-parse HEAD`, `git status --porcelain`, `git diff HEAD | git hash-object --stdin`, and `git ls-files -o --exclude-standard | git hash-object --stdin-paths` (the contents of untracked files); afterwards, any difference other than its report file means it wrote. Paths git ignores, such as build and test output, don't count.
 - A tester's run that changes a lockfile or snapshot is a finding about the test setup, reported as such, not a write by the tester. Keep that change out of every commit too.
+- Once an agent's check passes, reuse its worktree for the next read-only agent rather than creating another: `git checkout --detach <next commit>` there, re-run the setup if dependencies changed, and note the untracked files again. Keep no more of them than run at once. `git worktree remove` refuses while untracked files remain, and `--force` is an always-ask action, so leave the rest for step 7's list.
 - If an agent wrote, show the user the diff, revert nothing yourself, treat its report as unreliable, and keep its changes out of every commit until the user decides.
 
 ## Choosing models
