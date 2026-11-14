@@ -49,6 +49,8 @@ decision by decision.
 
 ```mermaid
 flowchart TD
+    %% Declared first so the layout draws it beside the stage loop.
+    Reassess["Reassess the team"]
     U["Understand<br/>read the ticket and code, run the checks, reproduce any bug"]
     C["Clarify<br/>until every acceptance criterion says how to check it"]
     Size{"How big?"}
@@ -62,7 +64,6 @@ flowchart TD
     Commit["Update affected docs<br/>commit to the effort branch"]
     StageReview["Fresh reviewers, one per lens<br/>fix and commit blocking findings"]
     More{"More stages?"}
-    Reassess["Reassess the team"]
     Finish["Finish<br/>each acceptance criterion with its evidence"]
 
     U --> C
