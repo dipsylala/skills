@@ -30,8 +30,9 @@ always-ask list: dependencies, auth and payment code, CI and deployment,
 schema migrations, publishing, messages and other external writes, and
 destructive git commands. It never changes a ticket's status or closes it
 without your approval.
-Multi-stage work happens on a branch it creates, leaving your checkout on your
-branch; in an existing repository it brings work into your branch only when
+Multi-stage work happens on a branch it creates (or a cloud runner's own
+branch), normally in its own worktree so your checkout stays on your branch; if
+it can't make one, it asks before switching your checkout; in an existing repository it brings work into your branch only when
 asked. A repository it creates for a new project it commits to as part of the
 work.
 
@@ -85,7 +86,7 @@ flowchart TD
     More -- no --> Finish
 
     classDef you stroke-width:3px
-    class C,Plan,Approve you
+    class C,Plan,Approve,Reassess you
 ```
 
 Thick borders mark where an interactive run can stop for you. An always-ask

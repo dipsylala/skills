@@ -31,13 +31,15 @@ Reviewed November 2026.
 ## Runtime notes
 
 The client notes in [`references/runtimes.md`](references/runtimes.md) were
-checked against these, reviewed November 13, 2026:
+checked against these, reviewed November 2026:
 
 - OpenAI, [Codex subagents](https://developers.openai.com/codex/subagents)
-- Visual Studio Code, [Custom agents](https://code.visualstudio.com/docs/agent-customization/custom-agents)
+- Visual Studio Code, [Subagents](https://code.visualstudio.com/docs/copilot/agents/subagents) and
+  [Custom agents](https://code.visualstudio.com/docs/agent-customization/custom-agents)
 - Cursor, [Subagents](https://cursor.com/docs/subagents)
 - Gemini CLI, [Subagents](https://geminicli.com/docs/core/subagents/) and
   [CLI documentation](https://google-gemini.github.io/gemini-cli/docs/cli/)
+- Google, [Transitioning Gemini CLI to Antigravity CLI](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/)
 
 ## Spec review, rollback point, and documentation updates
 
