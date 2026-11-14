@@ -5,7 +5,8 @@ const STATUS = {running: ["Running", "●"], quiet: ["Quiet", "◐"], stalled: [
 const NOTABLE = new Set(["blocked", "error", "message", "context"]);
 const HOOK_MODES = {notable: ["Notable hooks", "all"], all: ["All hooks", "off"], off: ["Hooks off", "notable"]};
 const state = {open: new Set(), details: new Set(), hide: new Set(), groups: new Map(), folders: new Map(),
-  view: "timeline", file: "", fileMode: "changes", hooks: "notable", q: "", range: "fit"};
+  view: "timeline", file: "", fileMode: "changes", hooks: "notable", q: "", range: "fit",
+  focus: null};  // {owner, t, event}: the hook whose marker was clicked
 const SEVERITY = ["ran", "context", "message", "cancelled", "error", "blocked"];  // least to most, as in HOOK_KINDS
 const KEEP = 8, EARLIER = "earlier";  // groups or rows kept outside the Earlier fold; its state key
 let foldedIds = new Set();
@@ -24,6 +25,9 @@ const dur = s => { s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600
   return h ? `${h}h ${m}m` : m ? `${m}m ${String(r).padStart(2, "0")}s` : `${r}s`; };
 const kt = n => n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : String(n);
 const clock = t => new Date(t * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"});
+// Hooks tagged with the row they belong to, so a marker on a collapsed group row still knows its agent.
+const owned = a => a.hooks.map(h => ({...h, owner: a.id}));
+const callText = ([, tool, what]) => tool.replace(/^mcp__.*?__/, "") + (what ? " · " + what.slice(0, 160) : "");
 
 function segmentsOf(a) {
   // A running agent is still working: draw its last bar up to now.
@@ -361,9 +365,11 @@ function render() {
     return clusters.map(({hooks: hs}) => {
       const kind = hs.map(h => h.kind).reduce((a, b) => SEVERITY.indexOf(b) > SEVERITY.indexOf(a) ? b : a);
       const tip = hs.slice(0, 6).map(h => `<div class="entry"><b>${clock(h.t)} · ${esc(h.event)} · ${esc(h.kind)}</b>${h.hook ? " · " + esc(h.hook) : ""}`
-        + (h.texts[0] ? "\n" + esc(h.texts[0].slice(0, 240)) : "") + "</div>").join("")
+        + (h.call ? "\non " + esc(callText(h.call)) : "") + (h.texts[0] ? "\n" + esc(h.texts[0].slice(0, 240)) : "") + "</div>").join("")
         + (hs.length > 6 ? `<div class="entry">+${hs.length - 6} more</div>` : "");
-      return `<div class="hook k-${kind}${hs.length > 1 ? " multi" : ""}" style="left:${x(hs[0].t)}%" data-tip="${esc(tip)}"></div>`;
+      const target = hs.filter(h => h.kind === kind).at(-1);  // a click goes to the latest of the most severe
+      return `<div class="hook k-${kind}${hs.length > 1 ? " multi" : ""}" style="left:${x(hs[0].t)}%" data-tip="${esc(tip)}"`
+        + ` data-owner="${esc(target.owner)}" data-t="${target.t}" data-event="${esc(target.event)}"></div>`;
     }).join("");
   };
 
@@ -397,7 +403,7 @@ function render() {
     <div class="row agent" data-id="main" tabindex="0" role="button" aria-expanded="${mainOpen}">
       <span class="badge s-${mainRow.status}" title="${m.running ? "Main session active" : "Main session idle"}">${statusOf(mainRow)[1]}</span>
       <span class="name">Main session<small>${esc(mainRow.model.replace(/^claude-/, ""))}</small></span>
-      <div class="track">${grid}${bars(mainRow, "b-main")}${markers(m.hooks)}</div>
+      <div class="track">${grid}${bars(mainRow, "b-main")}${markers(owned(mainRow))}</div>
       <span class="num">${dur(m.active)}</span></div>${mainOpen ? detail(mainRow) : ""}`;
   if (!DATA.agents.length) html += `<div class="empty">No subagents in this session yet.</div>`;
   else if (!shown.length) html += `<div class="empty">No agents match the filters.</div>`;
@@ -405,7 +411,7 @@ function render() {
   const hhmm = t => new Date(t * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
   const header = (key, label, agents, open, note) => {
     const track = open ? "" : agents.map(a => bars(a, `b-${a.status}`)).join("")
-      + markers(agents.flatMap(a => a.hooks));
+      + markers(agents.flatMap(owned));
     return `<div class="row grouprow" data-group="${esc(key)}" tabindex="0" role="button" aria-expanded="${open}">
       <span class="badge chev">${open ? "▾" : "▸"}</span>
       <span class="name" title="${esc(label)}">${esc(label)}<small>${agents.length} agents · ${groupStatus(agents) === "done" ? "all done" : tally(agents)} · ${note}</small></span>
@@ -414,10 +420,10 @@ function render() {
   };
   const agentRow = a => {
     const open = state.open.has(a.id);
-    return `<div class="row agent" data-id="${a.id}" tabindex="0" role="button" aria-expanded="${open}">
+    return `<div class="row agent" data-id="${esc(a.id)}" tabindex="0" role="button" aria-expanded="${open}">
       <span class="badge s-${a.status}" title="${STATUS[a.status][0]}">${STATUS[a.status][1]}</span>
       <span class="name" title="${esc(a.description)}">${"&nbsp;&nbsp;".repeat(Math.max(0, a.depth - 1))}${esc(a.description)}<small>${esc(a.model.replace(/^claude-/, ""))}</small></span>
-      <div class="track">${grid}${bars(a, `b-${a.status}${a.status === "running" ? " running" : ""}`)}${markers(a.hooks)}</div>
+      <div class="track">${grid}${bars(a, `b-${a.status}${a.status === "running" ? " running" : ""}`)}${markers(owned(a))}</div>
       <span class="num">${dur(a.active)}</span></div>${open ? detail(a) : ""}`;
   };
   const unit = g => {
@@ -509,28 +515,33 @@ document.addEventListener("click", async e => {
 }, true);
 
 function detail(a) {
-  const feed = a.activity.slice().reverse().map(([t, tool, what]) =>
-    `<li><span class="t">${clock(t)}</span><span class="tool" title="${esc(tool)}">${esc(tool.replace(/^mcp__.*?__/, ""))}</span><span class="what" title="${esc(what)}">${esc(what)}</span></li>`).join("");
+  // A clicked hook marker highlights the tool call it fired on; a call older than the feed is added below a gap.
+  const focus = state.focus?.owner === a.id ? a.hooks.find(h => h.t === state.focus.t && h.event === state.focus.event) : null;
+  const target = focus?.call?.[3];
+  const pinned = target && !a.activity.some(c => c[3] === target) ? focus.call : null;
+  const item = ([t, tool, what, id]) => `<li${id && id === target ? ' class="focus"' : ""}><span class="t">${clock(t)}</span>`
+    + `<span class="tool" title="${esc(tool)}">${esc(tool.replace(/^mcp__.*?__/, ""))}</span><span class="what" title="${esc(what)}">${esc(what)}</span></li>`;
+  const feed = a.activity.slice().reverse().map(item).join("") + (pinned ? `<li class="gap" title="Earlier calls not shown">⋯</li>${item(pinned)}` : "");
   const tools = Object.entries(a.tools).sort((p, q) => q[1] - p[1]).map(([k, v]) => `${k} ${v}`).join(", ");
-  const hooks = a.hooks.slice().reverse().map((h, i) => `<li><div class="head"><span class="t">${clock(h.t)}</span>
+  const hooks = a.hooks.slice().reverse().map(h => `<li${focus === h && !target ? ' class="focus"' : ""}><div class="head"><span class="t">${clock(h.t)}</span>
       <span title="${esc(h.event)}">${esc(h.event)}</span><span class="tk-${h.kind}">${esc(h.kind)}</span>
       <span title="${esc(h.hook)}">${esc(h.hook)}</span><span class="t">${h.ms ? dur(h.ms / 1000) : ""}</span></div>
-      ${h.texts.length ? `<details data-key="hook-${a.id}-${h.t}-${i}"><summary>${esc(h.texts[0].split("\n")[0].slice(0, 120))}</summary>${copyable(h.texts.join("\n\n"), `<pre>${esc(h.texts.join("\n\n"))}</pre>`)}</details>` : ""}</li>`).join("");
+      ${h.texts.length ? `<details data-key="hook-${esc(a.id)}-${h.t}-${esc(h.event)}"><summary>${esc(h.texts[0].split("\n")[0].slice(0, 120))}</summary>${copyable(h.texts.join("\n\n"), `<pre>${esc(h.texts.join("\n\n"))}</pre>`)}</details>` : ""}</li>`).join("");
   const prompt = a.id === "main" ? "First prompt" : "Prompt";
   return `<div class="detail">
   <p class="statusline"><span class="s-${a.status}">${statusOf(a)[0]}</span> · ${esc(a.type)}${a.background ? " · background" : ""} · ${esc(a.model)}
     · started ${clock(a.start)} · ${dur(a.active)} active${a.segments.length > 1 ? ` in ${a.segments.length} parts` : ""} · last activity ${clock(a.end)}</p>
   <div class="cols">
-    <section><h3>Latest activity</h3>${feed ? `<ol class="feed" data-scroll="feed-${a.id}">${feed}</ol>` : `<p class="empty">No tool calls yet.</p>`}</section>
-    <section><h3>${a.status === "done" ? "Result" : "Latest reply"}</h3>${a.final ? copyable(a.final, `<pre data-scroll="final-${a.id}">${esc(a.final)}</pre>`) : `<p class="empty">Nothing yet.</p>`}</section>
+    <section><h3>Latest activity</h3>${feed ? `<ol class="feed" data-scroll="feed-${esc(a.id)}">${feed}</ol>` : `<p class="empty">No tool calls yet.</p>`}</section>
+    <section><h3>${a.status === "done" ? "Result" : "Latest reply"}</h3>${a.final ? copyable(a.final, `<pre data-scroll="final-${esc(a.id)}">${esc(a.final)}</pre>`) : `<p class="empty">Nothing yet.</p>`}</section>
   </div>
-  <details class="more" data-key="more-${a.id}"><summary>More: tokens, tools, ${prompt.toLowerCase()}, hooks (${a.hooks.length})</summary>
+  <details class="more" data-key="more-${esc(a.id)}"><summary>More: tokens, tools, ${prompt.toLowerCase()}, hooks (${a.hooks.length})</summary>
     <dl><dt title="Input includes cached context re-read on each turn">Tokens</dt><dd>${kt(a.tokens_in)} in / ${kt(a.tokens_out)} out</dd>
       <dt>Tools</dt><dd>${esc(tools)}</dd>
       <dt>Outputs</dt><dd>${a.files.length} file${a.files.length === 1 ? "" : "s"} changed · ${a.commits.length} commit${a.commits.length === 1 ? "" : "s"}${a.branch ? ` · branch ${esc(a.branch)}` : ""}${a.prs.map(p => ` · <a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.url.replace(/^.*\/pull\//, "PR #"))}</a>`).join("")}</dd>
       <dt>Transcript</dt><dd>${esc(a.transcript)}${copyIcon(a.transcript, "Copy the transcript path")}</dd></dl>
-    <details data-key="prompt-${a.id}"><summary>${prompt}</summary>${copyable(a.prompt, `<pre data-scroll="prompt-${a.id}">${esc(a.prompt)}</pre>`)}</details>
-    <section class="hookbox"><h3>Hooks (${a.hooks.length})</h3>${hooks ? `<ol class="hooks" data-scroll="hooks-${a.id}">${hooks}</ol>` : `<p class="empty">No hook events recorded.</p>`}</section>
+    <details data-key="prompt-${esc(a.id)}"><summary>${prompt}</summary>${copyable(a.prompt, `<pre data-scroll="prompt-${esc(a.id)}">${esc(a.prompt)}</pre>`)}</details>
+    <section class="hookbox"><h3>Hooks (${a.hooks.length})</h3>${hooks ? `<ol class="hooks" data-scroll="hooks-${esc(a.id)}">${hooks}</ol>` : `<p class="empty">No hook events recorded.</p>`}</section>
   </details></div>`;
 }
 
@@ -540,22 +551,41 @@ const rowSelector = row => "group" in row.dataset ? `.grouprow[data-group="${CSS
 function toggle(row) {
   if ("group" in row.dataset) state.groups.set(row.dataset.group, row.getAttribute("aria-expanded") !== "true");
   else { const id = row.dataset.id; state.open.has(id) ? state.open.delete(id) : state.open.add(id); }
+  state.focus = null;
   render();
 }
-$("list").addEventListener("click", e => { const row = e.target.closest(ROWS); if (row) toggle(row); });
+$("list").addEventListener("click", e => {
+  const marker = e.target.closest(".hook[data-owner]");
+  if (marker) return focusHook(marker.dataset.owner, Number(marker.dataset.t), marker.dataset.event);
+  const row = e.target.closest(ROWS); if (row) toggle(row);
+});
 $("list").addEventListener("keydown", e => {
   const row = e.target.closest(ROWS);
   if (row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); const sel = rowSelector(row); toggle(row); document.querySelector(sel)?.focus(); }
 });
-// Open an agent's row on the timeline, from the attention line or the Outputs tab.
-function gotoAgent(e) {
-  const id = e.target.closest("[data-goto]")?.dataset.goto; if (!id) return;
+// Show an agent's row on the timeline, opened: its group and the Earlier fold open, its status not hidden.
+function reveal(id) {
   const a = DATA.agents.find(a => a.id === id);
   if (a) { state.groups.set(a.group, true); state.hide.delete(a.status); }
   if (foldedIds.has(id)) state.groups.set(EARLIER, true);
-  state.open.add(id); state.q = ""; $("q").value = "";
+  state.open.add(id);
   setView("timeline");
+}
+// Open an agent's row on the timeline, from the attention line or the Outputs tab.
+function gotoAgent(e) {
+  const id = e.target.closest("[data-goto]")?.dataset.goto; if (!id) return;
+  state.q = ""; $("q").value = "";
+  reveal(id);
   document.querySelector(`.agent[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({block: "center"});
+}
+// A hook marker opens its row at the tool call the hook fired on, or at the hook itself when it fired on none.
+function focusHook(owner, t, event) {
+  const h = (owner === "main" ? DATA.main : DATA.agents.find(a => a.id === owner))?.hooks.find(h => h.t === t && h.event === event);
+  if (!h) return;
+  state.focus = {owner, t, event};
+  if (!h.call) { state.details.add(`more-${owner}`); state.details.add(`hook-${owner}-${t}-${event}`); }
+  reveal(owner);
+  document.querySelector("#list .focus")?.scrollIntoView({block: "center"});
 }
 $("attention").addEventListener("click", gotoAgent);
 $("outputs").addEventListener("click", e => {
