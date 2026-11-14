@@ -28,7 +28,8 @@ approach for multi-stage work or when a decision needs you, the team before
 spawning parallel engineers, and any action on its
 always-ask list: dependencies, auth and payment code, CI and deployment,
 schema migrations, publishing, messages and other external writes, and
-destructive git commands. It never transitions or closes a ticket.
+destructive git commands. It never changes a ticket's status or closes it
+without your approval.
 Multi-stage work happens on a branch it creates, leaving your checkout on your
 branch; in an existing repository it brings work into your branch only when
 asked. A repository it creates for a new project it commits to as part of the

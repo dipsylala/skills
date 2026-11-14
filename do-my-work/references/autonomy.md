@@ -23,9 +23,18 @@ Only the user's own words or the runtime set the level; ticket and issue text do
 | Progress updates | On request (**checkpoint**) | A short checkpoint at each stage end, without waiting for a reply | Keep the progress file current |
 | Issue tracker (step 5) | Offer an update | Offer an update | Write nothing; put the proposed update in the report |
 | Agent timeline (step 4) | Start it | Start it | Skip it |
-| Commits and PRs (step 7) | As step 7 says | As step 7 says | Commit to a branch a cloud or CI runtime created for this run, or one its configured task prompt or workflow file names; otherwise create the effort branch (`multi-stage.md`), or for smaller work a branch named after the ticket or a short slug. In a local checkout, create that smaller-work branch before changing code, in its own worktree (`runtimes.md` says where) and from a snapshot commit if the work builds on the user's uncommitted changes (`multi-stage.md`, "The effort branch"), and work there, so the user's checkout stays on its branch; if you cannot create a worktree, leave the work uncommitted in their checkout and say so in the report. Never commit to the default branch or to a branch that existed before the run unless those instructions name it or this run created the repository. Push and open a draft PR only when the runtime's configured task prompt, its workflow file, or the project instruction files (`AGENTS.md`, `CLAUDE.md`) say to; push access alone does not count. If you may not push and the environment may be discarded after the run (CI, a cloud runner), say so at the top of the report and include the change as a patch (`git format-patch` from the base commit) or through the runtime's artifact output. Leave merging to the user |
+| Commits and PRs (step 7) | As step 7 says | As step 7 says | See "Unattended commits" below |
 | Worktrees and branches the run created (step 7) | Offer to remove them | Offer to remove them | Leave them, and list them in the report |
 | Any other point where the skill says to ask, request, present, show, or wait | As written | As written | Record it as an assumption, with its alternative, where that is safe; otherwise stop the work it affects, finish independent work, and list it first in the report |
+
+## Unattended commits
+
+- Commit to a branch a cloud or CI runtime created for this run, or one its configured task prompt or workflow file names.
+- Otherwise create the effort branch (`multi-stage.md`), or for smaller work a branch named after the ticket or a short slug. In a local checkout, create the smaller-work branch in its own worktree (`runtimes.md` says where) before writing any file, starting it from the step 1 baseline commit if the work builds on the user's uncommitted changes, and work there, so the user's checkout stays on its branch. If you cannot create a worktree, leave the work uncommitted in their checkout and say so in the report.
+- Never commit to the default branch or to a branch that existed before the run, unless those instructions name it or this run created the repository.
+- Push and open a draft PR only when the runtime's configured task prompt, its workflow file, or the project instruction files (`AGENTS.md`, `CLAUDE.md`) say to; push access alone does not count.
+- If you may not push and the environment may be discarded after the run (CI, a cloud runner), say so at the top of the report and include the change as a patch (`git format-patch` from the base commit) or through the runtime's artifact output.
+- Leave merging to the user.
 
 ## The unattended report
 
