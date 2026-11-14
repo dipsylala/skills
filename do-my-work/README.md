@@ -54,7 +54,9 @@ flowchart TD
     U["Understand<br/>read the ticket and code, run the checks, reproduce any bug"]
     C["Clarify<br/>until every acceptance criterion says how to check it"]
     Size{"How big?"}
-    Plan["Present the approach<br/>wait only if a decision needs you"]
+    Plan["Present the approach"]
+    Decide{"Does a decision<br/>need you?"}
+    Ask["You give your input"]
     Build["Build and test"]
     Risky{"Risky or<br/>substantial?"}
     Review["Fresh reviewers, one per lens<br/>fix blocking findings"]
@@ -69,7 +71,10 @@ flowchart TD
     U --> C
     C --> Size
     Size -- "small change or<br/>coherent task" --> Plan
-    Plan --> Build
+    Plan --> Decide
+    Decide -- yes --> Ask
+    Ask --> Build
+    Decide -- no --> Build
     Build --> Risky
     Risky -- yes --> Review
     Risky -- no --> Finish
@@ -85,7 +90,7 @@ flowchart TD
     More -- no --> Finish
 
     classDef you stroke-width:3px
-    class C,Plan,Approve,Reassess you
+    class C,Ask,Approve,Reassess you
 ```
 
 Thick borders mark where an interactive run can stop for you. An always-ask
