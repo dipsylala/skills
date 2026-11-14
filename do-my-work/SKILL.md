@@ -1,7 +1,7 @@
 ---
 name: do-my-work
-description: Deliver a software task end to end, from idea, bug report, Jira/Linear issue, or spec through clarification, design, implementation, testing, and review. Use only when the user explicitly invokes this skill, for example with /do-my-work or $do-my-work.
-disable-model-invocation: true
+description: Deliver a software task end to end, from idea, bug report, Jira/Linear issue, or spec through clarification, design, implementation, testing, and review. Use only when the user explicitly asks for this skill by name, for example /do-my-work, $do-my-work, or an issue asking to use do-my-work.
+disable-model-invocation: false
 ---
 
 # Do My Work
