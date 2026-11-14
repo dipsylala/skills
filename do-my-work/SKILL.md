@@ -16,7 +16,8 @@ Accept a free-form idea, issue reference, bug report, existing code, or specific
   - Set the autonomy level (interactive, supervised, or unattended) as [references/autonomy.md](references/autonomy.md) describes. At the supervised and unattended levels, follow `autonomy.md` wherever this skill says to ask, request, present, or show the user something, run `/grill-me`, wait for approval, or commit and open a PR; where the two differ, `autonomy.md` decides.
   - Check what the runtime can do as [references/runtimes.md](references/runtimes.md) describes.
   - Read the always-ask list in [references/briefs/all-agents.md](references/briefs/all-agents.md) now. It applies to you as well as to any agent you spawn.
-  - Record `git status` in the user's checkout now, so later commits there can leave their own uncommitted changes alone (step 7).
+  - Record `git status` in the user's checkout now, so later commits there can leave their own uncommitted changes alone (step 7). Save it to the file `git rev-parse --git-path do-my-work-baseline` prints, inside the git directory where it is never committed, so it survives context compaction; delete that file when the run ends.
+  - Before spawning any agent, at any step, read [references/briefing.md](references/briefing.md): it sets what every spawn prompt contains, how to act on reports, the read-only check, model choice, and the agent timeline.
 - For tracker issues (Jira, Linear, GitHub, or similar), discover available authenticated skills, connectors, MCP tools, or CLIs. Read the issue description, acceptance criteria, relevant comments, attachments, and linked issues where accessible. Preserve the identifier and URL. If access is unavailable, request the necessary content; never invent it.
 - If the user passes an artifact folder or progress file, or the request is not plainly a small change, check for an existing spec, tickets, and progress file for this effort, on the issue tracker or as [references/multi-stage.md](references/multi-stage.md) "Stopping and resuming" describes, and resume from them rather than repeating discovery. That file also says how far recorded approvals can be trusted.
 - Inspect relevant repository code, tests, conventions, and architectural constraints before committing to an approach. Before changing code, run the relevant tests, lint, type checks, and build; report pre-existing failures separately and fix them only when in scope.
@@ -33,7 +34,7 @@ Investigate questions answerable from the repository before asking the user. Ask
 
 - **Fits one context:** if the `grill-me` skill is available, tell the user you are starting `/grill-me` and invoke it, passing the acceptance criteria and questions still open as its scope and asking it to keep the whole interview, including its closing sweep, to that scope; otherwise grill the user yourself on those. A user who also wants ADRs and a glossary can run `/grill-with-docs` themselves instead.
 - **Too large for one context:** offer `/wayfinder`. Say that the user runs it and that it creates a map issue and child tickets on the repo's tracker. For ticket-backed work, agree how the map relates to the ticket. Resume from the resulting spec.
-- **Too large, and wayfinder is unavailable or declined:** plan across sessions in the effort's artifact folder. Keep the destination, decisions made, and open questions in the progress file, and write the specification once no open question would change the outcome.
+- **Too large, and wayfinder is unavailable or declined:** plan across sessions in the effort's artifact folder, on an effort branch as [references/multi-stage.md](references/multi-stage.md) describes. Keep the destination, decisions made, and open questions in the progress file, and write the specification once no open question would change the outcome.
 
 **Requirements-summary guarantee:** Discovery is done when every acceptance criterion is observable and every open question is answered, listed as an assumption, or, when only the user can settle it, carried into the approval in step 3. In multi-session planning, a question that would change the outcome stays open until answered; it cannot be listed as an assumption. At that point, ensure the user has a clear summary of the agreed objective, scope, acceptance criteria, constraints, important decisions, and unresolved questions. For a small change, one or two sentences covering objective and verification satisfy this. Reuse a complete summary already produced by `/grill-with-docs` or `/grill-me`; if missing or incomplete, provide or complete it.
 
@@ -72,8 +73,6 @@ Choose the simplest effective topology **after initial investigation and clarifi
 - The proposal states when reviews run (at every stage end) and each role's model (`briefing.md`, "Choosing models").
 - When starting with a single implementer, the proposal also names the stage after which you expect workstreams to become independent, or says why none will.
 - Specialist subagents under the single-owner model may be invoked selectively without a separate team-approval round.
-
-Before spawning any agent, read [references/briefing.md](references/briefing.md): it sets what every spawn prompt contains, how to act on reports, the read-only check, model choice, and the agent timeline.
 
 ### A. Solo implementer
 
@@ -122,14 +121,14 @@ Reviewers grade each finding blocking (it breaks an acceptance criterion, or add
 - Reject a finding only with evidence it is wrong.
 - A confirmed blocking finding left unfixed needs the user's acceptance; record it and its assumptions in the progress file for multi-stage work, otherwise in the report, and never in the approved specification.
 - Fix a non-blocking finding when it is in scope and the benefit justifies the effort and regression risk; otherwise leave it for the final report.
-- Retest confirmed blocking defects, and have the lens that raised a blocking finding review its fix.
+- Retest confirmed blocking defects, and have the lens that raised a blocking finding review its fix: the finding and the code the fix changed, not the whole change again.
 - Respect explicitly accepted issues only while their documented assumptions hold; do not accept risks on the user's behalf. Never declare untested or blocked work complete.
 
-**Stalls:** in any execution model, two consecutive attempts at the same problem (a failing test or gate, a bug fix, a blocking finding) with the same failure or no new evidence are a stall. A stalled blocking review finding goes to the user straight away. For anything else, change approach once, for example by rewriting the brief, re-splitting the work, or, for a bug whose cause is unclear, following `competing-hypotheses.md`; if the new approach stalls too, stop and ask the user. Count per problem, not across the project.
+**Stalls:** in any execution model, two consecutive attempts at the same problem (a failing test or gate, a bug fix, a blocking finding) with the same failure or no new evidence are a stall. A stalled blocking review finding goes to the user straight away. For anything else, change approach once, for example by rewriting the brief, re-splitting the work, or, for a bug whose cause is unclear, following `competing-hypotheses.md`; if the new approach stalls too, stop and ask the user. Count per problem, not across the project. A third review round on the same change that still returns blocking findings is also a stall, whether or not the findings are new.
 
 **Stopping early:** whenever you stop before finishing, at any level and for any reason (context running low, a stall, a blocked decision), wait for or stop the agents still running and report as step 7 says. For multi-stage work, also bring the progress file up to date and commit as `multi-stage.md` says; otherwise put the state in the report.
 
-**After context compaction:** if your context has been compacted or summarised mid-run, re-read this file, the references for the current step and execution model, and the progress file if there is one, before continuing. Without a progress file, restate the autonomy level, the `git status` baseline, the approvals given, and the reviews still pending from the summary; ask the user for any you cannot recover, or, unattended, treat it as not given.
+**After context compaction:** if your context has been compacted or summarised mid-run, re-read this file, `autonomy.md`, the always-ask list in `briefs/all-agents.md`, the references for the current step and execution model, and the progress file if there is one, before continuing. Reload the `git status` baseline from the file you saved in step 1. Without a progress file, restate the autonomy level, the approvals given, and the reviews still pending from the summary; ask the user for any you cannot recover, or, unattended, treat it as not given.
 
 ## 7. Finish
 

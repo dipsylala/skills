@@ -19,7 +19,7 @@ This is the one list of actions that need the user's approval whatever the size 
 - Changing CI, deployment, or hosting configuration.
 - Writing a database schema migration, or applying migrations to any database other than a disposable local or test database that the test suite or development setup creates.
 - Publishing packages or images, or running deployments or infrastructure changes in any environment.
-- Sending email or other messages, posting comments, or writing to any external service or to production data.
+- Sending email or other messages, posting comments, or writing to any external service or to production data. Pushing a branch and opening a pull request follow the skill's step 7 instead; a spawned agent does neither unless its prompt says to.
 - Deleting data outside the files you were given.
 - Git commands that discard commits or uncommitted changes, or rewrite shared history: `reset --hard`, `checkout --` or `restore` on changed files, `clean`, `stash drop` or `stash clear`, `worktree remove --force`, rebasing or amending pushed commits, force push, and deleting a branch.
 
