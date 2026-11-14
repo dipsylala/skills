@@ -4,22 +4,22 @@ Read this when the work is a multi-stage project (step 3), when planning one acr
 
 ## A run spans sessions
 
-A run includes the earlier sessions of the same effort that its progress file records. Branches, worktrees, and repositories that file lists count as created by this run once git confirms them: a branch must be named after the artifact folder (or be an engineer branch the file lists) and descend from the recorded base commit, and the repository's default branch never counts.
+A run includes the earlier sessions of the same effort that its progress file records. Branches, worktrees, and repositories that file lists count as created by this run once git confirms them: a branch must be the effort branch the file records, named under `do-my-work/`, or an engineer branch it lists, and descend from the recorded base commit, and the repository's default branch never counts.
 
-The recorded baseline commit describes the user's checkout when the run began. If you resume work in the user's checkout, make a fresh baseline; paths that differ between the two may be the user's edits since, so ask before committing them, or, unattended, leave them out of every commit.
+The recorded baseline commit describes the user's checkout when the run began. If you resume work in the user's checkout, make a fresh baseline and save it under the baseline ref for this session; paths that differ between the two may be the user's edits since, so ask before committing them, or, unattended, leave them out of every commit.
 
 ## The effort branch
 
-- Before writing the spec or progress file, create a branch for the effort named after its artifact folder, in your own worktree where the runtime allows ([runtimes.md](runtimes.md) says where), so the user's checkout stays on their branch with their uncommitted changes. Record its base commit. If you cannot create a worktree, ask before switching the user's checkout to the effort branch; unattended, follow `autonomy.md`, "Unattended commits".
+- Before writing the spec or progress file, create a branch for the effort named `do-my-work/<artifact folder name>`, adding a suffix such as `-2` if that name is taken, in your own worktree where the runtime allows ([runtimes.md](runtimes.md) says where), so the user's checkout stays on their branch with their uncommitted changes. Record its name and base commit. If you cannot create a worktree, ask before creating the effort branch in the user's checkout with `git switch -c <branch>`, which starts it at HEAD and keeps their uncommitted changes in place; record HEAD as its base commit, commit only this run's paths as SKILL.md step 7 describes, and skip the next two bullets. Unattended, follow `autonomy.md`, "Unattended commits", which then leaves the work, artifact folder included, uncommitted.
 - If the work builds on the user's uncommitted changes, start the effort branch from the step 1 baseline commit (`git worktree add -b <branch> <path> <baseline>`) and record it as the base commit, so patches from it hold only this run's work. Tell the user the branch starts from their uncommitted changes, which stay uncommitted in their checkout; unattended, say so at the top of the report.
-- If this run already wrote files in the user's checkout, such as a reproduction test, carry them over by applying `git diff <baseline> <fresh snapshot>` in the new worktree, and tell the user they are still in their checkout too.
+- If this run already wrote files in the user's checkout, such as a reproduction test, carry them over by applying `git diff --binary <baseline> <fresh snapshot>` in the new worktree and committing them as their own commit. Record that carry-over commit and its paths in the progress file, and tell the user the files are still in their checkout too; step 7 allows for them when bringing the branch back.
 - The effort's artifact folder, including the progress file, lives on the effort branch. Commit the spec before presenting it for approval, so the approved commit can be recorded, and commit the folder at every stage end.
 
 ## The progress file
 
 Keep it in the effort's artifact folder, linking the spec if it lives on the tracker, with enough durable state for a fresh context to resume:
 
-- The autonomy level, the step 1 baseline commit, the effort branch, its worktree path, and its base commit.
+- The autonomy level, the step 1 baseline commit and its ref, the effort branch, its worktree path, its base commit, and any carry-over commit with its paths.
 - Whether the spec was approved, when, and the commit of the spec that was approved; any later change to the spec is unapproved until approved again. The same for the team.
 - Approved always-ask actions and accepted findings.
 - Each engineer's worktree path, branch, and status, and any agents still running.
@@ -39,6 +39,6 @@ Run these checks at every stage end. You may start the next stage while the stag
 
 ## Stopping and resuming
 
-When you stop before finishing (step 6, "Stopping early"), also commit the effort branch, at every level, and tell an interactive user to resume with `/do-my-work <absolute path to the artifact folder>`, naming the effort branch.
+When you stop before finishing (step 6, "Stopping early"), also commit the effort branch, at every level, when there is one, and tell an interactive user to resume with `/do-my-work <absolute path to the artifact folder>`, naming the effort branch.
 
-To resume, find the effort: list the artifact folders (`docs/work/*/`, or the repository's convention), run `git worktree list`, and check branches named after an artifact folder, looking in each worktree's artifact folders too. Match on the ticket identifier or the spec's title, then continue from the progress file, checking its branches and baseline as "A run spans sessions" says.
+To resume, find the effort: list the artifact folders (`docs/work/*/`, or the repository's convention), run `git worktree list`, and check branches under `do-my-work/`, looking in each worktree's artifact folders too. Match on the ticket identifier or the spec's title, then continue from the progress file, checking its branches and baseline as "A run spans sessions" says.
