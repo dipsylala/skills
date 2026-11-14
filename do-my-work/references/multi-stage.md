@@ -6,19 +6,20 @@ Read this when the work is a multi-stage project (step 3), when planning one acr
 
 A run includes the earlier sessions of the same effort that its progress file records. Branches, worktrees, and repositories that file lists count as created by this run once git confirms them: a branch must be named after the artifact folder (or be an engineer branch the file lists) and descend from the recorded base commit, and the repository's default branch never counts.
 
-The recorded `git status` baseline describes the user's checkout when the run began. If you resume work in the user's checkout, record a fresh `git status`; paths that differ from the recorded baseline may be the user's edits since, so ask before committing them, or, unattended, leave them out of every commit.
+The recorded baseline commit describes the user's checkout when the run began. If you resume work in the user's checkout, make a fresh baseline; paths that differ between the two may be the user's edits since, so ask before committing them, or, unattended, leave them out of every commit.
 
 ## The effort branch
 
-- Before writing the spec or progress file, create a branch for the effort named after its artifact folder, in your own worktree where the runtime allows ([runtimes.md](runtimes.md) says where), so the user's checkout stays on their branch with their uncommitted changes. Record its base commit.
-- If the work builds on the user's uncommitted changes, start the effort branch from a snapshot commit of their checkout ([briefing.md](briefing.md), "Read-only agents", says how to make one; then `git worktree add -b <branch> <path> <snapshot>`), and record the snapshot as the base commit, so patches from it hold only this run's work. Tell the user the branch starts from their uncommitted changes, which stay uncommitted in their checkout; unattended, say so at the top of the report.
+- Before writing the spec or progress file, create a branch for the effort named after its artifact folder, in your own worktree where the runtime allows ([runtimes.md](runtimes.md) says where), so the user's checkout stays on their branch with their uncommitted changes. Record its base commit. If you cannot create a worktree, ask before switching the user's checkout to the effort branch; unattended, follow `autonomy.md`, "Unattended commits".
+- If the work builds on the user's uncommitted changes, start the effort branch from the step 1 baseline commit (`git worktree add -b <branch> <path> <baseline>`) and record it as the base commit, so patches from it hold only this run's work. Tell the user the branch starts from their uncommitted changes, which stay uncommitted in their checkout; unattended, say so at the top of the report.
+- If this run already wrote files in the user's checkout, such as a reproduction test, carry them over by applying `git diff <baseline> <fresh snapshot>` in the new worktree, and tell the user they are still in their checkout too.
 - The effort's artifact folder, including the progress file, lives on the effort branch. Commit the spec before presenting it for approval, so the approved commit can be recorded, and commit the folder at every stage end.
 
 ## The progress file
 
 Keep it in the effort's artifact folder, linking the spec if it lives on the tracker, with enough durable state for a fresh context to resume:
 
-- The autonomy level, the step 1 `git status` baseline, the effort branch, its worktree path, and its base commit.
+- The autonomy level, the step 1 baseline commit, the effort branch, its worktree path, and its base commit.
 - Whether the spec was approved, when, and the commit of the spec that was approved; any later change to the spec is unapproved until approved again. The same for the team.
 - Approved always-ask actions and accepted findings.
 - Each engineer's worktree path, branch, and status, and any agents still running.
