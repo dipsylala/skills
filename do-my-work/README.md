@@ -57,6 +57,7 @@ flowchart TD
     Risky{"Risky or<br/>substantial?"}
     Review["Fresh reviewers, one per lens"]
     Blocking{"Blocking<br/>findings?"}
+    Fix["Fix and retest"]
     Spec["Spec and stage plan<br/>checked by a fresh reviewer"]
     Approve["You approve the spec and team"]
     Stage["Build and test the stage"]
@@ -73,8 +74,10 @@ flowchart TD
     Risky -- yes --> Review
     Risky -- no --> Finish
     Review --> Blocking
-    Blocking -- "yes: fix and retest,<br/>same lens re-reviews" --> Review
+    Blocking -- yes --> Fix
+    Fix -- "same lens re-reviews" --> Review
     Blocking -- no --> Finish
+    Fix ~~~ Finish
     Size -- multi-stage --> Spec
     Spec --> Approve
     Approve --> Stage
