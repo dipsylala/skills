@@ -6,9 +6,9 @@ do-my-work adopts ideas from the sources below, not their text. Each entry says 
 
 Reviewed November 2026.
 
-- Cognition, "Don't Build Multi-Agents", on conflicting implicit decisions
+- [Cognition, "Don't Build Multi-Agents"](https://cognition.com/blog/dont-build-multi-agents), on conflicting implicit decisions
   between parallel agents: the decisions log.
-- Cemri et al., "Why Do Multi-Agent LLM Systems Fail?" (UC Berkeley), which
+- [Cemri et al., "Why Do Multi-Agent LLM Systems Fail?" (UC Berkeley)](https://arxiv.org/abs/2503.13657), which
   found step repetition common and verification effective: the stall rule and
   completion gate.
 - [Claude Code agent teams](https://code.claude.com/docs/en/agent-teams): plan
@@ -53,7 +53,3 @@ Reviewed November 13, 2026.
   skill in OneWave AI's `claude-skills` library, available under the MIT
   License: a git checkpoint before deploying parallel agents. This became the
   rollback point before parallel engineers start.
-- Factory, a plugin by Pedro Schneider in the Anthropic plugin directory: a
-  documentation-sync agent that keeps docs in step with code changes. This
-  became the stage-end documentation update. No public repository was found;
-  the idea comes from the plugin's directory listing.
