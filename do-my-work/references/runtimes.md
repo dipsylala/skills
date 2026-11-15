@@ -11,7 +11,7 @@ At step 1, check what this runtime can do by looking at your own tools and setti
 | Message or resume an agent | A tool that sends a follow-up to an agent you spawned | Spawn a replacement as [briefing.md](briefing.md) says |
 | Ask the user mid-run | A question tool, or a live conversation | You are unattended ([autonomy.md](autonomy.md)) |
 
-**Where to create worktrees:** outside the repository folder (for example `git worktree add ../<repo>-<name>`) when the runtime allows writes there; otherwise inside the git directory (`$(git rev-parse --git-common-dir)/do-my-work-worktrees/<name>`), where git never tracks it and test and lint tools don't scan it. If neither is writable, work without worktrees and run engineers one at a time.
+**Where to create worktrees:** outside the repository folder (for example `git worktree add ../<repo>-<name>`) when the runtime allows writes there; otherwise inside the git directory (`$(git rev-parse --git-common-dir)/do-my-work-worktrees/<name>`), where git never tracks it and test and lint tools don't scan it. If neither is writable, work without worktrees and run engineers one at a time. Set up every worktree the run creates, your own included, as [briefing.md](briefing.md), "Setting up a worktree", says.
 
 Use the agent definitions a runtime already has. Gaining a capability by creating or editing agent definition files (such as `.agent.md` or `.cursor/agents/*.md`) changes the user's configuration, so leave those files alone and use the fallback instead.
 
