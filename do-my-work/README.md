@@ -89,11 +89,11 @@ flowchart TD
     Reassess --> Stage
     More -- no --> Finish
 
-    classDef you stroke-width:3px
+    classDef you fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#1f2937
     class C,Ask,Approve,Reassess you
 ```
 
-Thick borders mark where an interactive run can stop for you. An always-ask
+Amber boxes mark where an interactive run can stop for you. An always-ask
 action, such as adding a dependency, stops it wherever it comes up. Unattended
 runs ask nothing; they record assumptions and leave held actions undone (see
 [Autonomy levels](#autonomy-levels)).
