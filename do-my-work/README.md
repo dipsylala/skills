@@ -50,7 +50,7 @@ decision by decision.
 ```mermaid
 flowchart TD
     %% Declared first so the layout draws it beside the stage loop.
-    Reassess["Reassess the team"]
+    Reassess["Reassess the team<br/>you approve any change"]
     U["Understand<br/>read the ticket and code, run the checks, reproduce any bug"]
     C["Clarify<br/>until every acceptance criterion says how to check it"]
     Size{"How big?"}
