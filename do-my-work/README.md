@@ -137,8 +137,8 @@ In your repository:
 
 - **Your branch:** in a repository that existed before the run, it brings work
   into your branch, pushes, or opens a PR only when you or the project
-  instruction files ask. A repository it creates for a new project it commits
-  to as part of the work.
+  instruction files ask; otherwise work in your checkout stays uncommitted. A
+  repository it creates for a new project it commits to as part of the work.
 - **Your uncommitted changes:** at the start it records your checkout as a
   snapshot commit under `refs/do-my-work/baseline`, leaving your files and
   index alone, so reviews and commits can keep your changes and its own apart.
@@ -211,8 +211,9 @@ In your repository:
   work at a commit that holds the work they check, and are checked afterwards
   for changed files and new commits.
 - **Repetition is a stall.** In any execution model, two attempts at the same
-  problem without new evidence are a stall, and an engineer that gives up
-  after two attempts counts as one straight away. The agent changes approach
+  problem without new evidence are a stall, as is a fourth attempt whatever
+  the evidence, and an engineer that gives up after two attempts counts as
+  one straight away. The agent changes approach
   once, then asks you. Review stalls come to you straight away: a blocking
   finding that two fixes have not resolved, a third review round still
   blocking, findings whose fixes undo each other, or a reviewer blocked twice.
