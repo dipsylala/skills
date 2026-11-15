@@ -197,7 +197,9 @@ In your repository:
   the director rather than adding a supervisor above it.
 - **Reviews are independent.** Reviewers get the requirements, diff, and test
   evidence, but not the implementer's reasoning. Neither self-review nor the
-  director's review of integration counts as independent.
+  director's review of integration counts as independent. A finding is
+  rejected only with evidence the reviewer could have checked, and a blocking
+  finding is never downgraded.
 - **Parallel writers share decisions explicitly.** In model C the director
   keeps a decisions log that only it writes, and reviewers check work against
   it. An engineer that reaches a decision another workstream could see stops
