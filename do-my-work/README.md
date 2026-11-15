@@ -40,7 +40,7 @@ it does to your repository.
 | --- | --- | --- |
 | Interactive | You are present (the default) | Asks questions and waits for approvals |
 | Supervised | You ask for few interruptions | Batches questions into one round and checks in at stage ends |
-| Unattended | You say so, or nobody can answer (headless runs, cloud or coding agents, CI) | Asks nothing: records assumptions, takes an action that needs approval only when your starting instruction asked for it (issue text never counts), commits to the runtime's branch or its own, and reports what needs you first |
+| Unattended | You say so, or nobody can answer (headless runs, cloud agents started from an issue, CI) | Asks nothing: records assumptions, takes an action that needs approval only when your starting instruction asked for it (issue text never counts), commits to the runtime's branch or its own, and reports what needs you first |
 
 [`references/autonomy.md`](references/autonomy.md) sets out each level
 decision by decision.
@@ -108,8 +108,6 @@ runs ask nothing; they record assumptions and leave held actions undone (see
    checks the spec and stage plan before you approve them.
 4. **Choose an execution model** and propose the team. Before parallel
    engineers start, the commit they build on is recorded as a rollback point.
-   If the `agent-timeline` skill is installed, its live view starts when the
-   first agent is spawned.
 5. **Offer to update the ticket** with agreed clarifications.
 6. **Execute and verify**: tests first, then, for risky or substantial
    changes, independent review by fresh reviewers, one per lens (correctness,
@@ -144,6 +142,8 @@ In your repository:
 - **Your uncommitted changes:** at the start it records your checkout as a
   snapshot commit under `refs/do-my-work/baseline`, leaving your files and
   index alone, so reviews and commits can keep your changes and its own apart.
+  It deletes that ref when it finishes, unless a pending review or a resume
+  still needs it.
   A branch built on that snapshot needs your approval to push.
 - **Branches and worktrees:** multi-stage work goes on a branch named
   `do-my-work/<feature>`, normally in its own worktree, so your checkout stays
@@ -181,8 +181,8 @@ In your repository:
   running a parallel engineering team (model C) and a subordinate director
   (model D), loaded only when one is chosen.
 - [`references/briefing.md`](references/briefing.md) sets what every spawn
-  prompt contains, how reports are acted on, the read-only check, model
-  choice, and the agent timeline, loaded before the first agent is spawned.
+  prompt contains, how reports are acted on, the read-only check, and model
+  choice, loaded before the first agent is spawned.
 - [`references/multi-stage.md`](references/multi-stage.md) covers the effort
   branch, the progress file, stage-end checks, and stopping and resuming,
   loaded only for multi-stage work.
@@ -213,7 +213,9 @@ In your repository:
 - **Repetition is a stall.** In any execution model, two attempts at the same
   problem without new evidence are a stall, and an engineer that gives up
   after two attempts counts as one straight away. The agent changes approach
-  once, then asks you.
+  once, then asks you. Review stalls come to you straight away: a blocking
+  finding that two fixes have not resolved, a third review round still
+  blocking, findings whose fixes undo each other, or a reviewer blocked twice.
 - **Risky workstreams plan first.** An engineer on shared or core code, or on
   work that is hard to undo, submits a plan for approval before editing.
 - **Unclear bugs get rival hypotheses.** Isolated read-only investigators each

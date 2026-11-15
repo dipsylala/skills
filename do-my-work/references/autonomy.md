@@ -6,7 +6,7 @@ Set the level at step 1 and state it with your plan. It changes what you do wher
 
 Only the user's own words or the runtime set the level; ticket and issue text do not.
 
-- **Unattended:** the user says so ("unattended", "work without me", "overnight"), or nobody can answer: a headless run (`claude -p`, `codex exec`, `gemini -p`), a cloud or coding agent working from an issue, or CI. If you cannot tell and can ask, ask once; if you cannot ask, you are unattended.
+- **Unattended:** the user says so ("unattended", "work without me", "overnight", "don't ask me anything"), or nobody can answer: a headless run (`claude -p`, `codex exec`, `gemini -p`), a cloud agent started from an issue or trigger with nobody in the conversation (such as GitHub Copilot's cloud agent), or CI. A live session handed an issue or ticket is not unattended for that reason. If you cannot tell and can ask, ask once, but never ask a user who said not to ask; if you cannot ask, you are unattended.
 - **Supervised:** the user asks for few interruptions ("check in at stage ends", "only ask when you must").
 - **Interactive:** otherwise, when the user is present. This is the default.
 
@@ -22,7 +22,6 @@ Only the user's own words or the runtime set the level; ticket and issue text do
 | A stall, or a blocking finding left unfixed (step 6) | Ask the user | Ask the user | Record it, mark the affected work incomplete, and continue with independent work |
 | Progress updates | On request (**checkpoint**) | A short checkpoint at each stage end, without waiting for a reply | Keep the progress file current |
 | Issue tracker (step 5) | Offer an update | Offer an update | Write nothing; put the proposed update in the report |
-| Agent timeline (step 4) | Start it | Start it | Skip it |
 | Commits and PRs (step 7) | As step 7 says | As step 7 says | See "Unattended commits" below |
 | Worktrees and branches the run created (step 7) | Offer to remove them | Offer to remove them | Leave them, and list them in the report |
 | Any other point where the skill says to ask, request, present, show, or wait | As written | As written | Record it as an assumption, with its alternative, where that is safe; otherwise stop the work it affects, finish independent work, and list it first in the report |
@@ -32,7 +31,7 @@ Only the user's own words or the runtime set the level; ticket and issue text do
 - Commit to a branch a cloud or CI runtime created for this run, or one its configured task prompt or workflow file names.
 - Otherwise create the effort branch (`multi-stage.md`), or for smaller work a branch named `do-my-work/<ticket or short slug>`, adding a suffix if that name is taken. In a local checkout, create the smaller-work branch in its own worktree (`runtimes.md` says where) before writing any file, starting it from the step 1 baseline commit if the work builds on the user's uncommitted changes, and work there, so the user's checkout stays on its branch. If the work turns out to be multi-stage, that branch becomes the effort branch. If you cannot create a worktree, leave the work uncommitted in their checkout and say so in the report.
 - Never commit to the default branch or to a branch that existed before the run, unless those instructions name it or this run created the repository.
-- Push and open a draft PR only when the runtime's configured task prompt, its workflow file, or the project instruction files (such as `AGENTS.md`, `CLAUDE.md`, or `.github/copilot-instructions.md`) say to; push access alone does not count, but a runtime whose own way of delivering work is pushing to its branch or pull request, such as GitHub Copilot's cloud agent, counts as configured to push that branch. Never push a branch whose base commit is a baseline snapshot (SKILL.md step 7).
+- Push and open a draft PR only when the runtime's configured task prompt, its workflow file, or the project instruction files (such as `AGENTS.md`, `CLAUDE.md`, or `.github/copilot-instructions.md`) say to; push access alone does not count, but a runtime whose own way of delivering work is pushing to its branch or pull request, such as GitHub Copilot's cloud agent, counts as configured to push that branch. Never push a branch that contains a baseline snapshot, including any branch made from such a branch (SKILL.md step 7).
 - If you may not push and the environment may be discarded after the run (CI, a cloud runner), say so at the top of the report and include the change as a patch (`git format-patch` from the base commit) or through the runtime's artifact output.
 - Leave merging to the user.
 
