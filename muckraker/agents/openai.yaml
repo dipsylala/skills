@@ -1,0 +1,5 @@
+interface:
+  display_name: "Muckraker"
+  short_description: "Cited company dossier from press and registries"
+policy:
+  allow_implicit_invocation: false
