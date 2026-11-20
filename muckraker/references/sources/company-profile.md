@@ -9,3 +9,10 @@ What the company says about itself, and what public profiles say about it. The c
 3. **Consistency:** note where these disagree with the entity record or with each other (a different headquarters or founding year, a headcount out of line with the company's size, a leader listed on LinkedIn but not on the company page).
 4. **Newsroom:** open the company's press or newsroom page and record announcements from the last 12 months about leadership, acquisitions, restructuring, or financing. Treat them as the company's own claims.
 5. **Hiring signals:** open the company's careers page; if it lists nothing, search `"<company name>" jobs` restricted to linkedin.com or use public job boards. Note whether the company appears to be hiring and in which locations, as a sign of activity.
+6. **Product footprint:** take the company's domain from its own site, footer, or GitHub links rather than guessing `<name>.com`, which is often parked or owned by someone else. Then record:
+   - the company number in the site footer or legal page, and whether it matches the entity record;
+   - the domain's registration date, from RDAP (`https://rdap.org/domain/<domain>`) or, for country domains with no RDAP (.io, .ai), port-43 WHOIS (`whois.nic.io` for .io);
+   - the site's history, from the Wayback Machine (`https://web.archive.org/cdx/search/cdx?url=<domain>&fl=timestamp,statuscode`; retry on HTTP 504);
+   - for a software company, its GitHub organisation (`https://api.github.com/orgs/<org>` and `/orgs/<org>/repos?sort=pushed`): created date, last push, public repos, and stars.
+
+   Report as red flags: a site company number that does not match the entity record; and a domain registered after the founding year the company claims, or now parked or for sale. Product activity that has stopped (no GitHub push or site change for over six months) goes under Facts.

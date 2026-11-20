@@ -1,6 +1,6 @@
 # Sanctions and offshore
 
-Screen the company, its group, and the people in its leadership against sanctions lists, and look for it in the offshore leaks databases. Search the legal name, trading and former names, the parent and acquisition-company names in the entity record, and the officers, directors, and controlling persons the record names.
+Screen the company, its group, and the people in its leadership against sanctions lists, and look for it in the offshore leaks databases. Search the legal name, trading and former names, the parent and acquisition-company names in the entity record, and the company's people. Collect the people yourself before searching: the current directors and controlling persons from the company's register (for a UK company, the Companies House `/officers` and `/persons-with-significant-control` pages; for a US company, the state register's officers or managers), and the CEO, CFO, and chair from the company's leadership page.
 
 ## Where to look
 
