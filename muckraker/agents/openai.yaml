@@ -1,0 +1,5 @@
+interface:
+  display_name: "Muckraker"
+  short_description: "Cited company dossier with red flags"
+policy:
+  allow_implicit_invocation: false
