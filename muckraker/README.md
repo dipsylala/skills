@@ -13,7 +13,7 @@ It is manual-only. The agent never starts it on its own.
 
 ## How it works
 
-1. **Pin down the entity.** Muckraker finds the legal entity behind the name and checks each identifier in its registry: the SEC CIK, the UK company number, and so on. If several companies match, it asks you which one you mean.
+1. **Pin down the entity.** Muckraker finds the legal entity behind the name and checks each identifier in its registry: the SEC CIK, the UK company number, the US state entity number, and so on. If several companies match, it asks you which one you mean.
 2. **Ask for SEC contact details.** SEC asks automated clients to identify themselves, so Muckraker asks for a name and email to send in the `User-Agent` header. It asks on every run. If you decline, the SEC sources use only web fetch and search tools.
 3. **Send one agent per source, in parallel.** Each agent reads one source, writes its full report to a run folder outside your project, and replies with a single status line, so the main session isn't flooded with output.
 4. **Check and write.** The coordinator reads the reports, opens the source behind every red flag to confirm it, compares facts that more than one source covers, and writes the dossier.
@@ -26,6 +26,7 @@ It is manual-only. The agent never starts it on its own.
 | Company profile | Leadership, newsroom, and careers pages on the company's own site, with LinkedIn as a fallback |
 | SEC EDGAR | Filings, Form D private raises, mentions in other companies' filings, and enforcement actions |
 | UK Companies House | Officers, persons with significant control, charges, filing health, and insolvency (when the company, its parent, or a subsidiary is UK-registered) |
+| US state registry | Status (including suspensions), formation, registered agent, officers or managers, foreign registrations, and UCC liens where free (when the company, its parent, or a subsidiary is registered in a US state). Falls back to OpenCorporates when a state register sits behind a CAPTCHA |
 | S&P Global | Rating actions and tear sheets from S&P Global Ratings' public search |
 | Financials | A multi-year table from filed accounts or SEC data, plus notes on going concern, debt, and events after the year end |
 | Debt and valuation marks | How listed lenders (business development companies) and funds value the company's loans and shares, quarter by quarter |
@@ -69,7 +70,7 @@ S&P Global Ratings' public search only loads in a real browser. If the agent can
 - Lenders and funds that don't file with the SEC are invisible, so debt totals from valuation marks are a floor.
 - A private company's group accounts are often unpublished. The financial table then covers only subsidiaries that file accounts, such as a UK subsidiary.
 - UK accounts are read from their iXBRL version where one exists. Older scanned accounts with no text layer are listed as `needs OCR` unless the agent has an OCR tool.
-- Each run sends one agent per source per company (up to eight per company), so research on several companies uses a lot of tokens.
+- Each run sends one agent per source per company (up to nine per company), so research on several companies uses a lot of tokens.
 
 ## Privacy
 
