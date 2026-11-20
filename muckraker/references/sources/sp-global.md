@@ -4,7 +4,10 @@ Most S&P Global data (Capital IQ, Market Intelligence) is subscription-only. Rep
 
 ## Checks
 
-1. **Credit ratings:** search `"<company name>" rating` restricted to spglobal.com for S&P Global Ratings research updates and rating actions. Record the current rating, outlook, any CreditWatch placement, and the date and direction of the last change. Note a downgrade or a negative outlook as a red flag.
+1. **Credit ratings:** open S&P Global Ratings' public search for the company's name, and for its parent or acquisition-company names when the rated entity may differ (Veracode is rated as "Veracode Parent L.P."):
+   `https://www.spglobal.com/ratings/en/regulatory/consolidated-search-landing/searchType/Entity/searchTerm/<name>`
+   The page needs a real browser: curl and web fetch tools get HTTP 403. Open it with a browser tool if you have one. If you have none, write `RATINGS SEARCH: needs a browser` under Gaps, and the coordinator will open it.
+   For each rating action listed (research updates, downgrades, upgrades, outlook changes, tear sheets), record the date, the rated entity, the issuer and issue ratings before and after, the outlook, and the reason S&P gives in the summary. Tear sheet summaries often give figures the company never publishes (revenue trend, recurring revenue, margins, leverage); record them as S&P's figures. Report a downgrade, a rating of CCC+ or below, a negative outlook, or a CreditWatch negative placement as a red flag, established by S&P's rating action.
 2. **Market Intelligence news:** search `"<company name>" "Market Intelligence"` restricted to spglobal.com for public articles that mention the company, and record what each says about it.
 3. **Indices:** note whether the company is in an S&P index (S&P 500, S&P SmallCap 600, and others), and any recent addition or removal.
 4. **Paywalled data:** when a result leads to a login or subscription page, record its title and URL under Gaps rather than its content.

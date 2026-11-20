@@ -53,7 +53,7 @@ Done when every agent has replied, and every report file exists or the agent's s
 
 ## 4. Write the dossier
 
-Read every report file in the run folder before writing anything. After context compaction, read them again rather than working from a summary. Then:
+Read every report file in the run folder before writing anything. After context compaction, read them again rather than working from a summary. When the S&P Global report says `RATINGS SEARCH: needs a browser`, open that search yourself in a browser tool (the URL is in [sp-global.md](references/sources/sp-global.md), check 1), record the rating actions as that check says, and use them as part of the S&P findings; with no browser tool, keep it under Gaps. Then:
 
 - **Cross-check.** Compare the facts that more than one source covers: officers and directors, registered and head office addresses, headcount, revenue, ownership, dates. Record each disagreement in the dossier with both citations, not just the version you prefer.
 - **Rank red flags.** Use the red flags the agents found, most serious first: regulatory or enforcement actions, litigation, insolvency or overdue filings, charges and debt, auditor changes or qualified accounts, ownership hidden behind offshore or nominee layers, adverse press. For each one, say whether it is an allegation, a filed claim, or an established finding (a court judgment, a regulator's decision, a filing by the company itself). Open the cited URL for every red flag yourself and confirm it says what the agent reported, and that it is about this entity; move one you cannot confirm to Gaps with the reason.
