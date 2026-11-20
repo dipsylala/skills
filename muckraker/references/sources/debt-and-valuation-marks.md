@@ -9,10 +9,10 @@ These values are the holders' own fair-value estimates, not market prices. Repor
 
 ## Finding the holders
 
-A company bought by private equity usually borrows through an acquisition company with an unrelated name (Veracode's buyout loan is filed under "Mitnick Corporate Purchaser, Inc."), and most holders list only that name. Before searching, collect the borrower names:
+A company bought by private equity usually borrows through an acquisition company with an unrelated code name (a buyout loan to "Acme Software" might be filed under "Falcon Purchaser, Inc."), and most holders list only that name. Before searching, collect the borrower names:
 
-- the company's legal and trading names, and its former names;
-- parent and holding company names from a subsidiary's accounts (the note naming the immediate and ultimate parent) and from the UK register of persons with significant control;
+- the company's legal and trading names, and its former names, and any parent names in the entity record;
+- parent and holding company names from a subsidiary's latest accounts: open them yourself (for a UK subsidiary, from its Companies House filing history; the `?format=xhtml` version of an accounts document has a text layer) and search for "ultimate parent" and "controlling party";
 - names that turn up beside the company's name in fund filings: search `"<name>"` in N-PORT filings, and note the issuer names in the matching holdings, which often read "<company> (<acquisition company>)".
 
 Search EDGAR full-text search for each borrower name:

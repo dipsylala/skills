@@ -12,7 +12,7 @@ Given a company name, find out who the company is, what it has filed, what has b
 
 Take the company name and anything else the user gave (country, website, ticker, company number). When the user names several companies, build one entity record per company and run every later step for each. Search the web to find the candidates.
 
-- One clear match: record its legal name, jurisdiction, website, ticker, SEC CIK, UK company number, and parent company, as far as you can find them. Confirm each registry identifier by looking it up in that registry and checking that the name it returns is the entity you mean (a CIK can belong to the UK parent rather than the US company); record the registered name beside the identifier. Leave a field empty rather than guess it.
+- One clear match: record its legal name, jurisdiction, website, ticker, SEC CIK, UK company number, and parent company, as far as you can find them. Confirm each registry identifier by looking it up in that registry and checking that the name it returns is the entity you mean (a CIK can belong to the UK parent rather than the US company); record the registered name beside the identifier. Leave a field empty rather than guess it. Until the user has given the SEC contact (step 2), reach sec.gov only through the web fetch and search tools.
 - Several plausible matches (different countries, a parent and its subsidiaries, a similar name): list them with what tells them apart and ask the user which one to research. Researching the wrong "Acme Ltd" wastes every agent you send.
 - No match: tell the user what you searched and ask for more detail (country, website, company number) before going further.
 
@@ -33,7 +33,7 @@ Each source has its own reference file in [references/sources/](references/sourc
 | Debt and valuation marks | [debt-and-valuation-marks.md](references/sources/debt-and-valuation-marks.md) | Always: most useful for private and private-equity-owned companies | Yes |
 | Courts and insolvency | [courts.md](references/sources/courts.md) | Always; its UK checks only when the entity has a UK company | No |
 
-Before sending the agents marked "Queries sec.gov", ask the user for the name and email address to declare in the `User-Agent` header (sent as `<name> <email>`), since SEC asks automated clients to identify themselves. Ask every run, and use only what the user types in answer, or a value they typed earlier in this conversation that they explicitly choose to reuse; never a name or email you know from elsewhere. Put this question in the same message as any entity question from step 1. If the user declines, send those agents without a value; the brief tells them what to do instead.
+Before sending the agents marked "Queries sec.gov", ask the user for the name and email address to declare in the `User-Agent` header (sent as `<name> <email>`), since SEC asks automated clients to identify themselves. Ask every run, and use only what the user types in answer, or a value they typed earlier in this conversation that they explicitly choose to reuse; never a name or email you know from elsewhere. Put this question in the same message as any entity question from step 1. If the user declines, send those agents without a value; the brief tells them what to do instead. Your own sec.gov requests follow the same rule as the agents' (see the SEC bullet in [references/brief.md](references/brief.md)).
 
 For an entity outside the US and UK, record in the dossier's Gaps that national registries and courts beyond those listed in [financials.md](references/sources/financials.md) were not searched.
 
@@ -61,7 +61,8 @@ Done when every agent has replied, and every report file exists or the agent's s
 Read every report file in the run folder before writing anything. After context compaction, read them again rather than working from a summary. When the S&P Global report says `RATINGS SEARCH: needs a browser`, open that search yourself in a browser tool (the URL is in [sp-global.md](references/sources/sp-global.md), check 1), record the rating actions as that check says, and use them as part of the S&P findings; with no browser tool, keep it under Gaps. Then:
 
 - **Cross-check.** Compare the facts that more than one source covers: officers and directors, registered and head office addresses, headcount, revenue, ownership, dates. Record each disagreement in the dossier with both citations, not just the version you prefer.
-- **Confirm red flags.** For every red flag, open the cited URL yourself and search the page for the agent's quote; confirm it says what the agent reported, and that it is about this entity. Move one you cannot confirm to Gaps with the reason.
+- **Merge duplicates.** When several agents report the same red flag (the same loan mark, the same rating action), keep it once and cite every filing behind it.
+- **Confirm red flags.** For every red flag, open the cited URL yourself and search the page for the agent's quote; confirm it says what the agent reported, and that it is about this entity. A large filing (an iXBRL 10-Q of tens of megabytes, an N-PORT XML file) is too big to read whole: download it, strip the markup, and search the text for the quote's distinctive values, such as the borrower name and the fair value. Move a red flag you cannot confirm to Gaps with the reason.
 - **Rank red flags.** Rank the confirmed red flags, most serious first, judged by the likely effect on the company's ability to keep operating and pay its debts: insolvency, default, a CCC-range rating, or loans valued far below par usually come before enforcement actions, litigation, overdue filings, auditor changes or qualified accounts, ownership hidden behind offshore or nominee layers, and adverse press. For each one, say whether it is an allegation, a filed claim, or an established finding (a fact on the record from the body that made it: a court judgment, a regulator's decision, a company filing, a rating agency's action, or a lender's or fund's filed valuation).
 - **List gaps.** Name every source that failed or found nothing, and what it could not cover.
 
@@ -92,6 +93,6 @@ Sources that failed, returned nothing, or were paywalled, and what that leaves u
 Every URL cited, grouped by source.
 ```
 
-Write one dossier per company. Show the dossier in the chat, and give the run folder's path so the user can read the full source reports. Save the dossier to a file only when the user asks.
+Write one dossier per company and save it as `<run folder>/dossier.md`. Show the dossier in the chat, and give the run folder's path so the user can read it and the full source reports.
 
-Done when every claim in the dossier has a citation, from an agent's report or from a page you opened yourself in this step, and every chosen source appears under its findings or under Gaps.
+Done when every claim in the dossier has a citation, from an agent's report or from a page you opened yourself in this step, every chosen source appears under its findings or under Gaps, and the dossier is saved and shown.

@@ -17,4 +17,4 @@ The UK register of companies, at `https://find-and-update.company-information.se
 5. **Persons with significant control:** who owns or controls the company, and through what chain. Note control held through overseas or nominee companies, and statements that the PSC cannot be identified.
 6. **Charges:** outstanding charges (secured lending), with the lender and date.
 7. **Insolvency:** any insolvency case and its practitioner. The `/insolvency` page often returns HTTP 500; when it does, record the status from the profile page (active, in administration, liquidation) and any insolvency filings in the filing history instead.
-8. **Group:** check the parent named in the PSC register, and any UK subsidiaries the entity record lists, with checks 1 and 2.
+8. **Group:** record the immediate parent, ultimate parent, and ultimate controlling party named in the latest accounts' related-party or controlling-party note (read the `?format=xhtml` version of the accounts document and search for "ultimate parent" and "controlling party"). Then check the parent named in the PSC register, and any UK subsidiaries the entity record lists, with checks 1 and 2.

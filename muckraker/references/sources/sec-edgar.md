@@ -6,7 +6,7 @@ EDGAR holds US public filings, and also filings by private companies raising mon
 
 - Find the CIK: `https://www.sec.gov/files/company_tickers.json` for listed companies, or the company search at `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&company=<name>`.
 - Filing list: `https://data.sec.gov/submissions/CIK<10-digit zero-padded CIK>.json`.
-- Full-text search across filings since 2001: `https://efts.sec.gov/LATEST/search-index?q="<name>"`. Use it for the company named in other companies' filings, as a customer, supplier, defendant, or acquisition.
+- Full-text search across filings since 2001: `https://efts.sec.gov/LATEST/search-index?q="<name>"`. Use it for the company named in other companies' filings, as a customer, supplier, defendant, or acquisition. Hits in lenders' and funds' holdings (BDC schedules of investments, N-PORT) belong to the Debt and valuation marks source: record how many there are in one line and leave them.
 
 ## Checks
 

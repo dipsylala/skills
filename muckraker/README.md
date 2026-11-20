@@ -31,7 +31,7 @@ It is manual-only. The agent never starts it on its own.
 | Debt and valuation marks | How listed lenders (business development companies) and funds value the company's loans and shares, quarter by quarter |
 | Courts and insolvency | US federal dockets, US federal and state opinions, UK judgments, and UK Gazette insolvency notices |
 
-The dossier has these sections: Entity, Red flags (each marked as an allegation, a filed claim, or an established finding), Financials, Key facts, Conflicts between sources, Gaps, and Sources. It appears in the chat; ask if you want it saved to a file. The full source reports stay in the run folder.
+The dossier has these sections: Entity, Red flags (each marked as an allegation, a filed claim, or an established finding), Financials, Key facts, Conflicts between sources, Gaps, and Sources. It appears in the chat and is saved as `dossier.md` in the run folder, beside the full source reports.
 
 ## Setup
 
@@ -68,7 +68,7 @@ S&P Global Ratings' public search only loads in a real browser. If the agent can
 - LinkedIn and most of S&P Global sit behind logins or paywalls, so Muckraker reports only what is public and lists the rest under Gaps.
 - Lenders and funds that don't file with the SEC are invisible, so debt totals from valuation marks are a floor.
 - A private company's group accounts are often unpublished. The financial table then covers only subsidiaries that file accounts, such as a UK subsidiary.
-- Scanned accounts with no text layer are listed as `needs OCR` unless the agent has an OCR tool.
+- UK accounts are read from their iXBRL version where one exists. Older scanned accounts with no text layer are listed as `needs OCR` unless the agent has an OCR tool.
 - Each run sends one agent per source per company (up to eight per company), so research on several companies uses a lot of tokens.
 
 ## Privacy
