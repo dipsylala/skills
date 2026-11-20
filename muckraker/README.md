@@ -23,11 +23,11 @@ It is manual-only. The agent never starts it on its own.
 | Source | What it covers |
 | --- | --- |
 | Press | Recent coverage, with one search per adverse term (lawsuit, fraud, layoffs, administration, and so on) |
-| Company profile | Leadership, newsroom, careers, and product footprint (domain age, site history, GitHub activity) from the company's own site, with LinkedIn as a fallback |
+| Company profile | Leadership, newsroom, careers, and product footprint (domain age, site history, GitHub activity) from the company's own site, with LinkedIn as a fallback; for US companies, leaders' other board seats (LittleSis) and US import records (ImportYeti) |
 | SEC EDGAR | Filings, Form D private raises, mentions in other companies' filings, and enforcement actions |
 | UK Companies House | Officers, persons with significant control, charges, filing health, insolvency, and for young companies share allotments, implied valuations, shareholder lists, and founders' earlier companies (when the company, its parent, or a subsidiary is UK-registered) |
-| US state registry | Status (including suspensions), formation, registered agent, officers or managers, foreign registrations, and UCC liens where free (when the company, its parent, or a subsidiary is registered in a US state). Falls back to OpenCorporates when a state register sits behind a CAPTCHA |
-| National registers | Profile, officers, filed accounts, and insolvency notices in France, Luxembourg, Germany, the Netherlands, Ireland, Norway, Denmark, and Canada (when the company, its parent, or a subsidiary is registered there) |
+| US state registry | Status (including suspensions), formation, registered agent, officers or managers, foreign registrations, and UCC liens where free (when the company, its parent, or a subsidiary is registered in a US state). Finds every state the company is registered in through OpenCorporates first, and falls back to it when a state register sits behind a CAPTCHA |
+| National registers | Profile, officers, filed accounts, and insolvency notices in France, Luxembourg, Germany, the Netherlands, Ireland, Norway, Denmark, and Canada (when the company, its parent, or a subsidiary is registered there), with North Data and OpenCorporates as fallbacks |
 | GLEIF ownership | The company's Legal Entity Identifier, its parent chain up to the ultimate parent, and its subsidiaries in every country |
 | Sanctions and offshore | Sanctions and politically-exposed-person screening (OpenSanctions, OFAC) and the ICIJ Offshore Leaks database, for the company, its group, and its leaders |
 | Startup | Funding rounds from free startup databases and funding news, grants (UKRI, CORDIS, SBIR), crowdfunding, and accelerators (when the company is under seven years old or venture-backed) |
@@ -64,6 +64,10 @@ The courts agent tries these in order:
 2. **A CourtListener API token** in `COURTLISTENER_API_TOKEN`, from your [CourtListener profile](https://www.courtlistener.com/profile/api/).
 3. **Web search** of courtlistener.com. This is the weakest option: CourtListener blocks most direct page fetches, so the agent often works from search snippets.
 
+### OpenCorporates API token
+
+Without a token, the US state registry and national registers agents read OpenCorporates' public pages, which hide officers, dates, and filings behind a login. With a token in `OPENCORPORATES_API_TOKEN`, they use its API for those details and search officers across companies. OpenCorporates data is open under a share-alike licence with attribution; heavier or commercial use needs a paid plan ([licence](https://opencorporates.com/legal/licence), [API accounts](https://opencorporates.com/api_accounts/new)).
+
 ### OpenSanctions API key
 
 Without a key, the sanctions agent reads the OpenSanctions website search and the OFAC list. With a key in `OPENSANCTIONS_API_KEY`, it uses the OpenSanctions API. OpenSanctions data is free for non-commercial use; commercial use needs a licence from [OpenSanctions](https://www.opensanctions.org/licensing/).
@@ -75,6 +79,7 @@ S&P Global Ratings' public search only loads in a real browser. If the agent can
 ## Limits
 
 - LinkedIn and most of S&P Global sit behind logins or paywalls, so Muckraker reports only what is public and lists the rest under Gaps.
+- National registers have direct entries for France, Luxembourg, Germany, the Netherlands, Ireland, Norway, Denmark, and Canada. For other countries the agent finds the register through Wikipedia's [list of official business registers](https://en.wikipedia.org/wiki/List_of_official_business_registers) and works out what it shows on each run, which is slower and less reliable. Add a row to `references/sources/national-registers.md` for any country you research often.
 - Lenders and funds that don't file with the SEC are invisible, so debt totals from valuation marks are a floor.
 - A private company's group accounts are often unpublished. The financial table then covers only subsidiaries that file accounts, such as a UK subsidiary.
 - UK accounts are read from their iXBRL version where one exists. Older scanned accounts with no text layer are listed as `needs OCR` unless the agent has an OCR tool.
