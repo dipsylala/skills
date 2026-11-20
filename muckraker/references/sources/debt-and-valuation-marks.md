@@ -9,10 +9,18 @@ These values are the holders' own fair-value estimates, not market prices. Repor
 
 ## Finding the holders
 
-Search EDGAR full-text search for the company's legal and trading names, and its former names:
+A company bought by private equity usually borrows through an acquisition company with an unrelated name (Veracode's buyout loan is filed under "Mitnick Corporate Purchaser, Inc."), and most holders list only that name. Before searching, collect the borrower names:
+
+- the company's legal and trading names, and its former names;
+- parent and holding company names from a subsidiary's accounts (the note naming the immediate and ultimate parent) and from the UK register of persons with significant control;
+- names that turn up beside the company's name in fund filings: search `"<name>"` in N-PORT filings, and note the issuer names in the matching holdings, which often read "<company> (<acquisition company>)".
+
+Search EDGAR full-text search for each borrower name:
 
 - loans: `https://efts.sec.gov/LATEST/search-index?q="<name>"&forms=10-K,10-Q`
 - fund holdings: `https://efts.sec.gov/LATEST/search-index?q="<name>"&forms=NPORT-P,N-CSR`
+
+Report each alias you used and the filing that links it to the company, so the coordinator can check the link.
 
 Send the SEC `User-Agent` the coordinator gave you; without one, use the web fetch tool. Keep the hits from lenders and funds (names with Capital, Credit, Lending, BDC, Fund, or Trust are typical) and set aside companies that mention the name as a customer or competitor. Open the most recent filing from each holder, and the same holder's filing from about a year earlier.
 
