@@ -4,7 +4,7 @@ Read the company's own financial statements and turn them into a multi-year tabl
 
 ## Where the numbers are
 
-- **US public filers:** `https://data.sec.gov/api/xbrl/companyfacts/CIK<10-digit zero-padded CIK>.json` holds every figure the company has tagged in its filings. Use the annual (`10-K` / `20-F`, `fp: FY`) values. Send the SEC `User-Agent` the coordinator gave you; without one, use the web fetch tool. Open the latest annual report for the notes listed in check 3.
+- **US public filers:** `https://data.sec.gov/api/xbrl/companyfacts/CIK<10-digit zero-padded CIK>.json` holds every figure the company has tagged in its filings. Use the annual (`10-K` / `20-F`, `fp: FY`) values. Open the latest annual report for the notes listed in check 3.
 - **UK companies:** open the latest two sets of accounts from the filing history (`https://find-and-update.company-information.service.gov.uk/company/<n>/filing-history`; each accounts entry links to `/document?format=pdf`). For a group, use the group accounts filed by the top UK company. Each set gives two years, so two sets give three or four.
 - **Other jurisdictions:** use the national register named in the entity record where it publishes accounts (for example Germany's Unternehmensregister, France's Infogreffe, Ireland's CRO). Record under Gaps any that charge or need a login.
 - **Scanned accounts:** older filings are often image-only PDFs with no text layer. Read them only if you have an OCR tool; otherwise list each one under Gaps as `needs OCR` with its URL, and take what figures you can from the prior-year comparatives in the next year's accounts.

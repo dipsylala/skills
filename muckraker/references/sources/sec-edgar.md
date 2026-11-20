@@ -4,7 +4,6 @@ EDGAR holds US public filings, and also filings by private companies raising mon
 
 ## Access
 
-- Send the `User-Agent` value the coordinator gave you on every direct request, and keep under 10 requests a second. If you have no value, use only the web fetch and search tools.
 - Find the CIK: `https://www.sec.gov/files/company_tickers.json` for listed companies, or the company search at `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&company=<name>`.
 - Filing list: `https://data.sec.gov/submissions/CIK<10-digit zero-padded CIK>.json`.
 - Full-text search across filings since 2001: `https://efts.sec.gov/LATEST/search-index?q="<name>"`. Use it for the company named in other companies' filings, as a customer, supplier, defendant, or acquisition.

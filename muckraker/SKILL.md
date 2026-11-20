@@ -1,6 +1,6 @@
 ---
 name: muckraker
-description: Research a company across the press, its own website and LinkedIn, SEC EDGAR, UK Companies House, S&P Global, its filed financials, lender and fund marks, and the courts in parallel, and report a cited dossier with red flags, conflicts between sources, and gaps.
+description: Research a company in parallel across press, registries, financials, lender marks, ratings, and courts, and report a cited dossier of red flags.
 disable-model-invocation: true
 ---
 
@@ -33,7 +33,11 @@ Each source has its own reference file in [references/sources/](references/sourc
 | Debt and valuation marks | [debt-and-valuation-marks.md](references/sources/debt-and-valuation-marks.md) | Always: most useful for private and private-equity-owned companies | Yes |
 | Courts and insolvency | [courts.md](references/sources/courts.md) | Always; its UK checks only when the entity has a UK company | No |
 
-Before sending the agents marked "Queries sec.gov", ask the user for the name and email address to declare in the `User-Agent` header (sent as `<name> <email>`), since SEC asks automated clients to identify themselves. Ask every run, and use only what the user types in answer, or a value they typed earlier in this conversation that they explicitly choose to reuse; never a name or email you know from elsewhere. Put this question in the same message as any entity question from step 1. If the user declines, tell those agents to use only the web fetch and search tools, which send their own header.
+Before sending the agents marked "Queries sec.gov", ask the user for the name and email address to declare in the `User-Agent` header (sent as `<name> <email>`), since SEC asks automated clients to identify themselves. Ask every run, and use only what the user types in answer, or a value they typed earlier in this conversation that they explicitly choose to reuse; never a name or email you know from elsewhere. Put this question in the same message as any entity question from step 1. If the user declines, send those agents without a value; the brief tells them what to do instead.
+
+For an entity outside the US and UK, record in the dossier's Gaps that national registries and courts beyond those listed in [financials.md](references/sources/financials.md) were not searched.
+
+Done when the source list is fixed and the SEC contact has been given or declined.
 
 ## 3. Send the agents
 
@@ -57,7 +61,8 @@ Done when every agent has replied, and every report file exists or the agent's s
 Read every report file in the run folder before writing anything. After context compaction, read them again rather than working from a summary. When the S&P Global report says `RATINGS SEARCH: needs a browser`, open that search yourself in a browser tool (the URL is in [sp-global.md](references/sources/sp-global.md), check 1), record the rating actions as that check says, and use them as part of the S&P findings; with no browser tool, keep it under Gaps. Then:
 
 - **Cross-check.** Compare the facts that more than one source covers: officers and directors, registered and head office addresses, headcount, revenue, ownership, dates. Record each disagreement in the dossier with both citations, not just the version you prefer.
-- **Rank red flags.** Use the red flags the agents found, most serious first, judged by the likely effect on the company's ability to keep operating and pay its debts: insolvency, default, a CCC-range rating, or loans valued far below par usually come before enforcement actions, litigation, overdue filings, auditor changes or qualified accounts, ownership hidden behind offshore or nominee layers, and adverse press. For each one, say whether it is an allegation, a filed claim, or an established finding (a fact on the record from the body that made it: a court judgment, a regulator's decision, a company filing, a rating agency's action, or a lender's or fund's filed valuation). For every red flag, open the cited URL yourself and search the page for the agent's quote; confirm it says what the agent reported, and that it is about this entity. Move one you cannot confirm to Gaps with the reason.
+- **Confirm red flags.** For every red flag, open the cited URL yourself and search the page for the agent's quote; confirm it says what the agent reported, and that it is about this entity. Move one you cannot confirm to Gaps with the reason.
+- **Rank red flags.** Rank the confirmed red flags, most serious first, judged by the likely effect on the company's ability to keep operating and pay its debts: insolvency, default, a CCC-range rating, or loans valued far below par usually come before enforcement actions, litigation, overdue filings, auditor changes or qualified accounts, ownership hidden behind offshore or nominee layers, and adverse press. For each one, say whether it is an allegation, a filed claim, or an established finding (a fact on the record from the body that made it: a court judgment, a regulator's decision, a company filing, a rating agency's action, or a lender's or fund's filed valuation).
 - **List gaps.** Name every source that failed or found nothing, and what it could not cover.
 
 Use this structure:

@@ -22,7 +22,7 @@ Search EDGAR full-text search for each borrower name:
 
 Report each alias you used and the filing that links it to the company, so the coordinator can check the link.
 
-Send the SEC `User-Agent` the coordinator gave you; without one, use the web fetch tool. Keep the hits from lenders and funds (names with Capital, Credit, Lending, BDC, Fund, or Trust are typical) and set aside companies that mention the name as a customer or competitor. Open the most recent filing from each holder, and the same holder's filing from about a year earlier.
+Keep the hits from lenders and funds (names with Capital, Credit, Lending, BDC, Fund, or Trust are typical) and set aside companies that mention the name as a customer or competitor. Open the most recent filing from each holder, and the same holder's filing from about a year earlier.
 
 ## Checks
 
