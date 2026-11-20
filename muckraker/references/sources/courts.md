@@ -10,7 +10,7 @@ Find cases the company is party to and any insolvency notices. Search the legal 
   - PACER itself charges and needs a login; record dockets you could not open under Gaps.
 - **US state courts:** no single index. Search `"<name>" lawsuit` together with the state of incorporation and the headquarters state, and record what the search cannot cover under Gaps.
 - **UK judgments:** `https://caselaw.nationalarchives.gov.uk/search?query=<name>` (Find Case Law).
-- **UK insolvency and winding-up:** `https://www.thegazette.co.uk/all-notices/notice?text="<name>"` for winding-up petitions, administration, liquidation, and strike-off notices. Run the UK checks when the entity record has a UK company.
+- **UK insolvency and winding-up:** `https://www.thegazette.co.uk/insolvency/notice?text="<name>"` for winding-up petitions, administration, and liquidation notices. Use this insolvency-only search: the all-notices search, by name or company number, mostly returns bulk register listings that mention thousands of companies. Check each notice's company number against the entity record. Run the UK checks when the entity record has a UK company.
 
 ## Checks
 
