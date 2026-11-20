@@ -1,0 +1,29 @@
+# National registers
+
+Company registers outside the UK and US, for the countries where a muckraker target, its parent, or a subsidiary is most often registered. Run the section for each country the entity record names. For a country not listed here, search for its official company register, use what it shows free, and record the rest under Gaps.
+
+Read the register's own page or API response, not an aggregator. Where a register answers fetch tools with a bot check or a form, open it in a browser tool if you have one; otherwise record it under Gaps. Leave paid documents and sign-in pages alone, and list them under Gaps with their titles.
+
+## Countries
+
+| Country | Profile and officers | Accounts | Insolvency and notices |
+| --- | --- | --- | --- |
+| France | `https://recherche-entreprises.api.gouv.fr/search?q=<name or SIREN>` (free JSON API): SIREN, legal form, status, creation date, head office, headcount band, `dirigeants` (officers and their roles), and `finances` (revenue and net income by year). Human-readable page: `https://annuaire-entreprises.data.gouv.fr/entreprise/<SIREN>` | Full filed accounts are on `https://data.inpi.fr` (INPI); downloads need a free account, so record them under Gaps and use the API's `finances` figures | BODACC, free API: `https://bodacc-datadila.opendatasoft.com/api/explore/v2.1/catalog/datasets/annonces-commerciales/records?where=registre like "<SIREN>"`; `familleavis` `collective` is an insolvency proceeding (sauvegarde, redressement, liquidation judiciaire) |
+| Luxembourg | Luxembourg Business Register, `https://www.lbr.lu` (RCS): search by name or RCS number (B followed by digits) for the profile, managers, and shareholders where filed | Filed annual accounts are listed in the company's file on lbr.lu; record any document that asks for payment under Gaps | RESA, the official gazette, on lbr.lu, for liquidation and other notices |
+| Germany | Handelsregister, `https://www.handelsregister.de` (free since August 2022; a search form): court, register number (HRB/HRA), legal form, registered office, managing directors (Geschäftsführer) or board | Unternehmensregister, `https://www.unternehmensregister.de`, and Bundesanzeiger, `https://www.bundesanzeiger.de`: filed annual accounts (Jahresabschluss), free to view | Insolvency notices: `https://neu.insolvenzbekanntmachungen.de` |
+| Netherlands | KvK, `https://www.kvk.nl/zoeken/?q=<name>`: KvK number, legal form, address, and status free; officers and extracts cost money | Filed accounts are sold through KvK; record them under Gaps | Central insolvency register: `https://insolventies.rechtspraak.nl` |
+| Ireland | CRO, `https://core.cro.ie`: company number, status, type, registered address, and filing dates free (it answers fetch tools with HTTP 403, so use a browser tool) | Filed documents cost about €2.50 each; record them under Gaps | Iris Oifigiúil (`https://www.irisoifigiuil.ie`) for winding-up and examinership notices |
+| Norway | Brønnøysund, free JSON API: `https://data.brreg.no/enhetsregisteret/api/enheter?navn=<name>` (organisation number, form, status, address, `konkurs` and `underAvvikling` flags) and `/enheter/<orgnr>/roller` (officers) | `https://data.brreg.no/regnskapsregisteret/regnskap/<orgnr>`: the latest filed accounts as structured figures (revenue, profit, equity, debt, auditor), free | The `konkurs` (bankruptcy) and `underAvvikling` (being wound up) flags in the entity record |
+| Denmark | CVR, `https://datacvr.virk.dk` (answers fetch tools with a bot check, so use a browser tool) | Filed annual reports, free JSON: `http://distribution.virk.dk/offentliggoerelser/_search?q=cvrNummer:<CVR number>`; each hit links to the report PDF and XBRL file | Statstidende, `https://www.statstidende.dk`, for bankruptcy and liquidation notices |
+| Canada | Corporations Canada federal search, `https://ised-isde.canada.ca/cc/lgcy/fdrlCrpSrch.html`, and the provincial register of the province the entity record names; public companies' filings on SEDAR+, `https://www.sedarplus.ca` | Public companies only, on SEDAR+; private companies file none publicly | The Office of the Superintendent of Bankruptcy's records search needs a login and charges per search; record it under Gaps |
+
+## Checks
+
+For each country the entity record names:
+
+1. **Profile:** registered name and number, legal form, status, incorporation date, registered address.
+2. **Officers:** directors, managers, or board members, with appointment dates where shown.
+3. **Accounts:** the latest filed accounts' period and filing date, and the headline figures where the register gives them free (revenue, profit or loss, equity, debt, auditor). Leave the full analysis to the Financials agent; record the figures here with their URL.
+4. **Insolvency:** any insolvency, liquidation, or winding-up notice, with its date and type.
+
+Report as red flags, established by the register: an insolvency, liquidation, or winding-up proceeding, a status other than active (struck off, dissolved, in liquidation), and a negative equity figure in the latest filed accounts.

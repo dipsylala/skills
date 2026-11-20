@@ -5,8 +5,8 @@ Muckraker researches a company and writes a cited dossier: who the company is, w
 Run it by name with a company name, or several:
 
 ```text
-/muckraker Veracode
-/muckraker Veracode and Snyk
+/muckraker Greggs
+/muckraker Greggs and Pret A Manger
 ```
 
 It is manual-only. The agent never starts it on its own.
@@ -27,6 +27,9 @@ It is manual-only. The agent never starts it on its own.
 | SEC EDGAR | Filings, Form D private raises, mentions in other companies' filings, and enforcement actions |
 | UK Companies House | Officers, persons with significant control, charges, filing health, and insolvency (when the company, its parent, or a subsidiary is UK-registered) |
 | US state registry | Status (including suspensions), formation, registered agent, officers or managers, foreign registrations, and UCC liens where free (when the company, its parent, or a subsidiary is registered in a US state). Falls back to OpenCorporates when a state register sits behind a CAPTCHA |
+| National registers | Profile, officers, filed accounts, and insolvency notices in France, Luxembourg, Germany, the Netherlands, Ireland, Norway, Denmark, and Canada (when the company, its parent, or a subsidiary is registered there) |
+| GLEIF ownership | The company's Legal Entity Identifier, its parent chain up to the ultimate parent, and its subsidiaries in every country |
+| Sanctions and offshore | Sanctions and politically-exposed-person screening (OpenSanctions, OFAC) and the ICIJ Offshore Leaks database, for the company, its group, and its leaders |
 | S&P Global | Rating actions and tear sheets from S&P Global Ratings' public search |
 | Financials | A multi-year table from filed accounts or SEC data, plus notes on going concern, debt, and events after the year end |
 | Debt and valuation marks | How listed lenders (business development companies) and funds value the company's loans and shares, quarter by quarter |
@@ -60,6 +63,10 @@ The courts agent tries these in order:
 2. **A CourtListener API token** in `COURTLISTENER_API_TOKEN`, from your [CourtListener profile](https://www.courtlistener.com/profile/api/).
 3. **Web search** of courtlistener.com. This is the weakest option: CourtListener blocks most direct page fetches, so the agent often works from search snippets.
 
+### OpenSanctions API key
+
+Without a key, the sanctions agent reads the OpenSanctions website search and the OFAC list. With a key in `OPENSANCTIONS_API_KEY`, it uses the OpenSanctions API. OpenSanctions data is free for non-commercial use; commercial use needs a licence from [OpenSanctions](https://www.opensanctions.org/licensing/).
+
 ### Browser tool
 
 S&P Global Ratings' public search only loads in a real browser. If the agent can't open it, the coordinator opens it in its own browser tool. If neither has one, the S&P ratings go under Gaps.
@@ -70,7 +77,7 @@ S&P Global Ratings' public search only loads in a real browser. If the agent can
 - Lenders and funds that don't file with the SEC are invisible, so debt totals from valuation marks are a floor.
 - A private company's group accounts are often unpublished. The financial table then covers only subsidiaries that file accounts, such as a UK subsidiary.
 - UK accounts are read from their iXBRL version where one exists. Older scanned accounts with no text layer are listed as `needs OCR` unless the agent has an OCR tool.
-- Each run sends one agent per source per company (up to nine per company), so research on several companies uses a lot of tokens.
+- Each run sends one agent per source per company (up to twelve per company), so research on several companies uses a lot of tokens.
 
 ## Privacy
 
