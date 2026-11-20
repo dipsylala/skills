@@ -14,6 +14,7 @@ Take the company name and anything else the user gave (country, website, ticker,
 
 - One clear match: record its legal name, jurisdiction, website, ticker, SEC CIK, UK company number, and parent company, as far as you can find them. Confirm each registry identifier by looking it up in that registry and checking that the name it returns is the entity you mean (a CIK can belong to the UK parent rather than the US company); record the registered name beside the identifier. Leave a field empty rather than guess it.
 - Several plausible matches (different countries, a parent and its subsidiaries, a similar name): list them with what tells them apart and ask the user which one to research. Researching the wrong "Acme Ltd" wastes every agent you send.
+- No match: tell the user what you searched and ask for more detail (country, website, company number) before going further.
 
 Done when the user has confirmed one entity, or the search found exactly one and you have recorded its identifiers.
 
@@ -45,7 +46,7 @@ Send one agent per chosen source per company, all at once, in parallel. Each pro
 - the absolute path of its report file: `<run folder>/<source file name>`, for example `<run folder>/press.md`;
 - the SEC `User-Agent` value, for the agents marked "Queries sec.gov" only.
 
-Each agent writes its full report to that file and replies with only its status line (the brief gives the format). Wait for the status lines; leave the report files unread until step 4.
+Each agent writes its full report to that file and replies with only its status line (the brief gives the format). Wait for the status lines; leave the report files unread until step 4. If an agent has not replied long after the others, stop it, record its source as `FAILED: no reply` under Gaps, and continue.
 
 If the runtime has no subagents, work through the sources yourself one at a time, following the same two files for each and writing the same report files. If it has no web access at all, stop and tell the user: this skill cannot run without it.
 
@@ -56,7 +57,7 @@ Done when every agent has replied, and every report file exists or the agent's s
 Read every report file in the run folder before writing anything. After context compaction, read them again rather than working from a summary. When the S&P Global report says `RATINGS SEARCH: needs a browser`, open that search yourself in a browser tool (the URL is in [sp-global.md](references/sources/sp-global.md), check 1), record the rating actions as that check says, and use them as part of the S&P findings; with no browser tool, keep it under Gaps. Then:
 
 - **Cross-check.** Compare the facts that more than one source covers: officers and directors, registered and head office addresses, headcount, revenue, ownership, dates. Record each disagreement in the dossier with both citations, not just the version you prefer.
-- **Rank red flags.** Use the red flags the agents found, most serious first: regulatory or enforcement actions, litigation, insolvency or overdue filings, charges and debt, auditor changes or qualified accounts, ownership hidden behind offshore or nominee layers, adverse press. For each one, say whether it is an allegation, a filed claim, or an established finding (a court judgment, a regulator's decision, a filing by the company itself). For every red flag, open the cited URL yourself and search the page for the agent's quote; confirm it says what the agent reported, and that it is about this entity. Move one you cannot confirm to Gaps with the reason.
+- **Rank red flags.** Use the red flags the agents found, most serious first, judged by the likely effect on the company's ability to keep operating and pay its debts: insolvency, default, a CCC-range rating, or loans valued far below par usually come before enforcement actions, litigation, overdue filings, auditor changes or qualified accounts, ownership hidden behind offshore or nominee layers, and adverse press. For each one, say whether it is an allegation, a filed claim, or an established finding (a fact on the record from the body that made it: a court judgment, a regulator's decision, a company filing, a rating agency's action, or a lender's or fund's filed valuation). For every red flag, open the cited URL yourself and search the page for the agent's quote; confirm it says what the agent reported, and that it is about this entity. Move one you cannot confirm to Gaps with the reason.
 - **List gaps.** Name every source that failed or found nothing, and what it could not cover.
 
 Use this structure:
@@ -88,4 +89,4 @@ Every URL cited, grouped by source.
 
 Write one dossier per company. Show the dossier in the chat, and give the run folder's path so the user can read the full source reports. Save the dossier to a file only when the user asks.
 
-Done when every claim in the dossier has a citation from an agent's report, and every chosen source appears under its findings or under Gaps.
+Done when every claim in the dossier has a citation, from an agent's report or from a page you opened yourself in this step, and every chosen source appears under its findings or under Gaps.
