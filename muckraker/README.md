@@ -44,7 +44,7 @@ Muckraker works without any setup, but some sources return much more with creden
 
 ### Python (for the fetcher script)
 
-`scripts/mr.py` fetches EDGAR filings and XBRL figures, finds how lenders and funds value a company's loans and shares, and checks quotes against large filings. It needs Python 3.9 or later and nothing else. Agents use it when it runs and fall back to fetching pages themselves when it doesn't, which is slower and costs far more tokens. On a Veracode run, the lender and fund marks took about 40 seconds through the script, against about 13 minutes for an agent working through the filings by hand.
+`scripts/mr.py` fetches EDGAR filings and XBRL figures, finds how lenders and funds value a company's loans and shares, and checks quotes against large filings. It needs Python 3.9 or later and nothing else. Agents use it when it runs and fall back to fetching pages themselves when it doesn't, which is slower and costs far more tokens. With Python, the coordinator runs the lender and fund marks itself instead of sending an agent: on Veracode, `marks` took about 30 seconds and its output is about 10k tokens, against 144k tokens for an agent using the script and about 167k for one working through the filings by hand.
 
 Run its offline tests with:
 

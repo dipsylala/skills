@@ -48,7 +48,7 @@ Done when the source list is fixed and the SEC contact has been given or decline
 
 Create a run folder for each company outside the user's project: in the session's scratchpad or temp directory if the runtime names one, otherwise `<system temp>/muckraker/<company-slug>-<YYYYMMDD-HHMM>/`. Record its absolute path in your next message so it survives context compaction.
 
-Send one agent per chosen source per company, all at once, in parallel. Each prompt contains:
+Send one agent per chosen source per company, all at once, in parallel, except Debt and valuation marks when you can run Python and have the SEC `User-Agent`: run that source yourself, as the next section says, while the agents work. Each prompt contains:
 
 - the absolute paths of [references/brief.md](references/brief.md) and the agent's source file, with the instruction to read both first;
 - that company's entity record from step 1;
@@ -58,9 +58,20 @@ Send one agent per chosen source per company, all at once, in parallel. Each pro
 
 Each agent writes its full report to that file and replies with only its status line (the brief gives the format). Wait for the status lines; leave the report files unread until step 4. If an agent has not replied long after the others, stop it, record its source as `FAILED: no reply` under Gaps, and continue.
 
+### Debt and valuation marks, run by you
+
+The script does this source's searching and reading, so an agent would mostly add cost. After sending the agents:
+
+1. Collect the borrower names: the legal and trading names, former names, and the parent and holding company names in the entity record, plus the most distinctive single word of each (holders spell the same borrower differently).
+2. Run `python <skill folder>/scripts/mr.py --user-agent "<SEC User-Agent>" marks "<name>" "<word>" ... > "<run folder>/debt-and-valuation-marks.jsonl"`.
+3. Look through the records' `name`, `title`, and `identifier` fields for borrower names you did not search, such as a fund holding titled "<company> (<acquisition company>)". Run `marks` again with those names and their distinctive words, appending (`>>`) to the same file. One extra round is enough.
+4. Write `<run folder>/debt-and-valuation-marks.md` from the records, in the brief's report format, working through the checks in [debt-and-valuation-marks.md](references/sources/debt-and-valuation-marks.md). Each red flag cites its filing URL and quotes the record's identifier or holding name with its figures. A loan's `flagged_footnotes` (non-accrual, PIK, an amendment, a default) come from the filing's own footnotes, so they need no further opening.
+
+If the script fails or returns nothing for any name, send the Debt and valuation marks agent after all, telling it what you ran.
+
 If the runtime has no subagents, work through the sources yourself one at a time, following the same two files for each and writing the same report files. If it has no web access at all, stop and tell the user: this skill cannot run without it.
 
-Done when every agent has replied, and every report file exists or the agent's status line says why it does not.
+Done when every agent has replied, every report file exists or the agent's status line says why it does not, and you have written the Debt and valuation marks report or sent its agent.
 
 ## 4. Write the dossier
 

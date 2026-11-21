@@ -33,6 +33,12 @@ class IxbrlHoldings(unittest.TestCase):
         earlier = next(r for r in rows if r["as_of"] == "2025-12-31")
         self.assertEqual(earlier["mark"], 65.4)
 
+    def test_flagged_footnotes_attach_to_their_row_only(self):
+        rows = {r["as_of"]: r for r in mr.parse_ixbrl_holdings(self.doc, ["veracode"])}
+        self.assertEqual(rows["2026-09-30"]["flagged_footnotes"],
+                         ["Loan was on non-accrual status as of September 30, 2026."])
+        self.assertNotIn("flagged_footnotes", rows["2025-12-31"])  # footnote is linked to the 2026 fact only
+
     def test_thousands_scale_and_duration_facts_merge(self):
         rows = mr.parse_ixbrl_holdings(self.doc, ["TA Aggregator"])
         self.assertEqual(len(rows), 1)

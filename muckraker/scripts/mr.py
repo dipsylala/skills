@@ -299,6 +299,35 @@ def _number(attrs, raw):
     return value
 
 
+# "amendment", not "amend": every BDC's Securities Act footnote says "as amended"
+_FLAG_WORDS = re.compile(r"non-?accrual|paid[- ]in[- ]kind|\bPIK\b|\bamendment|restructur|\bdefault|forbear|waiver|\bmodification", re.I)
+
+
+def _flagged_footnotes(doc, fact_ids):
+    """Footnotes linked to the given facts (inline XBRL fact-footnote
+    relationships) whose text mentions non-accrual, PIK, an amendment, a default
+    or a waiver. Returns {row key: {footnote text}}."""
+    if not fact_ids:
+        return {}
+    links = {}
+    for attrs in re.findall(r"<ix:relationship\b([^>]*)>", doc):
+        from_refs = set((_attr(attrs, "fromRefs") or "").split()) & fact_ids.keys()
+        if not from_refs:
+            continue
+        for to in (_attr(attrs, "toRefs") or "").split():
+            links.setdefault(to, set()).update(from_refs)
+    if not links:
+        return {}
+    flagged = {}
+    for fn_attrs, body in re.findall(r"<ix:footnote\b([^>]*)>(.*?)</ix:footnote>", doc, re.S):
+        fid = _attr(fn_attrs, "id")
+        text = text_of(body)
+        if fid in links and _FLAG_WORDS.search(text):
+            for fact in links[fid]:
+                flagged.setdefault(fact_ids[fact], set()).add(text)
+    return flagged
+
+
 def parse_ixbrl_holdings(doc, aliases):
     """Schedule-of-investments rows whose investment identifier names an alias.
 
@@ -319,15 +348,18 @@ def parse_ixbrl_holdings(doc, aliases):
         contexts[cid] = (ident, (instant or end).group(1) if (instant or end) else None, bool(instant))
     if not contexts:
         return []
-    rows, durations = {}, {}
+    rows, durations, fact_ids = {}, {}, {}
     for kind, attrs, raw in _FACT_RE.findall(doc):
         cid = _attr(attrs, "contextRef")
         if cid not in contexts:
             continue
+        ident, date, is_instant = contexts[cid]
+        fid = _attr(attrs, "id")
+        if fid:
+            fact_ids[fid] = (ident, date) if is_instant else (ident, None)
         field = HOLDING_CONCEPTS.get(_attr(attrs, "name"))
         if not field:
             continue
-        ident, date, is_instant = contexts[cid]
         value = text_of(raw) if field == "maturity" else _number(attrs, raw)
         if value is None:
             continue
@@ -337,11 +369,15 @@ def parse_ixbrl_holdings(doc, aliases):
             rows.setdefault((ident, date), {})[field] = value
         else:
             durations.setdefault(ident, {})[field] = value
+    flagged = _flagged_footnotes(doc, fact_ids)
     out = []
     for (ident, date), fields in rows.items():
         for k, v in durations.get(ident, {}).items():
             fields.setdefault(k, v)
         record = {"identifier": ident, "as_of": date, **fields}
+        footnotes = sorted(flagged.get((ident, date), set()) | flagged.get((ident, None), set()))
+        if footnotes:
+            record["flagged_footnotes"] = footnotes
         if fields.get("principal", 0) > 0 and fields.get("fair_value", -1) >= 0:
             record["mark"] = round(100 * fields["fair_value"] / fields["principal"], 1)
         notes = holding_notes(ident, fields.get("fair_value"))

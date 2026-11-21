@@ -7,6 +7,8 @@ Lenders and funds that file with the SEC publish what they hold and what they th
 
 These values are the holders' own fair-value estimates, not market prices. Report them as such.
 
+When Python and the SEC `User-Agent` are available, the coordinator runs this source itself with `mr.py marks` (SKILL.md step 3) instead of sending an agent; this file's checks apply either way.
+
 ## Finding the holders
 
 A company bought by private equity usually borrows through an acquisition company with an unrelated code name (a buyout loan to "Acme Software" might be filed under "Falcon Purchaser, Inc."), and most holders list only that name. Before searching, collect the borrower names:
@@ -27,7 +29,7 @@ Holders spell the same borrower differently (one lists "Falcon Corporate Purchas
 
 Records can carry `notes`: a revolving or delayed-draw facility (its mark is not comparable with a term loan's, since fair value can include unfunded commitments), a position held through the filer's joint venture (it may duplicate the filer's direct position, so count it once in the debt picture), or a negative fair value (no mark computed). `--verbose` also prints filings that matched the search but had no row for these names, usually companies naming the borrower as a customer.
 
-The script does not read footnotes. For each loan whose mark is falling, open its latest filing and check the row's footnotes for non-accrual, PIK, or amendment marks. Use `--since`, `--per-filer` (more points for a trend), and `--max-filers` to widen the search.
+A lender's row carries `flagged_footnotes` when the filing links a footnote mentioning non-accrual, PIK, an amendment, a default, or a waiver to that row; report those as the filing states them. Lenders that put such marks only in the row text, without linked footnotes, show up in a `table_row` or not at all: for a loan whose mark is falling and that has no `flagged_footnotes`, open its latest filing and check the row's footnote markers. Use `--since`, `--per-filer` (more points for a trend), and `--max-filers` to widen the search.
 
 **Without the script:** search EDGAR full-text search for each borrower name, for loans at `https://efts.sec.gov/LATEST/search-index?q="<name>"&forms=10-K,10-Q` and for fund holdings at `https://efts.sec.gov/LATEST/search-index?q="<name>"&forms=NPORT-P,N-CSR`. Keep the hits from lenders and funds (names with Capital, Credit, Lending, BDC, Fund, or Trust are typical) and set aside companies that mention the name as a customer or competitor. Open the most recent filing from each holder, and the same holder's filing from about a year earlier.
 
