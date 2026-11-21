@@ -20,9 +20,12 @@ Holders spell the same borrower differently (one lists "Falcon Corporate Purchas
 **With the script:** `mr.py marks "<alias>" "<distinctive word>" "<company name>" ...` searches lenders' 10-K and 10-Q filings and funds' N-PORT filings from the last 15 months, takes each holder's latest filing and the one closest to a year earlier, and returns one record per matching row:
 
 - `loan_or_equity`: a row from a lender's tagged schedule of investments, with principal, cost, fair value, `mark` (fair value as a percentage of principal), interest rate, spread, maturity, and the row's identifier text;
-- `fund_holding`: an N-PORT holding, with balance, value, `mark`, maturity, and the fund's own default, arrears, and PIK flags;
-- `table_row`: a matching row from a schedule without row-level tags, as text for you to read;
-- `no_matching_rows`: a filing the search matched but whose schedule has no row for these names (often a company naming the borrower as a customer); drop it.
+- `fund_holding`: an N-PORT holding, with the fund's name, balance, value, `mark`, maturity, and the fund's own default, arrears, and PIK flags. One trust files separately for each of its funds, so compare a fund's mark only with the same fund's earlier mark;
+- `table_row`: a matching row from a schedule without row-level tags, with the table's first row as `header` and the filing's `period_ending`, as text for you to read;
+- `no_earlier_filing`: a holder with no filing about a year before its latest, so it has no trend point; nothing was substituted;
+- `search_summary`: printed when a search found more filings than it read (`truncated`); widen `--since` or add a narrower alias.
+
+Records can carry `notes`: a revolving or delayed-draw facility (its mark is not comparable with a term loan's, since fair value can include unfunded commitments), a position held through the filer's joint venture (it may duplicate the filer's direct position, so count it once in the debt picture), or a negative fair value (no mark computed). `--verbose` also prints filings that matched the search but had no row for these names, usually companies naming the borrower as a customer.
 
 The script does not read footnotes. For each loan whose mark is falling, open its latest filing and check the row's footnotes for non-accrual, PIK, or amendment marks. Use `--since`, `--per-filer` (more points for a trend), and `--max-filers` to widen the search.
 

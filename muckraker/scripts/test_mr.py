@@ -45,7 +45,12 @@ class IxbrlHoldings(unittest.TestCase):
         rows = mr.parse_ixbrl_holdings(self.doc, ["revolving"])
         self.assertEqual(rows[0]["fair_value"], -2031000)
         self.assertNotIn("mark", rows[0])
-        self.assertIn("unfunded", rows[0]["note"])
+        self.assertTrue(any("unfunded" in n for n in rows[0]["notes"]))
+
+    def test_revolver_and_joint_venture_notes(self):
+        self.assertEqual(mr.holding_notes("Acme | First lien senior secured revolving loan", 61.4), [mr.REVOLVER_NOTE])
+        self.assertEqual(mr.holding_notes("Acme Purchaser, Inc. | Emerald JV LP", 21.5), [mr.JV_NOTE])
+        self.assertEqual(mr.holding_notes("Acme First Lien Term Loan", 21.4), [])
 
     def test_other_borrowers_ignored(self):
         names = {r["identifier"] for r in mr.parse_ixbrl_holdings(self.doc, ["veracode", "mitnick"])}
@@ -70,6 +75,7 @@ class TableRows(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertIn("5,194,288", rows[0]["row"])
         self.assertNotIn("$", rows[0]["row"].split(" | "))
+        self.assertEqual(rows[0]["header"], "Borrower | Rate | Maturity | Principal | Value")
 
 
 class CompanyFacts(unittest.TestCase):
@@ -87,12 +93,64 @@ class Search(unittest.TestCase):
     def test_hits_and_filing_choice(self):
         hits = list(mr.parse_search_hits(json.loads(fixture("search.json"))))
         self.assertEqual(hits[0]["url"], "https://www.sec.gov/Archives/edgar/data/1812554/000181255426000060/ocicslf-09302026.htm")
-        chosen = mr.choose_filings(hits, per_filer=2)
+        chosen, notes = mr.choose_filings(hits, per_filer=2)
         accessions = [h["accession"] for h in chosen]
         # both documents of the latest filing, plus the filing closest to a year earlier
         self.assertEqual(accessions.count("0001812554-26-000060"), 2)
         self.assertIn("0001812554-25-000070", accessions)
         self.assertNotIn("0001812554-26-000040", accessions)
+        self.assertEqual(notes, [])
+
+    @staticmethod
+    def hit(cik, acc, filed, name):
+        return {"type": "search_hit", "filer": "Trust", "cik": cik, "form": "NPORT-P", "filed": filed,
+                "period_ending": None, "accession": acc, "url": f"https://www.sec.gov/{acc}/{name}"}
+
+    def test_trust_funds_compared_fund_with_fund(self):
+        # one trust files a separate N-PORT per fund, a few days apart
+        hits = [self.hit("1", "a1", "2026-10-29", "x.xml"), self.hit("1", "a2", "2026-10-27", "y.xml"),
+                self.hit("1", "b1", "2025-10-30", "x.xml"), self.hit("1", "b2", "2025-10-28", "y.xml")]
+        chosen, notes = mr.choose_filings(hits, per_filer=2)
+        self.assertEqual(sorted(h["accession"] for h in chosen), ["a1", "a2", "b1", "b2"])
+
+    def test_no_year_earlier_filing_is_reported_not_substituted(self):
+        hits = [self.hit("2", "a", "2026-08-25", "x.xml"), self.hit("2", "b", "2026-05-26", "x.xml")]
+        chosen, notes = mr.choose_filings(hits, per_filer=2)
+        self.assertEqual([h["accession"] for h in chosen], ["a"])
+        self.assertEqual(notes[0]["type"], "no_earlier_filing")
+
+    def test_search_summary_flags_truncation(self):
+        data = json.loads(fixture("search.json"))
+        original = mr.fetch
+        mr.fetch = lambda url, ua: json.dumps(data)
+        try:
+            hits, summary = mr.edgar_search("x", [], None, None, "ua", 2)
+        finally:
+            mr.fetch = original
+        self.assertEqual(len(hits), 2)
+        self.assertEqual(summary["total"], 3)
+        self.assertTrue(summary["truncated"])
+
+
+class QuoteCheck(unittest.TestCase):
+    def run_check(self, page, quote):
+        original, out = mr.fetch, []
+        mr.fetch, emit = (lambda url, ua: page), mr.emit
+        mr.emit = out.append
+        try:
+            mr.quote_check("https://example.test/doc", quote, None, 20)
+        finally:
+            mr.fetch, mr.emit = original, emit
+        return out[0]["found"]
+
+    def test_nport_quote_with_tags_matches(self):
+        page = fixture("nport.xml")
+        self.assertTrue(self.run_check(page, "<name>MITNICK CORPORATE PURCHASER INC</name> <balance>1162621.57000000</balance>"))
+        self.assertFalse(self.run_check(page, "<name>MITNICK CORPORATE PURCHASER INC</name> <balance>999</balance>"))
+
+    def test_table_quote_matches_cell_by_cell(self):
+        page = fixture("table_rows.htm")
+        self.assertTrue(self.run_check(page, "Mitnick Corporate Purchaser, Inc. (e)(f) | 3M SOFR + 4.75%, 0.50% Floor | 5/3/2029"))
 
 
 class Fetch(unittest.TestCase):

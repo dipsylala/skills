@@ -224,7 +224,9 @@ def parse_search_hits(data):
 
 
 def edgar_search(query, forms, start, end, user_agent, max_hits):
-    hits, offset = [], 0
+    """Return (hits, summary). The summary says how many filings EDGAR matched
+    and whether --max-hits cut the list short."""
+    hits, offset, total = [], 0, 0
     while len(hits) < max_hits:
         data = json.loads(fetch(search_url(query, forms, start, end, offset), user_agent))
         page = list(parse_search_hits(data))
@@ -233,7 +235,10 @@ def edgar_search(query, forms, start, end, user_agent, max_hits):
         offset += len(page)
         if not page or offset >= total:
             break
-    return hits[:max_hits]
+    hits = hits[:max_hits]
+    summary = {"type": "search_summary", "phrase": query, "forms": forms or None,
+               "total": total, "returned": len(hits), "truncated": len(hits) < total}
+    return hits, summary
 
 
 # -------------------------------------------------------------- marks ------
@@ -249,6 +254,24 @@ HOLDING_CONCEPTS = {
     "us-gaap:InvestmentOwnedBalanceShares": "shares",
     "us-gaap:InvestmentMaturityDate": "maturity",
 }
+
+_REVOLVER_RE = re.compile(r"revolv|delayed[- ]draw|\bDDTL\b", re.I)
+_JV_RE = re.compile(r"\bJV\b|joint venture", re.I)
+REVOLVER_NOTE = ("revolving or delayed-draw facility: fair value can include unfunded commitments, "
+                 "so its mark is not comparable with a term loan's")
+JV_NOTE = "held through a joint venture of the filer; it may duplicate the filer's direct position in the same loan"
+
+
+def holding_notes(text, fair_value=None):
+    notes = []
+    if fair_value is not None and fair_value < 0:
+        notes.append("negative fair value: usually an unfunded commitment; no mark computed")
+    elif _REVOLVER_RE.search(text):
+        notes.append(REVOLVER_NOTE)
+    if _JV_RE.search(text):
+        notes.append(JV_NOTE)
+    return notes
+
 
 _CONTEXT_RE = re.compile(r"<xbrli:context\b[^>]*\bid=\"([^\"]+)\"[^>]*>(.*?)</xbrli:context>", re.S)
 _TYPED_RE = re.compile(r"<xbrldi:typedMember\b[^>]*dimension=\"us-gaap:InvestmentIdentifierAxis\"[^>]*>(.*?)</xbrldi:typedMember>", re.S)
@@ -321,8 +344,9 @@ def parse_ixbrl_holdings(doc, aliases):
         record = {"identifier": ident, "as_of": date, **fields}
         if fields.get("principal", 0) > 0 and fields.get("fair_value", -1) >= 0:
             record["mark"] = round(100 * fields["fair_value"] / fields["principal"], 1)
-        elif fields.get("fair_value", 0) < 0:
-            record["note"] = "negative fair value: usually an unfunded revolver or delayed-draw commitment; no mark computed"
+        notes = holding_notes(ident, fields.get("fair_value"))
+        if notes:
+            record["notes"] = notes
         out.append(record)
     return sorted(out, key=lambda r: (r["identifier"], r["as_of"] or ""))
 
@@ -334,13 +358,29 @@ def parse_table_rows(doc, aliases):
     """Fallback for filings without row-level XBRL: table rows that name an alias
     and read like a holding (a loan, notes, units, shares...)."""
     wanted = [a.lower() for a in aliases]
-    out = []
-    for row in re.findall(r"<tr\b.*?</tr>", doc, re.S | re.I):
+
+    def row_text(row):
         cells = [text_of(c) for c in re.findall(r"<t[dh]\b.*?</t[dh]>", row, re.S | re.I)]
-        cells = [c for c in cells if c and c not in ("$", "%")]
-        line = " | ".join(cells)
-        if any(a in line.lower() for a in wanted) and _HOLDING_WORDS.search(line):
-            out.append({"row": line})
+        return " | ".join(c for c in cells if c and c not in ("$", "%"))
+
+    out = []
+    for table in re.findall(r"<table\b.*?</table>", doc, re.S | re.I):
+        header = None
+        for row in re.findall(r"<tr\b.*?</tr>", table, re.S | re.I):
+            line = row_text(row)
+            if not line:
+                continue
+            if header is None:  # first non-empty row: usually the column headings
+                header = line
+            if (any(a in line.lower() for a in wanted) and _HOLDING_WORDS.search(line)
+                    and re.search(r"\d[\d,.]{3,}", line)):  # a holding row carries an amount
+                record = {"row": line}
+                if header != line:
+                    record["header"] = header
+                notes = holding_notes(line)
+                if notes:
+                    record["notes"] = notes
+                out.append(record)
     return out
 
 
@@ -372,43 +412,66 @@ def parse_nport_holdings(doc, aliases):
             v = find_text(sec, f"debtSec/{tag}")
             if v is not None:
                 record[tag] = v
-        if record.get("units") == "PA" and record.get("balance") and "valUSD" in record:
+        if record.get("units") == "PA" and record.get("balance") and record.get("valUSD", -1) >= 0:
             record["mark"] = round(100 * record["valUSD"] / record["balance"], 1)
+        notes = holding_notes(f"{name} {title}", record.get("valUSD"))
+        if notes:
+            record["notes"] = notes
         out.append(record)
     return out
 
 
+SAME_BATCH_DAYS = 10  # filings a filer makes within this many days count as one batch
+TARGET_WINDOW_DAYS = 90  # an earlier batch must fall this close to its target date
+
+
 def choose_filings(hits, per_filer):
-    """Per filer: the latest filing, then the ones closest to evenly spaced points
-    over the year before it. Returns every matching document of each chosen filing
-    (a 10-Q can carry the schedule in an exhibit as well as the main document)."""
+    """Per filer: the latest batch of filings, then the batches closest to evenly
+    spaced points over the year before it. Returns (documents, notes).
+
+    A batch is every filing the filer made within SAME_BATCH_DAYS of each other, so
+    a trust's separate N-PORT filings for each fund are compared fund with fund.
+    Every matching document of each filing is returned (a 10-Q can carry the
+    schedule in an exhibit as well as the main document). An earlier point with no
+    batch within TARGET_WINDOW_DAYS is skipped and reported in the notes, rather
+    than replaced by a filing from a different period.
+    """
     by_filer = {}
     for h in hits:
         if h["url"] and h["filed"]:
-            docs = by_filer.setdefault(h["cik"], {}).setdefault(h["accession"], {})
-            docs[h["url"]] = h
-    chosen = []
-    for filings in by_filer.values():
-        ordered = sorted(filings, key=lambda acc: next(iter(filings[acc].values()))["filed"], reverse=True)
-        filed = {acc: dt.date.fromisoformat(next(iter(filings[acc].values()))["filed"]) for acc in ordered}
-        picked = [ordered[0]]
-        targets = [filed[ordered[0]] - dt.timedelta(days=365 * k / max(per_filer - 1, 1)) for k in range(1, per_filer)]
-        for target in targets:
-            rest = [acc for acc in ordered if acc not in picked]
-            if not rest:
-                break
-            picked.append(min(rest, key=lambda acc: abs((filed[acc] - target).days)))
-        for acc in picked:
-            chosen.extend(filings[acc].values())
-    return chosen
+            by_filer.setdefault(h["cik"], {})[h["url"]] = h
+    chosen, notes = [], []
+    for docs in by_filer.values():
+        dates = sorted({dt.date.fromisoformat(h["filed"]) for h in docs.values()}, reverse=True)
+
+        def batch(anchor):
+            return {d for d in dates if abs((d - anchor).days) <= SAME_BATCH_DAYS}
+
+        latest = dates[0]
+        picked = batch(latest)
+        for k in range(1, per_filer):
+            target = latest - dt.timedelta(days=365 * k / (per_filer - 1))
+            near = [d for d in dates if d not in picked and abs((d - target).days) <= TARGET_WINDOW_DAYS]
+            if not near:
+                any_doc = next(iter(docs.values()))
+                notes.append({"type": "no_earlier_filing", "filer": any_doc["filer"],
+                              "latest_filed": latest.isoformat(), "wanted_around": target.isoformat(),
+                              "note": f"no filing within {TARGET_WINDOW_DAYS} days of this date"})
+                continue
+            picked |= batch(min(near, key=lambda d: abs((d - target).days)))
+        chosen.extend(h for h in docs.values() if dt.date.fromisoformat(h["filed"]) in picked)
+    return chosen, notes
 
 
-def marks(aliases, user_agent, since, per_filer, max_filers):
+def marks(aliases, user_agent, since, per_filer, max_filers, verbose=False):
     hits = []
     for alias in aliases:
         # separate searches, so a flood of fund filings cannot push lenders past the cap
-        hits += edgar_search(alias, ["10-K", "10-Q"], since, None, user_agent, 300)
-        hits += edgar_search(alias, ["NPORT-P"], since, None, user_agent, 300)
+        for forms in (["10-K", "10-Q"], ["NPORT-P"]):
+            found, summary = edgar_search(alias, forms, since, None, user_agent, 300)
+            hits += found
+            if summary["truncated"] or verbose:
+                emit(summary)
     # lenders (10-K/10-Q schedules) before funds (N-PORT), most recent first, so
     # --max-filers keeps the loan books and the freshest holders
     latest, lender = {}, set()
@@ -418,8 +481,24 @@ def marks(aliases, user_agent, since, per_filer, max_filers):
             lender.add(h["cik"])
     ranked = sorted(latest, key=lambda c: (c in lender, latest[c]), reverse=True)
     keep = set(ranked[:max_filers])
-    for filing in choose_filings([h for h in hits if h["cik"] in keep], per_filer):
-        base = {"filer": filing["filer"], "form": filing["form"], "filed": filing["filed"], "url": filing["url"]}
+    chosen, notes = choose_filings([h for h in hits if h["cik"] in keep], per_filer)
+    for note in notes:
+        emit(note)
+    # an N-PORT filing's HTML exhibit repeats holdings its XML already gives in full
+    has_xml = {h["accession"] for h in chosen if h["url"].lower().endswith(".xml")}
+    chosen = [h for h in chosen if h["url"].lower().endswith(".xml") or h["accession"] not in has_xml
+              or not h["form"].startswith("NPORT")]
+    # a trust can attach the same schedule (one large HTML file) to every fund's
+    # filing; read one copy per filer, file name, and month
+    seen, unique = set(), []
+    for h in chosen:
+        key = (h["cik"], h["url"].rsplit("/", 1)[-1].lower(), h["filed"][:7])
+        if h["url"].lower().endswith(".xml") or key not in seen:
+            seen.add(key)
+            unique.append(h)
+    for filing in unique:
+        base = {"filer": filing["filer"], "form": filing["form"], "filed": filing["filed"],
+                "period_ending": filing["period_ending"], "url": filing["url"]}
         try:
             doc = fetch(filing["url"], user_agent)
         except FetchError as e:
@@ -437,7 +516,7 @@ def marks(aliases, user_agent, since, per_filer, max_filers):
         except ET.ParseError as e:
             emit({**base, "type": "error", "error": f"could not parse: {e}"})
             continue
-        if not rows:
+        if not rows and verbose:  # usually a filer that names the borrower as a customer
             emit({**base, "type": "no_matching_rows"})
         for row in rows:
             emit({**base, "type": kind, **row})
@@ -445,9 +524,39 @@ def marks(aliases, user_agent, since, per_filer, max_filers):
 
 # --------------------------------------------------------------- quote -----
 
+def _find_in_order(page, parts, window):
+    """Start of the first place where every part appears in order, each within
+    `window` characters of the previous one; -1 if there is none."""
+    if not parts:
+        return -1
+    start = page.find(parts[0])
+    while start >= 0:
+        pos, ok = start + len(parts[0]), True
+        for part in parts[1:]:
+            nxt = page.find(part, pos, pos + window + len(part))
+            if nxt < 0:
+                ok = False
+                break
+            pos = nxt + len(part)
+        if ok:
+            return start
+        start = page.find(parts[0], start + 1)
+    return -1
+
+
 def quote_check(url, quote, user_agent, context_chars):
     doc = fetch(url, user_agent)
     page = text_of(doc).lower()
+    if re.search(r"<[A-Za-z/][^>]*>", quote):
+        # an XML quote (N-PORT elements with their tags): the elements quoted are
+        # often not adjacent, so find each element's value in order, close together
+        parts = [p.lower() for p in (text_of(x) for x in re.split(r"<[^>]+>", quote)) if p]
+        pos = _find_in_order(page, parts, window=1500)
+        record = {"type": "quote_check", "url": url, "quote": quote, "found": pos >= 0}
+        if pos >= 0:
+            record["context"] = page[max(0, pos - context_chars): pos + 1500]
+        emit(record)
+        return
     needle = re.sub(r"\s+", " ", quote.replace("|", " ")).strip().lower()
     tokens = [t for t in re.split(r"[\s|]+", needle) if t]
     pos = page.find(needle)
@@ -477,9 +586,16 @@ def main(argv=None):
     s.add_argument("cik")
     s.add_argument("--years", type=int, default=5)
 
-    s = sub.add_parser("edgar-search", help="EDGAR full-text search for an exact phrase")
+    s = sub.add_parser(
+        "edgar-search", help="EDGAR full-text search for an exact phrase",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="EDGAR full-text search for an exact phrase. The first record is a search_summary "
+                    "with EDGAR's total and whether --max-hits cut the list short.",
+        epilog='example:\n  mr.py --user-agent "Name email" edgar-search "Acme Corp" '
+               '--forms "8-K,10-K,DEF 14A" --since 2024-01-01\n'
+               "Quote --forms when a form name has a space (DEF 14A, SC 13D).")
     s.add_argument("phrase")
-    s.add_argument("--forms", default="", help="comma-separated, e.g. 10-K,10-Q,NPORT-P")
+    s.add_argument("--forms", default="", help='comma-separated, quoted if any has a space, e.g. "10-K,DEF 14A"')
     s.add_argument("--since", help="YYYY-MM-DD")
     s.add_argument("--until", help="YYYY-MM-DD")
     s.add_argument("--max-hits", type=int, default=100)
@@ -490,6 +606,8 @@ def main(argv=None):
                    help="earliest filing date (default: about 15 months ago)")
     s.add_argument("--per-filer", type=int, default=2, help="filings per holder: latest plus earlier ones")
     s.add_argument("--max-filers", type=int, default=20)
+    s.add_argument("--verbose", action="store_true",
+                   help="also print search summaries and filings with no matching rows")
 
     s = sub.add_parser("quote-check", help="confirm a quote appears on a page, ignoring markup")
     s.add_argument("url")
@@ -517,11 +635,13 @@ def main(argv=None):
             for r in parse_companyfacts(data, a.years):
                 emit(r)
         elif a.cmd == "edgar-search":
-            forms = [f for f in a.forms.split(",") if f]
-            for r in edgar_search(a.phrase, forms, a.since, a.until, a.user_agent, a.max_hits):
+            forms = [f.strip() for f in a.forms.split(",") if f.strip()]
+            hits, summary = edgar_search(a.phrase, forms, a.since, a.until, a.user_agent, a.max_hits)
+            emit(summary)
+            for r in hits:
                 emit(r)
         elif a.cmd == "marks":
-            marks(a.aliases, a.user_agent, a.since, a.per_filer, a.max_filers)
+            marks(a.aliases, a.user_agent, a.since, a.per_filer, a.max_filers, a.verbose)
         elif a.cmd == "quote-check":
             quote_check(a.url, a.quote, a.user_agent, a.context)
     except FetchError as e:
