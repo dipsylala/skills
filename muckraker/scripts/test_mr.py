@@ -159,6 +159,99 @@ class QuoteCheck(unittest.TestCase):
         self.assertTrue(self.run_check(page, "Mitnick Corporate Purchaser, Inc. (e)(f) | 3M SOFR + 4.75%, 0.50% Floor | 5/3/2029"))
 
 
+class VerifyReport(unittest.TestCase):
+    PAGES = {
+        "https://example.test/rating": "<h1>Acme Parent L.P. Downgraded To &#39;CCC&#39; From &#39;CCC+&#39;</h1>",
+        "https://example.test/schedule": "<table><tr><td>Acme Purchaser, Inc. (6)</td><td>First Lien</td>"
+                                         "<td>8,448,000</td><td>1,812,096</td></tr></table>",
+        "https://example.test/nport.xml": "<invstOrSec><name>ACME PURCHASER INC</name><lei>X</lei>"
+                                          "<balance>1162621.57</balance></invstOrSec>",
+    }
+
+    def fetcher(self, url):
+        if url in self.PAGES:
+            return self.PAGES[url]
+        raise mr.FetchError(f"HTTP 403 for {url}")
+
+    def test_parses_only_red_flags_section(self):
+        flags = mr.parse_red_flags(fixture("report.md"))
+        self.assertEqual(len(flags), 6)
+        self.assertEqual(flags[0]["title"], "Downgrade to CCC.")
+        self.assertEqual(flags[1]["urls"], ["https://example.test/schedule"])
+        self.assertTrue(flags[2]["quote"].startswith("<name>"))
+        self.assertEqual(flags[3]["quote"], "Jane Doe serves as Acme’s Interim Chief Executive Officer.")
+        self.assertIsNone(flags[5]["quote"])
+
+    def test_results(self):
+        path = str(FIXTURES / "report.md")
+        records = list(mr.verify_reports([path], None, fetcher=self.fetcher))
+        results = [r["result"] for r in records if r["type"] == "red_flag_check"]
+        self.assertEqual(results, ["confirmed", "confirmed", "confirmed", "unreachable", "not_found", "no_quote"])
+        summary = records[-1]
+        self.assertEqual((summary["confirmed"], summary["not_found"], summary["unreachable"], summary["no_quote"]), (3, 1, 1, 1))
+
+    def test_each_page_fetched_once(self):
+        calls = []
+
+        def counting(url):
+            calls.append(url)
+            return self.fetcher(url)
+        list(mr.verify_reports([str(FIXTURES / "report.md")], None, fetcher=counting))
+        self.assertEqual(calls.count("https://example.test/schedule"), 1)
+
+    def test_soft_hyphens_ignored(self):
+        page = mr.text_of("<p>ter&shy;mi&shy;na&shy;tion: 09/05/2023 · liq­ui­da­tion: voluntaria</p>").lower()
+        self.assertGreaterEqual(mr.find_quote(page, "Termination: 09/05/2023 · Liquidation: Voluntaria")[0], 0)
+
+
+class Gleif(unittest.TestCase):
+    @staticmethod
+    def record(lei, name, jurisdiction):
+        return {"attributes": {"lei": lei, "entity": {"legalName": {"name": name}, "jurisdiction": jurisdiction,
+                                                      "legalAddress": {"city": "X", "country": jurisdiction[:2]}},
+                               "registration": {"status": "ISSUED"}}}
+
+    def fetcher(self, routes):
+        def get(url):
+            path = url[len(mr.GLEIF):]
+            for prefix, body in routes.items():
+                if path.split("?")[0] == prefix:
+                    return json.dumps(body)
+            raise mr.FetchError(f"HTTP 404 for {url}")
+        return get
+
+    def test_chain_offshore_flag_and_children(self):
+        child = self.record("CHILD000000000000001", "Acme Ltd", "GB")
+        parent = self.record("PARENT00000000000002", "Acme Holdings", "KY")
+        sub = self.record("SUB00000000000000003", "Acme GmbH", "DE")
+        routes = {
+            "/lei-records/CHILD000000000000001": {"data": child},
+            "/lei-records/CHILD000000000000001/direct-parent": {"data": parent},
+            "/lei-records/PARENT00000000000002/direct-parent-reporting-exception":
+                {"data": {"attributes": {"reason": "NATURAL_PERSONS"}}},
+            "/lei-records/CHILD000000000000001/direct-children": {"data": [sub], "meta": {"pagination": {"lastPage": 1}}},
+            "/lei-records/CHILD000000000000001/ultimate-children": {"data": [sub], "meta": {"pagination": {"lastPage": 1}}},
+        }
+        out = list(mr.gleif_report("CHILD000000000000001", fetcher=self.fetcher(routes)))
+        types = [r["type"] for r in out]
+        self.assertEqual(types, ["gleif_entity", "gleif_parent", "gleif_chain_end", "gleif_flag", "gleif_child", "gleif_summary"])
+        self.assertEqual(out[2]["exception_reason"], "NATURAL_PERSONS")
+        self.assertEqual(out[3]["country_name"], "Cayman Islands")
+        self.assertEqual(out[-1]["child_countries_outside_us_uk"], ["DE"])
+
+    def test_no_parent_reports_exception(self):
+        routes = {
+            "/lei-records/SOLO0000000000000001": {"data": self.record("SOLO0000000000000001", "Solo Inc", "US-DE")},
+            "/lei-records/SOLO0000000000000001/direct-parent-reporting-exception":
+                {"data": {"attributes": {"reason": "NATURAL_PERSONS"}}},
+            "/lei-records/SOLO0000000000000001/ultimate-parent-reporting-exception":
+                {"data": {"attributes": {"reason": "NATURAL_PERSONS"}}},
+        }
+        out = list(mr.gleif_report("SOLO0000000000000001", fetcher=self.fetcher(routes)))
+        self.assertIn({"type": "gleif_no_ultimate_parent", "exception_reason": "NATURAL_PERSONS"}, out)
+        self.assertEqual(out[-1]["parents"], 0)
+
+
 class Fetch(unittest.TestCase):
     def test_gzip_body_round_trips(self):
         body = b"<html>schedule</html>" * 100

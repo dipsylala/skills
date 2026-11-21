@@ -108,9 +108,14 @@ def cik10(cik):
     return digits.zfill(10)
 
 
+_INVISIBLE_RE = re.compile("[­​‌‍⁠﻿]")  # soft hyphens, zero-width characters
+
+
 def text_of(fragment):
-    """Visible text of an HTML/XML fragment, whitespace collapsed."""
-    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", fragment))).strip()
+    """Visible text of an HTML/XML fragment, whitespace collapsed and invisible
+    characters (soft hyphens such as &shy;, zero-width spaces) removed."""
+    text = html.unescape(re.sub(r"<[^>]+>", " ", fragment))
+    return re.sub(r"\s+", " ", _INVISIBLE_RE.sub("", text)).strip()
 
 
 # ---------------------------------------------------------------- EDGAR ----
@@ -558,6 +563,137 @@ def marks(aliases, user_agent, since, per_filer, max_filers, verbose=False):
             emit({**base, "type": kind, **row})
 
 
+# ---------------------------------------------------------------- GLEIF ----
+
+GLEIF = "https://api.gleif.org/api/v1"
+LEI_RE = re.compile(r"^[A-Z0-9]{18}[0-9]{2}$")
+OFFSHORE = {  # ISO 3166 codes of common secrecy and offshore jurisdictions
+    "VG": "British Virgin Islands", "KY": "Cayman Islands", "BM": "Bermuda", "JE": "Jersey",
+    "GG": "Guernsey", "IM": "Isle of Man", "PA": "Panama", "SC": "Seychelles", "BS": "Bahamas",
+    "BZ": "Belize", "MH": "Marshall Islands", "AI": "Anguilla", "TC": "Turks and Caicos Islands",
+    "GI": "Gibraltar", "LI": "Liechtenstein", "MU": "Mauritius", "VU": "Vanuatu", "WS": "Samoa",
+    "CW": "Curaçao", "KN": "Saint Kitts and Nevis", "LB": "Lebanon", "CK": "Cook Islands",
+}
+
+
+def gleif_json(path, fetcher=None):
+    """GLEIF API response as a dict, or None for 404 (no such relationship)."""
+    try:
+        return json.loads((fetcher or (lambda u: fetch(u, None)))(GLEIF + path))
+    except FetchError as e:
+        if "HTTP 404" in str(e):
+            return None
+        raise
+
+
+def gleif_entity(record):
+    a = record["attributes"]
+    e, reg = a["entity"], a["registration"]
+    addr = e.get("legalAddress") or {}
+    hq = e.get("headquartersAddress") or {}
+
+    def one_line(x):
+        return ", ".join(p for p in [*(x.get("addressLines") or []), x.get("city"), x.get("region"),
+                                     x.get("postalCode"), x.get("country")] if p) or None
+    return {
+        "lei": a["lei"],
+        "legal_name": e["legalName"]["name"],
+        "other_names": [n["name"] for n in e.get("otherNames") or []],
+        "jurisdiction": e.get("jurisdiction"),
+        "country": (e.get("jurisdiction") or "")[:2] or addr.get("country"),
+        "legal_form": (e.get("legalForm") or {}).get("id"),
+        "registered_as": e.get("registeredAs"),
+        "registration_authority": ((e.get("registeredAt") or {}).get("id")),
+        "entity_status": e.get("status"),
+        "lei_status": reg.get("status"),
+        "initial_registration": reg.get("initialRegistrationDate"),
+        "last_update": reg.get("lastUpdateDate"),
+        "next_renewal": reg.get("nextRenewalDate"),
+        "legal_address": one_line(addr),
+        "headquarters_address": one_line(hq),
+        "url": f"{GLEIF}/lei-records/{a['lei']}",
+    }
+
+
+def gleif_search(name, limit, fetcher=None):
+    q = urllib.parse.urlencode({"filter[fulltext]": name, "page[size]": str(limit)})
+    data = gleif_json(f"/lei-records?{q}", fetcher) or {"data": []}
+    for rec in data.get("data", []):
+        ent = gleif_entity(rec)
+        yield {"type": "gleif_candidate", **{k: ent[k] for k in (
+            "lei", "legal_name", "jurisdiction", "registered_as", "entity_status", "lei_status", "legal_address", "url")}}
+
+
+def gleif_exception(lei, level, fetcher=None):
+    data = gleif_json(f"/lei-records/{lei}/{level}-parent-reporting-exception", fetcher)
+    return ((data or {}).get("data") or {}).get("attributes", {}).get("reason")
+
+
+def gleif_children(lei, level, max_children, fetcher=None):
+    out, page = [], 1
+    while len(out) < max_children:
+        data = gleif_json(f"/lei-records/{lei}/{level}-children?page[size]=100&page[number]={page}", fetcher)
+        rows = (data or {}).get("data") or []
+        out += [gleif_entity(r) for r in rows]
+        last = ((data or {}).get("meta", {}).get("pagination") or {}).get("lastPage", 1)
+        if not rows or page >= last:
+            break
+        page += 1
+    return out[:max_children]
+
+
+def gleif_report(lei, max_children=200, fetcher=None):
+    """The entity, its parent chain (or why there is none), and its subsidiaries."""
+    data = gleif_json(f"/lei-records/{lei}", fetcher)
+    if not data:
+        yield {"type": "error", "error": f"no LEI record {lei}"}
+        return
+    entity = gleif_entity(data["data"])
+    yield {"type": "gleif_entity", **entity}
+
+    chain, current, seen = [], lei, {lei}
+    while len(chain) < 10:
+        parent = gleif_json(f"/lei-records/{current}/direct-parent", fetcher)
+        if not parent or not parent.get("data"):
+            reason = gleif_exception(current, "direct", fetcher)
+            yield {"type": "gleif_chain_end", "at_lei": current, "exception_reason": reason,
+                   "note": "no direct parent reported" + (f" (reason: {reason})" if reason else "")}
+            break
+        p = gleif_entity(parent["data"])
+        if p["lei"] in seen:
+            break
+        seen.add(p["lei"])
+        chain.append(p)
+        yield {"type": "gleif_parent", "level": len(chain), "child_lei": current, **p}
+        current = p["lei"]
+    ultimate = gleif_json(f"/lei-records/{lei}/ultimate-parent", fetcher)
+    if ultimate and ultimate.get("data"):
+        u = gleif_entity(ultimate["data"])
+        if u["lei"] not in seen:
+            yield {"type": "gleif_ultimate_parent", **u}
+            chain.append(u)
+    elif not chain:
+        reason = gleif_exception(lei, "ultimate", fetcher)
+        yield {"type": "gleif_no_ultimate_parent", "exception_reason": reason}
+
+    offshore = [p for p in chain if p["country"] in OFFSHORE]
+    for p in offshore:
+        yield {"type": "gleif_flag", "flag": "offshore parent", "lei": p["lei"], "legal_name": p["legal_name"],
+               "country": p["country"], "country_name": OFFSHORE[p["country"]], "url": p["url"]}
+
+    kids = {k["lei"]: k for k in gleif_children(lei, "direct", max_children, fetcher)}
+    for k in gleif_children(lei, "ultimate", max_children, fetcher):
+        kids.setdefault(k["lei"], k)
+    for k in kids.values():
+        yield {"type": "gleif_child", **{f: k[f] for f in (
+            "lei", "legal_name", "jurisdiction", "country", "entity_status", "lei_status", "url")}}
+    countries = sorted({k["country"] for k in kids.values() if k["country"]})
+    yield {"type": "gleif_summary", "lei": lei, "parents": len(chain), "children": len(kids),
+           "child_countries": countries,
+           "child_countries_outside_us_uk": [c for c in countries if c not in ("US", "GB")],
+           "offshore_parents": [p["lei"] for p in offshore]}
+
+
 # --------------------------------------------------------------- quote -----
 
 def _find_in_order(page, parts, window):
@@ -580,30 +716,143 @@ def _find_in_order(page, parts, window):
     return -1
 
 
-def quote_check(url, quote, user_agent, context_chars):
-    doc = fetch(url, user_agent)
-    page = text_of(doc).lower()
+_QUOTE_CHARS = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"', " ": " "})
+
+
+def find_quote(page, quote):
+    """Position of `quote` in `page` (both plain text, lower-cased), or -1, and
+    the length of the matched span. Handles table quotes (cells in order, any
+    separators) and XML quotes (element values in order, close together)."""
+    page = page.translate(_QUOTE_CHARS)
     if re.search(r"<[A-Za-z/][^>]*>", quote):
-        # an XML quote (N-PORT elements with their tags): the elements quoted are
-        # often not adjacent, so find each element's value in order, close together
-        parts = [p.lower() for p in (text_of(x) for x in re.split(r"<[^>]+>", quote)) if p]
-        pos = _find_in_order(page, parts, window=1500)
-        record = {"type": "quote_check", "url": url, "quote": quote, "found": pos >= 0}
-        if pos >= 0:
-            record["context"] = page[max(0, pos - context_chars): pos + 1500]
-        emit(record)
-        return
-    needle = re.sub(r"\s+", " ", quote.replace("|", " ")).strip().lower()
-    tokens = [t for t in re.split(r"[\s|]+", needle) if t]
+        parts = [p.lower().translate(_QUOTE_CHARS) for p in (text_of(x) for x in re.split(r"<[^>]+>", quote)) if p]
+        return _find_in_order(page, parts, window=1500), 1500
+    needle = re.sub(r"\s+", " ", quote.replace("|", " ")).strip().lower().translate(_QUOTE_CHARS)
     pos = page.find(needle)
-    if pos < 0 and tokens:  # table quotes: allow anything between the cells
-        pattern = r"\W+".join(re.escape(t) for t in tokens)
-        m = re.search(pattern, page)
-        pos = m.start() if m else -1
+    if pos >= 0:
+        return pos, len(needle)
+    tokens = [t for t in re.split(r"[\s|]+", needle) if t]
+    if tokens:  # table quotes: allow anything non-alphanumeric between the cells
+        m = re.search(r"\W+".join(re.escape(t) for t in tokens), page)
+        if m:
+            return m.start(), m.end() - m.start()
+    return -1, 0
+
+
+def quote_check(url, quote, user_agent, context_chars):
+    page = text_of(fetch(url, user_agent)).lower()
+    pos, span = find_quote(page, quote)
     record = {"type": "quote_check", "url": url, "quote": quote, "found": pos >= 0}
     if pos >= 0:
-        record["context"] = page[max(0, pos - context_chars): pos + len(needle) + context_chars]
+        record["context"] = page[max(0, pos - context_chars): pos + span + context_chars]
     emit(record)
+
+
+# ------------------------------------------------------- verify-report -----
+
+_URL_RE = re.compile(r"https?://[^\s<>()\"'`\]]+")
+_QUOTE_LINE_RE = re.compile(r"\bQuote:\s*(.+)", re.I)
+_QUOTED_RE = re.compile(r"[\"“](.+?)[\"”]|`([^`]+)`")
+
+
+def parse_red_flags(markdown):
+    """Red-flag items from a report: each with its title, URLs, and quote.
+
+    The section starts at a 'Red flags' heading or bold label and ends at the next
+    heading or bold section label; items are top-level numbered or bulleted lines,
+    with their indented continuation lines."""
+    lines = markdown.splitlines()
+    start = next((i for i, l in enumerate(lines)
+                  if re.match(r"^\s*(#+\s*|\*\*)\s*Red flags\b", l, re.I)), None)
+    if start is None:
+        return []
+    items, current = [], None
+    for line in lines[start + 1:]:
+        if re.match(r"^(#+\s|\*\*(Gaps|Facts|Sources)\b)", line):
+            break
+        if re.match(r"^(\d+[.)]|[-*])\s+", line):  # a new top-level item
+            current = [line]
+            items.append(current)
+        elif current is not None and line.strip():
+            current.append(line)
+    flags = []
+    for n, block in enumerate(items, 1):
+        text = "\n".join(block)
+        if re.match(r"^(\d+[.)]|[-*])\s+(none|no red flags)\b", block[0], re.I):
+            continue
+        title = re.search(r"\*\*(.+?)\*\*", block[0])
+        quote = None
+        m = _QUOTE_LINE_RE.search(text)
+        if m:
+            q = _QUOTED_RE.search(m.group(1))
+            quote = (q.group(1) or q.group(2)) if q else m.group(1).strip()
+        urls = list(dict.fromkeys(u.rstrip(".,;:") for u in _URL_RE.findall(text)))
+        flags.append({"index": n, "title": title.group(1) if title else block[0][:120].strip(),
+                      "urls": urls, "quote": quote})
+    return flags
+
+
+def verify_reports(paths, user_agent, fetcher=None):
+    """Check every red flag's quote against its cited pages. Each page is fetched
+    once; a flag passes when its quote is found on any URL it cites."""
+    fetcher = fetcher or (lambda u: fetch(u, user_agent))
+    pages, totals = {}, {"confirmed": 0, "not_found": 0, "unreachable": 0, "no_quote": 0}
+
+    def page_text(url):
+        if url not in pages:
+            try:
+                pages[url] = ("ok", text_of(fetcher(url)).lower())
+            except FetchError as e:
+                pages[url] = ("error", str(e))
+        return pages[url]
+
+    for path in paths:
+        report = pathlib_name(path)
+        with open(path, encoding="utf-8", errors="replace") as f:
+            flags = parse_red_flags(f.read())
+        for flag in flags:
+            record = {"type": "red_flag_check", "report": report, **flag}
+            if not flag["quote"] or not flag["urls"]:
+                record["result"] = "no_quote" if not flag["quote"] else "no_url"
+                totals["no_quote"] += 1
+                yield record
+                continue
+            errors = []
+            for url in flag["urls"]:
+                status, text = page_text(url)
+                if status == "error":
+                    errors.append(f"{url}: {text}")
+                    continue
+                pos, span = find_quote(text, flag["quote"])
+                if pos >= 0:
+                    record.update(result="confirmed", matched_url=url, context=text[max(0, pos - 80): pos + span + 80])
+                    totals["confirmed"] += 1
+                    break
+            else:
+                if errors and len(errors) == len(flag["urls"]):
+                    record.update(result="unreachable", errors=errors,
+                                  note="no cited page could be fetched; check it in a browser")
+                    totals["unreachable"] += 1
+                else:
+                    record.update(result="not_found", errors=errors or None)
+                    totals["not_found"] += 1
+            yield record
+    yield {"type": "verify_summary", "reports": len(paths), **totals}
+
+
+def pathlib_name(path):
+    return os.path.basename(path)
+
+
+def report_paths(targets):
+    out = []
+    for t in targets:
+        if os.path.isdir(t):
+            out += sorted(os.path.join(t, n) for n in os.listdir(t)
+                          if n.endswith(".md") and n != "dossier.md")
+        else:
+            out.append(t)
+    return out
 
 
 # ----------------------------------------------------------------- main ----
@@ -645,6 +894,14 @@ def main(argv=None):
     s.add_argument("--verbose", action="store_true",
                    help="also print search summaries and filings with no matching rows")
 
+    s = sub.add_parser("gleif", help="LEI search by name, or an LEI's record, parent chain and subsidiaries")
+    s.add_argument("name_or_lei", help="a legal name to search, or a 20-character LEI")
+    s.add_argument("--limit", type=int, default=10, help="search candidates to return")
+    s.add_argument("--max-children", type=int, default=200)
+
+    s = sub.add_parser("verify-report", help="check every red flag's quote in source reports against its cited pages")
+    s.add_argument("targets", nargs="+", help="report files, or a run folder (every .md except dossier.md)")
+
     s = sub.add_parser("quote-check", help="confirm a quote appears on a page, ignoring markup")
     s.add_argument("url")
     s.add_argument("quote")
@@ -678,6 +935,14 @@ def main(argv=None):
                 emit(r)
         elif a.cmd == "marks":
             marks(a.aliases, a.user_agent, a.since, a.per_filer, a.max_filers, a.verbose)
+        elif a.cmd == "gleif":
+            target = a.name_or_lei.strip().upper()
+            results = gleif_report(target, a.max_children) if LEI_RE.match(target) else gleif_search(a.name_or_lei, a.limit)
+            for r in results:
+                emit(r)
+        elif a.cmd == "verify-report":
+            for r in verify_reports(report_paths(a.targets), a.user_agent):
+                emit(r)
         elif a.cmd == "quote-check":
             quote_check(a.url, a.quote, a.user_agent, a.context)
     except FetchError as e:

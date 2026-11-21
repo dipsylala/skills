@@ -12,7 +12,7 @@ Given a company name, find out who the company is, what it has filed, what has b
 
 Take the company name and anything else the user gave (country, website, ticker, company number). When the user names several companies, build one entity record per company and run every later step for each. Search the web to find the candidates.
 
-- One clear match: record its legal name, jurisdiction, website, ticker, SEC CIK, UK company number, US state of formation and state entity number, and parent company, as far as you can find them. Confirm each registry identifier by looking it up in that registry and checking that the name it returns is the entity you mean (a CIK can belong to the UK parent rather than the US company); record the registered name beside the identifier. When a state register sits behind a CAPTCHA, confirm the entity number through OpenCorporates' copy of it (see [us-state-registry.md](references/sources/us-state-registry.md)) and say so in the record. Look the entity up in GLEIF (the API in [gleif.md](references/sources/gleif.md)) and record its LEI and the countries its parents and subsidiaries are registered in; they decide which registers step 2 sends agents to. Leave a field empty rather than guess it. Until the user has given the SEC contact (step 2), reach sec.gov only through the web fetch and search tools: confirm a CIK by fetching `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=<CIK>` with the web fetch tool, which is the intended route here, not a workaround.
+- One clear match: record its legal name, jurisdiction, website, ticker, SEC CIK, UK company number, US state of formation and state entity number, and parent company, as far as you can find them. Confirm each registry identifier by looking it up in that registry and checking that the name it returns is the entity you mean (a CIK can belong to the UK parent rather than the US company); record the registered name beside the identifier. When a state register sits behind a CAPTCHA, confirm the entity number through OpenCorporates' copy of it (see [us-state-registry.md](references/sources/us-state-registry.md)) and say so in the record. Look the entity up in GLEIF (`python <skill folder>/scripts/mr.py gleif "<legal name>"` to find the LEI, then `mr.py gleif <LEI>` for the parent chain and subsidiaries; without Python, the API in [gleif.md](references/sources/gleif.md)) and record its LEI and the countries its parents and subsidiaries are registered in; they decide which registers step 2 sends agents to. Leave a field empty rather than guess it. Until the user has given the SEC contact (step 2), reach sec.gov only through the web fetch and search tools: confirm a CIK by fetching `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=<CIK>` with the web fetch tool, which is the intended route here, not a workaround.
 - Several plausible matches (different countries, a parent and its subsidiaries, a similar name): list them with what tells them apart and ask the user which one to research. Researching the wrong "Acme Ltd" wastes every agent you send.
 - No match: tell the user what you searched and ask for more detail (country, website, company number) before going further.
 
@@ -48,7 +48,7 @@ Done when the source list is fixed and the SEC contact has been given or decline
 
 Create a run folder for each company outside the user's project: in the session's scratchpad or temp directory if the runtime names one, otherwise `<system temp>/muckraker/<company-slug>-<YYYYMMDD-HHMM>/`. Record its absolute path in your next message so it survives context compaction.
 
-Send one agent per chosen source per company, all at once, in parallel, except Debt and valuation marks when you can run Python and have the SEC `User-Agent`: run that source yourself, as the next section says, while the agents work. Each prompt contains:
+Send one agent per chosen source per company, all at once, in parallel, except the sources you run yourself with the script while the agents work, as the next two sections say: GLEIF ownership whenever you can run Python, and Debt and valuation marks when you can also give sec.gov the SEC `User-Agent`. Each prompt contains:
 
 - the absolute paths of [references/brief.md](references/brief.md) and the agent's source file, with the instruction to read both first;
 - that company's entity record from step 1;
@@ -57,6 +57,10 @@ Send one agent per chosen source per company, all at once, in parallel, except D
 - the absolute path of [scripts/mr.py](scripts/mr.py), the skill's fetcher for EDGAR filings, XBRL figures, lender and fund marks, and quote checks.
 
 Each agent writes its full report to that file and replies with only its status line (the brief gives the format). Wait for the status lines; leave the report files unread until step 4. If an agent has not replied long after the others, stop it, record its source as `FAILED: no reply` under Gaps, and continue.
+
+### GLEIF ownership, run by you
+
+You already ran `mr.py gleif <LEI>` in step 1. Run it also for each parent and acquisition-company name in the entity record that has an LEI of its own (`mr.py gleif "<name>"` finds it), since a group's holding companies often have one when the operating company does not. Write `<run folder>/gleif.md` from the records, in the brief's report format, working through the checks in [gleif.md](references/sources/gleif.md): the entity record, the parent chain or the `exception_reason` where it stops, the subsidiaries and their countries, and any `gleif_flag` record (an offshore parent) as a red flag quoting the parent's name and country. A company with no LEI is a result: say so and list the searches you ran. If the script fails, send the GLEIF ownership agent instead.
 
 ### Debt and valuation marks, run by you
 
@@ -71,7 +75,7 @@ If the script fails or returns nothing for any name, send the Debt and valuation
 
 If the runtime has no subagents, work through the sources yourself one at a time, following the same two files for each and writing the same report files. If it has no web access at all, stop and tell the user: this skill cannot run without it.
 
-Done when every agent has replied, every report file exists or the agent's status line says why it does not, and you have written the Debt and valuation marks report or sent its agent.
+Done when every agent has replied, every report file exists or the agent's status line says why it does not, and you have written the GLEIF ownership and Debt and valuation marks reports or sent their agents.
 
 ## 4. Write the dossier
 
@@ -79,7 +83,13 @@ Read every report file in the run folder before writing anything. After context 
 
 - **Cross-check.** Compare the facts that more than one source covers: officers and directors, registered and head office addresses, headcount, revenue, ownership, dates, and funding rounds the Startup or Press report claims against the share allotments and shareholder lists in the register reports. Record each disagreement in the dossier with both citations, not just the version you prefer. Funding the company itself claims that no share allotment or disclosed debt matches is a red flag, established by the register filing.
 - **Merge duplicates.** When several agents report the same red flag (the same loan mark, the same rating action), keep it once and cite every filing behind it.
-- **Confirm red flags.** For every red flag, open the cited URL yourself and search the page for the agent's quote; confirm it says what the agent reported, and that it is about this entity. `python <skill folder>/scripts/mr.py --user-agent "<SEC User-Agent>" quote-check <url> "<quote>"` does this for pages a script can fetch (sec.gov pages need the `User-Agent`; sites that refuse scripts, such as spglobal.com, return an HTTP error, so check those quotes in a browser tool), including filings of tens of megabytes: it strips the markup, matches table quotes cell by cell, and returns the surrounding text. Without Python, download a large filing, strip the markup, and search the text for the quote's distinctive values, such as the borrower name and the fair value. Move a red flag you cannot confirm to Gaps with the reason.
+- **Confirm red flags.** Every red flag must be found on its cited page, saying what the agent reported, and be about this entity. Run `python <skill folder>/scripts/mr.py --user-agent "<SEC User-Agent>" verify-report "<run folder>"`: it reads every report's red flags, fetches each cited page once (filings of tens of megabytes included), and returns one `red_flag_check` per flag with its `result`:
+  - `confirmed`: the quote is on the page; read the returned `context` to check it says what the agent reported and is about this entity;
+  - `unreachable`: no cited page could be fetched, usually a site that refuses scripts such as spglobal.com; check the quote in a browser tool;
+  - `not_found`: the page loaded but the quote is not on it; open the page yourself, and if it does not say what the agent reported, move the flag to Gaps;
+  - `no_quote` or `no_url`: the agent left the quote or URL out; find the evidence in the report or move the flag to Gaps.
+
+  `mr.py quote-check <url> "<quote>"` checks a single quote the same way. Without Python, open each cited page yourself and search it for the quote; for a large filing, download it, strip the markup, and search the text for the quote's distinctive values, such as the borrower name and the fair value. Move a red flag you cannot confirm to Gaps with the reason.
 - **Rank red flags.** Rank the confirmed red flags, most serious first, judged by the likely effect on the company's ability to keep operating and pay its debts: insolvency, default, a sanctions listing, a CCC-range rating, or loans valued far below par usually come before enforcement actions, litigation, overdue filings, auditor changes or qualified accounts, ownership hidden behind offshore or nominee layers, and adverse press. For each one, say whether it is an allegation, a filed claim, or an established finding (a fact on the record from the body that made it: a court judgment, a regulator's decision, a company filing, a rating agency's action, or a lender's or fund's filed valuation).
 - **List gaps.** Name every source that failed or found nothing, and what it could not cover.
 

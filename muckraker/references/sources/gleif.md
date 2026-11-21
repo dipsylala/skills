@@ -4,6 +4,8 @@ The Global Legal Entity Identifier Foundation (GLEIF) publishes every Legal Enti
 
 ## Access
 
+When Python is available, the coordinator runs this source itself (SKILL.md step 3): `mr.py gleif "<name>"` returns LEI candidates, and `mr.py gleif <LEI>` returns the record, each parent up the chain (or the reporting exception where the chain stops), the subsidiaries with their countries, and a `gleif_flag` for any parent registered in an offshore jurisdiction. This file's checks apply either way; the API routes below are the manual path.
+
 Base: `https://api.gleif.org/api/v1`. Responses are JSON.
 
 - Find the LEI: `/lei-records?filter[entity.legalName]=<name>`, or `/fuzzycompletions?field=entity.legalName&q=<name>` for near spellings. Match the result's jurisdiction, registered address, and registration authority ID against the entity record.
