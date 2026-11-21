@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Trimmed from Columbia Floating Rate Fund N-PORT (period 2026-07-31). -->
+<edgarSubmission xmlns="http://www.sec.gov/edgar/nport" xmlns:com="http://www.sec.gov/edgar/common" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <formData>
+    <genInfo>
+      <regName>Columbia Funds Series Trust II</regName>
+      <seriesName>Columbia Floating Rate Fund</seriesName>
+      <repPdEnd>2026-07-31</repPdEnd>
+      <repPdDate>2026-07-31</repPdDate>
+    </genInfo>
+    <invstOrSecs>
+      <invstOrSec>
+        <name>RESTORATION HARDWARE INC.</name>
+        <title>RESTORATION HARDWARE INC.</title>
+        <balance>2358694.72000000</balance>
+        <units>PA</units>
+        <valUSD>2329871.47000000</valUSD>
+      </invstOrSec>
+      <invstOrSec>
+        <name>MITNICK CORPORATE PURCHASER INC</name>
+        <lei>2549002PYWOTVEDJKW54</lei>
+        <title>MITNICK CORPORATE PURCHASER INC</title>
+        <cusip>000000000</cusip>
+        <balance>1162621.57000000</balance>
+        <units>PA</units>
+        <curCd>USD</curCd>
+        <valUSD>350449.02000000</valUSD>
+        <pctVal>0.048668454836</pctVal>
+        <assetCat>LON</assetCat>
+        <fairValLevel>2</fairValLevel>
+        <debtSec>
+          <maturityDt>2029-05-02</maturityDt>
+          <couponKind>Floating</couponKind>
+          <annualizedRt>8.67000000</annualizedRt>
+          <isDefault>N</isDefault>
+          <areIntrstPmntsInArrs>N</areIntrstPmntsInArrs>
+          <isPaidKind>N</isPaidKind>
+        </debtSec>
+      </invstOrSec>
+    </invstOrSecs>
+  </formData>
+</edgarSubmission>

@@ -15,14 +15,20 @@ A company bought by private equity usually borrows through an acquisition compan
 - parent and holding company names from a subsidiary's latest accounts: open them yourself (for a UK subsidiary, from its Companies House filing history; the `?format=xhtml` version of an accounts document has a text layer) and search for "ultimate parent" and "controlling party";
 - names that turn up beside the company's name in fund filings: search `"<name>"` in N-PORT filings, and note the issuer names in the matching holdings, which often read "<company> (<acquisition company>)".
 
-Search EDGAR full-text search for each borrower name:
+Holders spell the same borrower differently (one lists "Falcon Corporate Purchaser, Inc.", another "Falcon Purchaser, Inc."), and the search matches exact phrases, so also search the most distinctive single word of each alias ("Falcon").
 
-- loans: `https://efts.sec.gov/LATEST/search-index?q="<name>"&forms=10-K,10-Q`
-- fund holdings: `https://efts.sec.gov/LATEST/search-index?q="<name>"&forms=NPORT-P,N-CSR`
+**With the script:** `mr.py marks "<alias>" "<distinctive word>" "<company name>" ...` searches lenders' 10-K and 10-Q filings and funds' N-PORT filings from the last 15 months, takes each holder's latest filing and the one closest to a year earlier, and returns one record per matching row:
 
-Report each alias you used and the filing that links it to the company, so the coordinator can check the link.
+- `loan_or_equity`: a row from a lender's tagged schedule of investments, with principal, cost, fair value, `mark` (fair value as a percentage of principal), interest rate, spread, maturity, and the row's identifier text;
+- `fund_holding`: an N-PORT holding, with balance, value, `mark`, maturity, and the fund's own default, arrears, and PIK flags;
+- `table_row`: a matching row from a schedule without row-level tags, as text for you to read;
+- `no_matching_rows`: a filing the search matched but whose schedule has no row for these names (often a company naming the borrower as a customer); drop it.
 
-Keep the hits from lenders and funds (names with Capital, Credit, Lending, BDC, Fund, or Trust are typical) and set aside companies that mention the name as a customer or competitor. Open the most recent filing from each holder, and the same holder's filing from about a year earlier.
+The script does not read footnotes. For each loan whose mark is falling, open its latest filing and check the row's footnotes for non-accrual, PIK, or amendment marks. Use `--since`, `--per-filer` (more points for a trend), and `--max-filers` to widen the search.
+
+**Without the script:** search EDGAR full-text search for each borrower name, for loans at `https://efts.sec.gov/LATEST/search-index?q="<name>"&forms=10-K,10-Q` and for fund holdings at `https://efts.sec.gov/LATEST/search-index?q="<name>"&forms=NPORT-P,N-CSR`. Keep the hits from lenders and funds (names with Capital, Credit, Lending, BDC, Fund, or Trust are typical) and set aside companies that mention the name as a customer or competitor. Open the most recent filing from each holder, and the same holder's filing from about a year earlier.
+
+Either way, report each alias you used and the filing that links it to the company, so the coordinator can check the link.
 
 ## Checks
 

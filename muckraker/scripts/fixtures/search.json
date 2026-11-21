@@ -1,0 +1,6 @@
+{"hits": {"total": {"value": 3, "relation": "eq"}, "hits": [
+  {"_id": "0001812554-26-000060:ocicslf-09302026.htm", "_source": {"ciks": ["0001812554"], "display_names": ["Blue Owl Credit Income Corp.  (CIK 0001812554)"], "form": "10-Q", "file_date": "2026-11-05", "period_ending": "2026-09-30", "adsh": "0001812554-26-000060"}},
+  {"_id": "0001812554-26-000060:orcic-20260930.htm", "_source": {"ciks": ["0001812554"], "display_names": ["Blue Owl Credit Income Corp.  (CIK 0001812554)"], "form": "10-Q", "file_date": "2026-11-05", "period_ending": "2026-09-30", "adsh": "0001812554-26-000060"}},
+  {"_id": "0001812554-26-000040:orcic-20260630.htm", "_source": {"ciks": ["0001812554"], "display_names": ["Blue Owl Credit Income Corp.  (CIK 0001812554)"], "form": "10-Q", "file_date": "2026-08-06", "period_ending": "2026-06-30", "adsh": "0001812554-26-000040"}},
+  {"_id": "0001812554-25-000070:orcic-20250930.htm", "_source": {"ciks": ["0001812554"], "display_names": ["Blue Owl Credit Income Corp.  (CIK 0001812554)"], "form": "10-Q", "file_date": "2025-11-06", "period_ending": "2025-09-30", "adsh": "0001812554-25-000070"}}
+]}}

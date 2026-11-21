@@ -42,6 +42,16 @@ The dossier has these sections: Entity, Red flags (each marked as an allegation,
 
 Muckraker works without any setup, but some sources return much more with credentials.
 
+### Python (for the fetcher script)
+
+`scripts/mr.py` fetches EDGAR filings and XBRL figures, finds how lenders and funds value a company's loans and shares, and checks quotes against large filings. It needs Python 3.9 or later and nothing else. Agents use it when it runs and fall back to fetching pages themselves when it doesn't, which is slower and costs far more tokens. On a Veracode run, the lender and fund marks took about 40 seconds through the script, against about 13 minutes for an agent working through the filings by hand.
+
+Run its offline tests with:
+
+```bash
+python -m unittest muckraker/scripts/test_mr.py
+```
+
 ### Companies House API key
 
 Without a key, the Companies House agent reads the public website. With one, it uses the Companies House API. Register for a free key at the [Companies House developer hub](https://developer.company-information.service.gov.uk/), then set it in your environment:

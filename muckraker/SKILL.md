@@ -53,7 +53,8 @@ Send one agent per chosen source per company, all at once, in parallel. Each pro
 - the absolute paths of [references/brief.md](references/brief.md) and the agent's source file, with the instruction to read both first;
 - that company's entity record from step 1;
 - the absolute path of its report file: `<run folder>/<source file name>`, for example `<run folder>/press.md`;
-- the SEC `User-Agent` value, for the agents marked "Queries sec.gov" only.
+- the SEC `User-Agent` value, for the agents marked "Queries sec.gov" only;
+- the absolute path of [scripts/mr.py](scripts/mr.py), the skill's fetcher for EDGAR filings, XBRL figures, lender and fund marks, and quote checks.
 
 Each agent writes its full report to that file and replies with only its status line (the brief gives the format). Wait for the status lines; leave the report files unread until step 4. If an agent has not replied long after the others, stop it, record its source as `FAILED: no reply` under Gaps, and continue.
 
@@ -67,7 +68,7 @@ Read every report file in the run folder before writing anything. After context 
 
 - **Cross-check.** Compare the facts that more than one source covers: officers and directors, registered and head office addresses, headcount, revenue, ownership, dates, and funding rounds the Startup or Press report claims against the share allotments and shareholder lists in the register reports. Record each disagreement in the dossier with both citations, not just the version you prefer. Funding the company itself claims that no share allotment or disclosed debt matches is a red flag, established by the register filing.
 - **Merge duplicates.** When several agents report the same red flag (the same loan mark, the same rating action), keep it once and cite every filing behind it.
-- **Confirm red flags.** For every red flag, open the cited URL yourself and search the page for the agent's quote; confirm it says what the agent reported, and that it is about this entity. A large filing (an iXBRL 10-Q of tens of megabytes, an N-PORT XML file) is too big to read whole: download it, strip the markup, and search the text for the quote's distinctive values, such as the borrower name and the fair value. Move a red flag you cannot confirm to Gaps with the reason.
+- **Confirm red flags.** For every red flag, open the cited URL yourself and search the page for the agent's quote; confirm it says what the agent reported, and that it is about this entity. `python <skill folder>/scripts/mr.py --user-agent "<SEC User-Agent>" quote-check <url> "<quote>"` does this for any page (sec.gov pages need the `User-Agent`), including filings of tens of megabytes: it strips the markup, matches table quotes cell by cell, and returns the surrounding text. Without Python, download a large filing, strip the markup, and search the text for the quote's distinctive values, such as the borrower name and the fair value. Move a red flag you cannot confirm to Gaps with the reason.
 - **Rank red flags.** Rank the confirmed red flags, most serious first, judged by the likely effect on the company's ability to keep operating and pay its debts: insolvency, default, a sanctions listing, a CCC-range rating, or loans valued far below par usually come before enforcement actions, litigation, overdue filings, auditor changes or qualified accounts, ownership hidden behind offshore or nominee layers, and adverse press. For each one, say whether it is an allegation, a filed claim, or an established finding (a fact on the record from the body that made it: a court judgment, a regulator's decision, a company filing, a rating agency's action, or a lender's or fund's filed valuation).
 - **List gaps.** Name every source that failed or found nothing, and what it could not cover.
 
