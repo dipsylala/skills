@@ -14,7 +14,6 @@ Standard library only; Python 3.9 or later.
 
 import argparse
 import datetime as dt
-import gzip
 import html
 import json
 import os
@@ -25,13 +24,48 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+import zlib
 
 SEC_MIN_INTERVAL = 0.15  # seconds between sec.gov requests (under 10 a second)
+MAX_BODY = 100 * 1024 * 1024  # largest body, raw or decompressed; big BDC 10-Qs run to ~35 MB
+_CHUNK = 64 * 1024
 _last_sec_request = 0.0
 
 
 class FetchError(Exception):
     pass
+
+
+def read_body(stream, gzipped, limit=MAX_BODY):
+    """Read a response body in chunks, never holding more than `limit` bytes of
+    raw or decompressed data, so an oversized page or a gzip bomb fails cleanly."""
+    out, size = [], 0
+    raw_total = 0
+    d = zlib.decompressobj(16 + zlib.MAX_WBITS) if gzipped else None
+    while True:
+        chunk = stream.read(_CHUNK)
+        if not chunk:
+            break
+        raw_total += len(chunk)
+        if raw_total > limit:
+            raise FetchError(f"response larger than {limit} bytes")
+        if d is None:
+            data = chunk
+        else:
+            data = d.decompress(chunk, limit - size + 1)
+            if d.unconsumed_tail:
+                raise FetchError(f"decompressed response larger than {limit} bytes")
+        size += len(data)
+        if size > limit:
+            raise FetchError(f"decompressed response larger than {limit} bytes")
+        out.append(data)
+    if d is not None:
+        tail = d.flush(limit - size + 1)
+        size += len(tail)
+        if size > limit or d.unconsumed_tail:
+            raise FetchError(f"decompressed response larger than {limit} bytes")
+        out.append(tail)
+    return b"".join(out)
 
 
 def fetch(url, user_agent, retries=2):
@@ -49,9 +83,7 @@ def fetch(url, user_agent, retries=2):
             _last_sec_request = time.monotonic()
         try:
             with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60) as r:
-                body = r.read()
-                if r.headers.get("Content-Encoding") == "gzip":
-                    body = gzip.decompress(body)
+                body = read_body(r, r.headers.get("Content-Encoding") == "gzip")
                 return body.decode("utf-8", errors="replace")
         except urllib.error.HTTPError as e:
             if e.code in (429, 500, 502, 503) and attempt < retries:

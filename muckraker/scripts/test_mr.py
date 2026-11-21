@@ -1,5 +1,7 @@
 """Offline tests for mr.py parsers, run with: python -m unittest muckraker/scripts/test_mr.py"""
 
+import gzip
+import io
 import json
 import pathlib
 import sys
@@ -94,6 +96,19 @@ class Search(unittest.TestCase):
 
 
 class Fetch(unittest.TestCase):
+    def test_gzip_body_round_trips(self):
+        body = b"<html>schedule</html>" * 100
+        self.assertEqual(mr.read_body(io.BytesIO(gzip.compress(body)), True, limit=10_000), body)
+
+    def test_gzip_bomb_is_refused(self):
+        bomb = gzip.compress(b"\0" * 5_000_000)  # ~5 KB compressed, 5 MB expanded
+        with self.assertRaises(mr.FetchError):
+            mr.read_body(io.BytesIO(bomb), True, limit=1_000_000)
+
+    def test_oversized_plain_body_is_refused(self):
+        with self.assertRaises(mr.FetchError):
+            mr.read_body(io.BytesIO(b"x" * 200_000), False, limit=100_000)
+
     def test_sec_requires_user_agent(self):
         with self.assertRaises(mr.FetchError):
             mr.fetch("https://data.sec.gov/submissions/CIK0000000001.json", None)
