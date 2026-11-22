@@ -645,8 +645,46 @@ def load_seen(path):
     return seen
 
 
+def load_searched(path):
+    """The aliases an earlier marks run searched, from its marks_search records."""
+    searched = []
+    if path and os.path.exists(path):
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                if r.get("type") == "marks_search":
+                    searched += r.get("aliases") or []
+    return searched
+
+
+def covering_alias(alias, searched):
+    """The earlier alias whose search already found every filing naming `alias`:
+    full-text search matches a phrase anywhere, so "Falcon" covers "Falcon Purchaser, Inc."."""
+    for s in searched:
+        if re.search(r"(?<!\w)" + re.escape(s.strip()) + r"(?!\w)", alias, re.I):
+            return s
+    return None
+
+
+def skip_covered(aliases, searched):
+    """Aliases an earlier search did not cover; report the others."""
+    left = []
+    for alias in aliases:
+        by = covering_alias(alias, searched)
+        if by:
+            emit({"type": "already_searched", "alias": alias, "covered_by": by,
+                  "note": "an earlier search for this phrase already matched every filing naming this alias"})
+        else:
+            left.append(alias)
+    return left
+
+
 def marks(aliases, user_agent, since, per_filer, max_filers, verbose=False, seen=None):
     seen = seen or set()
+    emit({"type": "marks_search", "aliases": aliases, "since": since})  # lets --skip-seen skip covered aliases
     hits = []
     for alias in aliases:
         # separate searches, so a flood of fund filings cannot push lenders past the cap
@@ -1545,7 +1583,8 @@ def main(argv=None):
     s.add_argument("--per-filer", type=int, default=2, help="filings per holder: latest plus earlier ones")
     s.add_argument("--max-filers", type=int, default=20)
     s.add_argument("--skip-seen", metavar="FILE",
-                   help="leave out records already in this JSON-lines file (an earlier marks run you append to)")
+                   help="an earlier marks output you append to: skip aliases its searches already covered "
+                        "and records it already has")
     s.add_argument("--verbose", action="store_true",
                    help="also print search summaries and filings with no matching rows")
 
@@ -1598,7 +1637,9 @@ def main(argv=None):
             for r in hits:
                 emit(r)
         elif a.cmd == "marks":
-            marks(a.aliases, a.user_agent, a.since, a.per_filer, a.max_filers, a.verbose, load_seen(a.skip_seen))
+            aliases = skip_covered(a.aliases, load_searched(a.skip_seen)) if a.skip_seen else a.aliases
+            if aliases:
+                marks(aliases, a.user_agent, a.since, a.per_filer, a.max_filers, a.verbose, load_seen(a.skip_seen))
         elif a.cmd == "gleif":
             target = a.name_or_lei.strip().upper()
             results = gleif_report(target, a.max_children) if LEI_RE.match(target) else gleif_search(a.name_or_lei, a.limit)
