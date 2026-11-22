@@ -1087,6 +1087,86 @@ class GermanyRunFixes(unittest.TestCase):
         self.assertEqual((out[0]["company_number"], out[0]["company_type"]), ("FC043684", "oversea-company"))
         self.assertEqual(out[-1]["results"], 1)
 
+
+class IrelandRunFixes(unittest.TestCase):
+    def ie(self, company, filings, today=dt.date(2026, 11, 22)):
+        def fetcher(url):
+            if "package_show" in url:
+                return json.dumps({"result": {"resources": [
+                    {"id": "fs2024", "name": "Financial Statements 2024", "datastore_active": True}]}})
+            params = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+            records = [company] if params["resource_id"][0] == mr.CRO_COMPANIES else filings
+            return json.dumps({"result": {"records": records}})
+        return list(mr.ie_report("621010", fetcher, today))
+
+    COMPANY = {"company_num": 621010, "company_name": "Tines LIMITED", "company_status": "Normal ",
+               "last_ar_date": "2025-09-30T00:00:00", "nard": "2026-09-30T00:00:00"}
+
+    def test_late_return_is_flagged(self):
+        late = {"submission_rec_date": "2026-05-28T00:00:00", "submission_eff_date": "2025-09-30T00:00:00",
+                "submissions_accounts_to_date": "2025-01-31T00:00:00"}
+        on_time = {"submission_rec_date": "2024-11-19T00:00:00", "submission_eff_date": "2024-09-30T00:00:00",
+                   "submissions_accounts_to_date": "2024-01-31T00:00:00"}
+        out = self.ie(self.COMPANY, [on_time, late])
+        flags = [r for r in out if r["type"] == "ie_flag"]
+        self.assertEqual([(f["flag"], f["accounts_to"], f["days_late"]) for f in flags],
+                         [("late annual return", "2025-01-31", 184)])
+        self.assertEqual(out[0]["status"], "Normal")
+
+    def test_overdue_return_and_stale_dataset_note(self):
+        overdue = dict(self.COMPANY, last_ar_date="2024-09-30T00:00:00", nard="2025-09-30T00:00:00")
+        out = self.ie(overdue, [])
+        self.assertEqual(next(r for r in out if r["type"] == "ie_flag")["flag"], "annual return overdue")
+        self.assertIn("newer than the latest filing", out[-1]["note"])
+        not_yet = self.ie(self.COMPANY, [])  # next return date 2026-09-30, due 2026-11-25
+        self.assertFalse([r for r in not_yet if r["type"] == "ie_flag"])
+
+    def test_name_search_escapes_quotes(self):
+        seen = []
+
+        def fetcher(url):
+            seen.append(urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["sql"][0])
+            return json.dumps({"result": {"records": [{"company_num": "1", "company_name": "O'BRIEN LTD"}]}})
+        out = list(mr.ie_report("O'Brien%", fetcher))
+        self.assertIn("ILIKE 'O''Brien%'", seen[0])
+        self.assertEqual(out[0]["type"], "ie_candidate")
+
+    def test_read_timeout_becomes_fetch_error(self):
+        def urlopen(request, timeout):
+            raise TimeoutError("The read operation timed out")
+        original, mr.urllib.request.urlopen = mr.urllib.request.urlopen, urlopen
+        out, saved, sleep = [], mr.emit, mr.time.sleep
+        mr.emit, mr.time.sleep = out.append, lambda s: None
+        try:
+            with self.assertRaises(mr.FetchError):
+                mr.fetch("https://www.businesswire.com/x", None, retries=0)
+            mr.quote_check("https://www.businesswire.com/x", "anything", None, 50)
+        finally:
+            mr.urllib.request.urlopen, mr.emit, mr.time.sleep = original, saved, sleep
+        self.assertIsNone(out[0]["found"])
+        self.assertIn("TimeoutError", out[0]["unreachable"])
+
+    def test_lapsed_lei_is_noted(self):
+        rec = {"attributes": {"lei": "L1", "entity": {"legalName": {"name": "OLD NAME LTD"}, "jurisdiction": "IE"},
+                              "registration": {"status": "LAPSED", "lastUpdateDate": "2026-10-26"}}}
+
+        def get(url):
+            path = url[len(mr.GLEIF):].split("?")[0]
+            if path == "/lei-records/L1":
+                return json.dumps({"data": rec})
+            raise mr.FetchError(f"HTTP 404 for {url}")
+        out = list(mr.gleif_report("L1", fetcher=get))
+        self.assertEqual(next(r for r in out if r["type"] == "gleif_lapsed")["legal_name"], "OLD NAME LTD")
+
+    def test_psc_statement_against_named_parent(self):
+        ch = fake_ch({"/company/16441456/persons-with-significant-control-statements": {"items": [
+            {"statement": "no-individual-or-entity-with-signficant-control", "notified_on": "2025-05-08"}]}})
+        [r] = mr.psc_parent_mismatch("16441456", ch, ["The immediate parent undertaking is Tines Limited."])
+        self.assertEqual(r["severity"], "minor")
+        ceased = fake_ch({"/company/1/persons-with-significant-control-statements": {"items": [
+            {"statement": "no-individual-or-entity-with-signficant-control", "ceased_on": "2025-06-01"}]}})
+        self.assertEqual(list(mr.psc_parent_mismatch("1", ceased, ["parent"])), [])
+
 class Fetch(unittest.TestCase):
     def test_gzip_body_round_trips(self):
         body = b"<html>schedule</html>" * 100
