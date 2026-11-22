@@ -1129,6 +1129,20 @@ def late_filing(item, company_type):
     return None
 
 
+def ch_search(name, ch, limit=20):
+    """Companies House companies whose name matches, so a non-UK target's UK
+    companies and overseas registrations (FC numbers) are found in step 1."""
+    q = urllib.parse.quote(name)
+    items = (ch.get(f"/search/companies?q={q}&items_per_page={limit}") or {}).get("items", [])
+    for i in items:
+        yield {"type": "ch_candidate", "company_number": i.get("company_number"), "name": i.get("title"),
+               "status": i.get("company_status"), "company_type": i.get("company_type"),
+               "created": i.get("date_of_creation"), "address": i.get("address_snippet"),
+               "url": f"{CH_WEB}/company/{i.get('company_number')}"}
+    yield {"type": "ch_search_summary", "query": name, "results": len(items),
+           "url": f"{CH_WEB}/search/companies?q={q}"}
+
+
 def ch_report(number, ch, max_filings=200, today=None, list_filings=25):
     """Profile, officers, PSCs, charges, insolvency, filing history and computed flags."""
     number = number.strip().upper()
@@ -1155,6 +1169,12 @@ def ch_report(number, ch, max_filings=200, today=None, list_filings=25):
         if (acc if field == "accounts_overdue" else cs).get("overdue"):
             overdue += 1
             yield {"type": "ch_flag", "flag": what, "severity": "major", "url": web}
+
+    if p.get("type") == "oversea-company":
+        for e in (ch.get(f"/company/{number}/uk-establishments") or {}).get("items", []):
+            yield {"type": "ch_uk_establishment", "branch_number": e.get("company_number"), "name": e.get("company_name"),
+                   "status": e.get("company_status"), "locality": e.get("locality"),
+                   "url": f"{CH_WEB}/company/{e.get('company_number')}"}
 
     officers = (ch.get(f"/company/{number}/officers?items_per_page=100") or {}).get("items", [])
     recent = 0
@@ -1250,6 +1270,17 @@ def ch_report(number, ch, max_filings=200, today=None, list_filings=25):
             if late["severity"] == "minor" and (today - _date(late["filed"])).days <= 730:
                 counts["minor_last_24_months"] += 1
             yield {"type": "ch_flag", **late, "quote": quote, "url": page_url}
+        if f.get("type") == "OSIN01" and p.get("type") == "oversea-company" and p.get("date_of_creation") and f.get("date"):
+            opened, due = _date(p["date_of_creation"]), _add_months(_date(p["date_of_creation"]), 1)
+            if _date(f["date"]) > due:
+                counts["minor"] += 1
+                if (today - _date(f["date"])).days <= 730:
+                    counts["minor_last_24_months"] += 1
+                yield {"type": "ch_flag", "flag": "late overseas registration", "severity": "minor", "form": "OSIN01",
+                       "filed": f["date"], "event_date": opened.isoformat(), "days_late": (_date(f["date"]) - due).days,
+                       "rule": "an overseas company must register within one month of opening a UK establishment "
+                               "(Overseas Companies Regulations 2009, reg. 4); the register's creation date is the opening date",
+                       "quote": quote, "url": page_url}
         if GAZETTE_FORMS_RE.match(f.get("type") or ""):
             counts["major"] += 1
             yield {"type": "ch_flag", "flag": "gazette notice", "severity": "major", "form": f.get("type"), "filed": f.get("date"),
@@ -1258,7 +1289,7 @@ def ch_report(number, ch, max_filings=200, today=None, list_filings=25):
            "psc_statements": len(statements), "filings_read": min(len(filings), max_filings),
            "major_flags": counts["major"] + overdue, "minor_late_filings": counts["minor"],
            "minor_late_filings_last_24_months": counts["minor_last_24_months"],
-           "note": ("minor flags are officer, PSC and confirmation-statement filings made late: register "
+           "note": ("minor flags are officer, PSC, confirmation-statement and overseas-registration filings made late: register "
                     "housekeeping, worth reporting as a red flag only as a pattern (several in two years)")}
 
 
@@ -1393,6 +1424,19 @@ def extract_notes(doc, per_topic=4, max_len=400):
     return notes
 
 
+def uk_no_accounts_note(profile):
+    """Why a company may have no accounts on file, by company type."""
+    if profile.get("type") != "oversea-company":
+        return "no accounts filed yet; a newly incorporated company's first accounts fall due 21 months after incorporation"
+    req = ((profile.get("foreign_company_details") or {}).get("accounting_requirement") or {}).get("foreign_account_type")
+    if req == "accounting-requirements-of-originating-country-do-not-apply":
+        return ("no accounts filed yet; an overseas company whose home law does not require it to publish accounts "
+                "delivers accounts for each period within 13 months of its end (Overseas Companies Regulations 2009); "
+                f"next period ends {(profile.get('accounts') or {}).get('next_made_up_to')}")
+    return ("no accounts filed here; an overseas company delivers the accounts its home law requires it to publish "
+            "within 3 months of their publication, so read them in its home register")
+
+
 def uk_accounts(number, ch, sets=3):
     """Multi-year figures from the latest accounts filings that have an iXBRL version."""
     number = number.strip().upper()
@@ -1403,8 +1447,7 @@ def uk_accounts(number, ch, sets=3):
     filings = [f for f in page.get("items") or [] if f.get("type") in ("AA", "AAMD", "AA02")]
     if not filings:
         yield {"type": "uk_accounts_none", "url": f"{web}/filing-history?category=accounts",
-               "note": "no accounts filed yet; a newly incorporated company's first accounts fall due "
-                       "21 months after incorporation"}
+               "note": uk_no_accounts_note(ch.get(f"/company/{number}") or {})}
         return
     combined, used, used_filings, scanned_newer = {}, 0, [], []
     for f in filings:
@@ -2392,6 +2435,10 @@ def main(argv=None):
     s.add_argument("--max-filings", type=int, default=200, help="filings to read and check for late-filing flags")
     s.add_argument("--list-filings", type=int, default=25, help="latest filings to list in the output")
 
+    s = sub.add_parser("ch-search", help="UK Companies House: companies matching a name, including overseas registrations")
+    s.add_argument("name")
+    s.add_argument("--limit", type=int, default=20)
+
     s = sub.add_parser("uk-accounts", help="UK Companies House: multi-year figures from iXBRL accounts")
     s.add_argument("company_number")
     s.add_argument("--sets", type=int, default=3, help="accounts filings to read (each covers two years)")
@@ -2404,7 +2451,7 @@ def main(argv=None):
     s.add_argument("out_dir")
     s.add_argument("--pages", help="pages to save, such as 1-5,33 (default: all)")
     s.add_argument("--scale", type=int, choices=(1, 2, 3, 4), default=2,
-                   help="shrink fax-image pages this many times; the default 2 halves each side of a 300 dpi "
+                   help="a whole number, 1 to 4: shrink fax-image pages this many times; the default 2 halves each side of a 300 dpi "
                         "scan and stays legible, 1 keeps full size for small print")
 
     s = sub.add_parser("pdf-text", help="print the text layer of a PDF made by software, such as an electronically filed form")
@@ -2452,6 +2499,9 @@ def main(argv=None):
             target = a.name_or_lei.strip().upper()
             results = gleif_report(target, a.max_children) if LEI_RE.match(target) else gleif_search(a.name_or_lei, a.limit)
             for r in results:
+                emit(r)
+        elif a.cmd == "ch-search":
+            for r in ch_search(a.name, CompaniesHouse(os.environ.get("COMPANIES_HOUSE_API_KEY")), a.limit):
                 emit(r)
         elif a.cmd in ("ch", "uk-accounts"):
             ch = CompaniesHouse(os.environ.get("COMPANIES_HOUSE_API_KEY"))

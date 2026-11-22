@@ -4,6 +4,8 @@ The UK register of companies, at `https://find-and-update.company-information.se
 
 ## Access
 
+An overseas company (an FC number) is a foreign company's UK registration: it has a UK establishment (a BR number) and must register within one month of opening it. `mr.py ch` lists the establishment and flags a late registration as minor. Its accounts are its home-country accounts, delivered within three months of their publication, or, where home law does not require it to publish, within 13 months of each period end.
+
 When Python is available and `COMPANIES_HOUSE_API_KEY` is set, the coordinator runs this source itself with `mr.py ch` (SKILL.md step 3), which also works out late filings against the statutory deadlines; this file's checks apply either way. The routes below are the manual path.
 
 - With an API key in the `COMPANIES_HOUSE_API_KEY` environment variable: call `https://api.company-information.service.gov.uk` with the key as the HTTP basic auth username and an empty password. Keep the key out of your report and out of any command output you quote.

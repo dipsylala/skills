@@ -1017,6 +1017,60 @@ class FranceRunFixes(unittest.TestCase):
         self.assertGreaterEqual(mr.find_quote(page, "Directeur général partant : Thomas")[0], 0)
 
 
+
+def fake_ch(api):
+    def fake(url, accept=None):
+        path = url[len(mr.CH_API):].split("?")[0]
+        if path in api:
+            return json.dumps(api[path])
+        raise mr.FetchError(f"HTTP 404 for {url}")
+    return mr.CompaniesHouse(None, fetcher=fake)
+
+
+OVERSEAS = {"company_name": "N8N GMBH", "company_status": "active", "type": "oversea-company",
+            "date_of_creation": "2025-05-01", "accounts": {"next_made_up_to": "2026-05-31"},
+            "foreign_company_details": {"accounting_requirement": {
+                "foreign_account_type": "accounting-requirements-of-originating-country-do-not-apply"}}}
+
+
+class GermanyRunFixes(unittest.TestCase):
+    def test_overseas_establishment_and_late_registration(self):
+        ch = fake_ch({"/company/FC043684": OVERSEAS,
+                      "/company/FC043684/uk-establishments": {"items": [
+                          {"company_number": "BR028805", "company_name": "N8N GMBH - UK ESTABLISHMENT",
+                           "company_status": "open", "locality": "London"}]},
+                      "/company/FC043684/filing-history": {"total_count": 1, "items": [
+                          {"type": "OSIN01", "date": "2026-10-29", "transaction_id": "t1",
+                           "description": "register-overseas-company"}]}})
+        out = list(mr.ch_report("FC043684", ch, today=dt.date(2026, 11, 22)))
+        self.assertEqual(next(r for r in out if r["type"] == "ch_uk_establishment")["branch_number"], "BR028805")
+        flag = next(r for r in out if r.get("flag") == "late overseas registration")
+        self.assertEqual((flag["severity"], flag["days_late"]), ("minor", 515))
+        self.assertEqual(out[-1]["minor_late_filings"], 1)
+
+    def test_overseas_registered_in_time_is_not_flagged(self):
+        ch = fake_ch({"/company/FC043684": OVERSEAS, "/company/FC043684/filing-history": {"total_count": 1, "items": [
+            {"type": "OSIN01", "date": "2025-05-20", "transaction_id": "t1"}]}})
+        out = list(mr.ch_report("FC043684", ch, today=dt.date(2026, 11, 22)))
+        self.assertFalse([r for r in out if r["type"] == "ch_flag"])
+
+    def test_overseas_no_accounts_note(self):
+        ch = fake_ch({"/company/FC043684": OVERSEAS, "/company/FC043684/filing-history": {"items": []}})
+        [r] = mr.uk_accounts("FC043684", ch)
+        self.assertIn("13 months", r["note"])
+        self.assertNotIn("21 months", r["note"])
+        published = dict(OVERSEAS, foreign_company_details={"accounting_requirement": {
+            "foreign_account_type": "accounting-requirements-of-originating-country-apply"}})
+        self.assertIn("3 months of their publication", mr.uk_no_accounts_note(published))
+        self.assertIn("21 months", mr.uk_no_accounts_note({"type": "ltd"}))
+
+    def test_ch_search(self):
+        ch = fake_ch({"/search/companies": {"items": [
+            {"company_number": "FC043684", "title": "N8N GMBH", "company_type": "oversea-company"}]}})
+        out = list(mr.ch_search("n8n", ch))
+        self.assertEqual((out[0]["company_number"], out[0]["company_type"]), ("FC043684", "oversea-company"))
+        self.assertEqual(out[-1]["results"], 1)
+
 class Fetch(unittest.TestCase):
     def test_gzip_body_round_trips(self):
         body = b"<html>schedule</html>" * 100
