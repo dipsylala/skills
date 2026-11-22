@@ -8,7 +8,7 @@ When Python is available, the coordinator runs this source itself (SKILL.md step
 
 Base: `https://api.gleif.org/api/v1`. Responses are JSON.
 
-- Find the LEI: `/lei-records?filter[entity.legalName]=<name>`, or `/fuzzycompletions?field=entity.legalName&q=<name>` for near spellings. Match the result's jurisdiction, registered address, and registration authority ID against the entity record.
+- Find the LEI: `/lei-records?filter[entity.legalName]=<name>`, or `/fuzzycompletions?field=entity.legalName&q=<name>` for near spellings. When no name matches, search by the entity's national register number (KvK, SIREN, HRB): `/lei-records?filter[entity.registeredAs]=<number>` (`mr.py gleif --registered-as <number>`). Match the result's jurisdiction, registered address, and registration authority ID against the entity record.
 - Record: `/lei-records/<LEI>`.
 - Parents: `/lei-records/<LEI>/direct-parent` and `/ultimate-parent`. A 404 means no parent is reported; then read `/direct-parent-reporting-exception` and `/ultimate-parent-reporting-exception`, whose `reason` says why (for example `NATURAL_PERSONS`, `NON_CONSOLIDATING`, `NO_KNOWN_PERSON`, `NON_PUBLIC`).
 - Subsidiaries: `/lei-records/<LEI>/direct-children` and `/ultimate-children` (paged).

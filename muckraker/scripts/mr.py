@@ -935,13 +935,18 @@ def distinctive_words(name):
     return {w for w in re.findall(r"\w+", name.lower()) if w not in LEGAL_FORM_WORDS and len(w) > 1}
 
 
-def gleif_search(name, limit, fetcher=None):
-    q = urllib.parse.urlencode({"filter[fulltext]": name, "page[size]": str(limit)})
+def gleif_search(name, limit, fetcher=None, registered_as=None):
+    """LEI candidates by name, or by the entity's number in its national register (KVK, SIREN, HRB...)."""
+    if registered_as:
+        q = urllib.parse.urlencode({"filter[entity.registeredAs]": registered_as, "page[size]": str(limit)})
+    else:
+        q = urllib.parse.urlencode({"filter[fulltext]": name, "page[size]": str(limit)})
     data = gleif_json(f"/lei-records?{q}", fetcher) or {"data": []}
     records = data.get("data", [])
     # full-text search ranks loose matches too ("Snyk, Inc." returns car dealers);
     # keep candidates whose name or other names share a word with the query beyond its legal form
-    wanted, kept, dropped = distinctive_words(name), 0, 0
+    wanted = set() if registered_as else distinctive_words(name)
+    kept, dropped = 0, 0
     for rec in records:
         ent = gleif_entity(rec)
         if wanted and not wanted & distinctive_words(" ".join([ent["legal_name"] or "", *ent["other_names"]])):
@@ -951,10 +956,11 @@ def gleif_search(name, limit, fetcher=None):
         yield {"type": "gleif_candidate", **{k: ent[k] for k in (
             "lei", "legal_name", "jurisdiction", "registered_as", "entity_status", "lei_status", "legal_address", "url")}}
     if not kept:  # no LEI is itself a result; say so rather than print nothing
-        note = "no LEI record matches this name; try another spelling or a parent's name"
+        note = ("no LEI record has this registration number; try the name" if registered_as else
+                "no LEI record matches this name; try another spelling or a parent's name")
         if dropped:
             note += f" ({dropped} loose matches sharing none of the name's words were left out)"
-        yield {"type": "gleif_no_match", "query": name, "url": f"{GLEIF}/lei-records?{q}", "note": note}
+        yield {"type": "gleif_no_match", "query": registered_as or name, "url": f"{GLEIF}/lei-records?{q}", "note": note}
 
 
 def gleif_exception(lei, level, fetcher=None):
@@ -2426,7 +2432,8 @@ def main(argv=None):
                    help="also print search summaries and filings with no matching rows")
 
     s = sub.add_parser("gleif", help="LEI search by name, or an LEI's record, parent chain and subsidiaries")
-    s.add_argument("name_or_lei", help="a legal name to search, or a 20-character LEI")
+    s.add_argument("name_or_lei", nargs="?", help="a legal name to search, or a 20-character LEI")
+    s.add_argument("--registered-as", help="search by the entity's national register number instead (KVK, SIREN, ...)")
     s.add_argument("--limit", type=int, default=10, help="search candidates to return")
     s.add_argument("--max-children", type=int, default=200)
 
@@ -2496,8 +2503,13 @@ def main(argv=None):
             if aliases:
                 marks(aliases, a.user_agent, a.since, a.per_filer, a.max_filers, a.verbose, load_seen(a.skip_seen))
         elif a.cmd == "gleif":
-            target = a.name_or_lei.strip().upper()
-            results = gleif_report(target, a.max_children) if LEI_RE.match(target) else gleif_search(a.name_or_lei, a.limit)
+            if a.registered_as:
+                results = gleif_search(None, a.limit, registered_as=a.registered_as.strip())
+            elif not a.name_or_lei:
+                p.error("gleif needs a name, an LEI, or --registered-as")
+            else:
+                target = a.name_or_lei.strip().upper()
+                results = gleif_report(target, a.max_children) if LEI_RE.match(target) else gleif_search(a.name_or_lei, a.limit)
             for r in results:
                 emit(r)
         elif a.cmd == "ch-search":
