@@ -252,6 +252,97 @@ class Gleif(unittest.TestCase):
         self.assertEqual(out[-1]["parents"], 0)
 
 
+class RowQuotes(unittest.TestCase):
+    def test_loan_row_carries_page_text_quote_with_figures(self):
+        rows = mr.parse_ixbrl_holdings(fixture("bdc_schedule.htm"), ["veracode"])
+        latest = next(r for r in rows if r["as_of"] == "2026-09-30")
+        self.assertTrue(latest["quote"].startswith("Veracode | 8.67"))
+        self.assertTrue(latest["quote"].endswith("8,448,000 | 8,431,553 | 1,812,096"))
+        # the quote is found on the page the way verify-report searches it
+        page = mr.text_of(fixture("bdc_schedule.htm")).lower()
+        self.assertGreaterEqual(mr.find_quote(page, latest["quote"])[0], 0)
+
+    def test_hidden_fact_gets_no_quote(self):
+        doc = ('<ix:header><ix:hidden><ix:nonFraction contextRef="C" name="us-gaap:InvestmentOwnedAtFairValue" '
+               'decimals="0">5</ix:nonFraction></ix:hidden></ix:header><table><tr><td>Acme</td></tr></table>')
+        self.assertIsNone(mr.enclosing_row(doc, doc.find("<ix:nonFraction")))
+
+
+class TableRowHeaderAndDate(unittest.TestCase):
+    DOC = ("<p>Schedule of Investments as of December 31, 2025</p><p>Schedule of Investments as of "
+           "September 30, 2026</p><table><tr><td>Interest</td></tr>"
+           "<tr><td>Company</td><td>Investment</td><td>Interest</td><td>Par</td><td>Fair Value</td></tr>"
+           "<tr><td>Mitnick Corporate Purchaser, Inc.(6)</td><td>First lien senior secured loan</td>"
+           "<td>S+ 4.75%</td><td>2,957</td><td>575</td></tr></table>")
+
+    def test_header_skips_one_word_heading_row_and_date_comes_from_heading(self):
+        rows = mr.parse_table_rows(self.DOC, ["mitnick"])
+        self.assertEqual(rows[0]["header"], "Company | Investment | Interest | Par | Fair Value")
+        self.assertEqual(rows[0]["table_date"], "2026-09-30")
+
+
+class FundTrend(unittest.TestCase):
+    @staticmethod
+    def row(fund, as_of):
+        return {"filer": "SEI Trust", "cik": "939934", "fund": fund, "as_of": as_of}
+
+    def test_fund_without_its_own_earlier_point_is_reported(self):
+        holdings = [self.row("SIIT High Yield Bond Fund", "2026-08-31"),
+                    self.row("SIIT Opportunistic Income Fund", "2025-08-31"),
+                    self.row("SIIT Core Fund", "2026-08-31"), self.row("SIIT Core Fund", "2025-08-31")]
+        notes = mr.fund_trend_notes(holdings, per_filer=2)
+        self.assertEqual([n["fund"] for n in notes], ["SIIT High Yield Bond Fund"])  # the exited fund is not a gap
+
+    def test_renamed_fund_matched_by_series_id(self):
+        holdings = [{**self.row("NYLIM Floating Rate Fund", "2026-07-31"), "series_id": "S1"},
+                    {**self.row("NYLI Floating Rate Fund", "2025-07-31"), "series_id": "S1"}]
+        self.assertEqual(mr.fund_trend_notes(holdings, per_filer=2), [])
+
+
+class MarksOutput(unittest.TestCase):
+    def test_trend_notes_only_for_holders(self):
+        hits = [{"type": "search_hit", "filer": f, "cik": c, "form": "10-Q", "filed": "2026-08-07",
+                 "period_ending": "2026-06-30", "accession": c, "url": f"https://www.sec.gov/{c}/doc.htm"}
+                for f, c in (("Holder BDC", "1"), ("Customer Co", "2"))]
+        docs = {"https://www.sec.gov/1/doc.htm": fixture("table_rows.htm"),
+                "https://www.sec.gov/2/doc.htm": "<p>Our customers include Mitnick.</p>"}
+        out, saved = [], (mr.edgar_search, mr.fetch, mr.emit)
+        mr.edgar_search = lambda *a: (hits if a[1] == ["10-K", "10-Q"] else [],
+                                      {"type": "search_summary", "truncated": False})
+        mr.fetch, mr.emit = (lambda url, ua: docs[url]), out.append
+        try:
+            mr.marks(["Mitnick"], "ua", "2025-08-01", 2, 20)
+        finally:
+            mr.edgar_search, mr.fetch, mr.emit = saved
+        no_earlier = [r["filer"] for r in out if r["type"] == "no_earlier_filing"]
+        self.assertEqual(no_earlier, ["Holder BDC"])
+
+
+class GleifNoMatch(unittest.TestCase):
+    def test_no_candidate_is_reported(self):
+        out = list(mr.gleif_search("Mitnick Parent", 10, fetcher=lambda url: json.dumps({"data": []})))
+        self.assertEqual([r["type"] for r in out], ["gleif_no_match"])
+        self.assertEqual(out[0]["query"], "Mitnick Parent")
+
+
+class VerifyWarnings(unittest.TestCase):
+    def test_short_and_repeated_quotes_warn(self):
+        page = "veracode first lien 8.69% veracode first lien 8.67%"
+        self.assertEqual(len(mr.quote_warnings(page, "Veracode", "veracode")), 2)
+        self.assertEqual(mr.quote_warnings(page, "Veracode first lien 8.67%", "veracode first lien 8.67%"), [])
+
+    def test_missing_url_counted_as_no_url(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as f:
+            f.write('## Red flags\n\n1. **Fund mark.** Quote: "<name>ACME</name> <balance>1</balance>"\n')
+        try:
+            records = list(mr.verify_reports([f.name], None, fetcher=lambda u: ""))
+        finally:
+            pathlib.Path(f.name).unlink()
+        self.assertEqual(records[0]["result"], "no_url")
+        self.assertEqual((records[-1]["no_url"], records[-1]["no_quote"]), (1, 0))
+
+
 class Fetch(unittest.TestCase):
     def test_gzip_body_round_trips(self):
         body = b"<html>schedule</html>" * 100

@@ -281,6 +281,27 @@ def holding_notes(text, fair_value=None):
 _CONTEXT_RE = re.compile(r"<xbrli:context\b[^>]*\bid=\"([^\"]+)\"[^>]*>(.*?)</xbrli:context>", re.S)
 _TYPED_RE = re.compile(r"<xbrldi:typedMember\b[^>]*dimension=\"us-gaap:InvestmentIdentifierAxis\"[^>]*>(.*?)</xbrldi:typedMember>", re.S)
 _FACT_RE = re.compile(r"<ix:(nonFraction|nonNumeric)\b([^>]*)>(.*?)</ix:\1>", re.S)
+_TR_OPEN_RE = re.compile(r"<tr\b", re.I)
+
+
+def row_text(row):
+    """A table row's cells in order, ' | '-separated, without lone $ and % cells."""
+    cells = [text_of(c) for c in re.findall(r"<t[dh]\b.*?</t[dh]>", row, re.S | re.I)]
+    return " | ".join(c for c in cells if c and c not in ("$", "%"))
+
+
+def enclosing_row(doc, pos):
+    """Text of the visible table row around position `pos`, or None when `pos`
+    is not inside a row (for example a fact in the hidden ix:header)."""
+    if doc.rfind("<ix:header", 0, pos) > doc.rfind("</ix:header>", 0, pos):
+        return None
+    start = -1
+    for m in _TR_OPEN_RE.finditer(doc, max(0, pos - 20000), pos):
+        start = m.start()
+    if start < 0 or doc.find("</tr>", start, pos) >= 0:
+        return None
+    end = doc.find("</tr>", pos)
+    return row_text(doc[start:end]) if end >= 0 else None
 
 
 def _attr(attrs, name):
@@ -353,8 +374,9 @@ def parse_ixbrl_holdings(doc, aliases):
         contexts[cid] = (ident, (instant or end).group(1) if (instant or end) else None, bool(instant))
     if not contexts:
         return []
-    rows, durations, fact_ids = {}, {}, {}
-    for kind, attrs, raw in _FACT_RE.findall(doc):
+    rows, durations, fact_ids, fv_pos = {}, {}, {}, {}
+    for m in _FACT_RE.finditer(doc):
+        attrs, raw = m.group(2), m.group(3)
         cid = _attr(attrs, "contextRef")
         if cid not in contexts:
             continue
@@ -372,6 +394,8 @@ def parse_ixbrl_holdings(doc, aliases):
             value = round(value * 100, 4)  # back to percent as printed
         if is_instant:
             rows.setdefault((ident, date), {})[field] = value
+            if field == "fair_value":
+                fv_pos[(ident, date)] = m.start()
         else:
             durations.setdefault(ident, {})[field] = value
     flagged = _flagged_footnotes(doc, fact_ids)
@@ -388,6 +412,9 @@ def parse_ixbrl_holdings(doc, aliases):
         notes = holding_notes(ident, fields.get("fair_value"))
         if notes:
             record["notes"] = notes
+        quote = enclosing_row(doc, fv_pos[(ident, date)]) if (ident, date) in fv_pos else None
+        if quote:
+            record["quote"] = quote  # the row as the page shows it, for a red flag's quote
         out.append(record)
     return sorted(out, key=lambda r: (r["identifier"], r["as_of"] or ""))
 
@@ -395,29 +422,48 @@ def parse_ixbrl_holdings(doc, aliases):
 _HOLDING_WORDS = re.compile(r"\b(lien|loan|revolv\w*|term|notes?|bonds?|units|shares|membership|preferred|warrants?|sofr|libor)\b", re.I)
 
 
+_AMOUNT_RE = re.compile(r"\d[\d,.]{3,}")
+_DATE_RE = re.compile(r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December)"
+                      r"\s+\d{1,2},\s+\d{4}\b")
+
+
+def table_date(doc, table_start, lookback=30000, heading_chars=600):
+    """The last full date ("September 30, 2026") in the text just before a table,
+    usually its "Schedule of Investments as of ..." heading, as YYYY-MM-DD. Only
+    the last `heading_chars` of text count, so a date further up (in a previous
+    table or a footnote) is not taken for the heading's."""
+    found = _DATE_RE.findall(text_of(doc[max(0, table_start - lookback):table_start])[-heading_chars:])
+    if not found:
+        return None
+    try:
+        return dt.datetime.strptime(re.sub(r"\s+", " ", found[-1]), "%B %d, %Y").date().isoformat()
+    except ValueError:
+        return None
+
+
 def parse_table_rows(doc, aliases):
     """Fallback for filings without row-level XBRL: table rows that name an alias
     and read like a holding (a loan, notes, units, shares...)."""
     wanted = [a.lower() for a in aliases]
-
-    def row_text(row):
-        cells = [text_of(c) for c in re.findall(r"<t[dh]\b.*?</t[dh]>", row, re.S | re.I)]
-        return " | ".join(c for c in cells if c and c not in ("$", "%"))
-
     out = []
-    for table in re.findall(r"<table\b.*?</table>", doc, re.S | re.I):
+    for tm in re.finditer(r"<table\b.*?</table>", doc, re.S | re.I):
         header = None
-        for row in re.findall(r"<tr\b.*?</tr>", table, re.S | re.I):
+        for row in re.findall(r"<tr\b.*?</tr>", tm.group(0), re.S | re.I):
             line = row_text(row)
             if not line:
                 continue
-            if header is None:  # first non-empty row: usually the column headings
+            # column headings: the first row with several cells and no amounts (a
+            # schedule's heading often spans rows, the first holding a single word)
+            if header is None and line.count(" | ") >= 2 and not _AMOUNT_RE.search(line):
                 header = line
             if (any(a in line.lower() for a in wanted) and _HOLDING_WORDS.search(line)
-                    and re.search(r"\d[\d,.]{3,}", line)):  # a holding row carries an amount
+                    and _AMOUNT_RE.search(line)):  # a holding row carries an amount
                 record = {"row": line}
-                if header != line:
+                if header:
                     record["header"] = header
+                date = table_date(doc, tm.start())
+                if date:
+                    record["table_date"] = date
                 notes = holding_notes(line)
                 if notes:
                     record["notes"] = notes
@@ -439,12 +485,15 @@ def parse_nport_holdings(doc, aliases):
 
     period = find_text(root, ".//genInfo/repPdDate")
     fund = find_text(root, ".//genInfo/seriesName") or find_text(root, ".//genInfo/regName")
+    series = find_text(root, ".//genInfo/seriesId")  # stable when a fund is renamed
     out = []
     for sec in root.iter("invstOrSec"):
         name, title = find_text(sec, "name") or "", find_text(sec, "title") or ""
         if not any(a in name.lower() or a in title.lower() for a in wanted):
             continue
         record = {"fund": fund, "as_of": period, "name": name, "title": title}
+        if series:
+            record["series_id"] = series
         for tag in ("balance", "units", "curCd", "valUSD", "pctVal", "assetCat", "fairValLevel", "cusip", "lei"):
             v = find_text(sec, tag)
             if v is not None:
@@ -495,7 +544,7 @@ def choose_filings(hits, per_filer):
             near = [d for d in dates if d not in picked and abs((d - target).days) <= TARGET_WINDOW_DAYS]
             if not near:
                 any_doc = next(iter(docs.values()))
-                notes.append({"type": "no_earlier_filing", "filer": any_doc["filer"],
+                notes.append({"type": "no_earlier_filing", "filer": any_doc["filer"], "cik": any_doc["cik"],
                               "latest_filed": latest.isoformat(), "wanted_around": target.isoformat(),
                               "note": f"no filing within {TARGET_WINDOW_DAYS} days of this date"})
                 continue
@@ -504,12 +553,42 @@ def choose_filings(hits, per_filer):
     return chosen, notes
 
 
+SEARCH_CAP = 1000  # hits read per alias and form group; EDGAR search ranks by relevance, not date
+
+
+def fund_trend_notes(holdings, per_filer):
+    """A trust files one N-PORT per fund, so a trust-level earlier filing can be a
+    different fund's. Report each fund whose latest holding has no earlier point
+    from the same fund."""
+    if per_filer < 2:
+        return []
+    by_fund = {}
+    for h in holdings:
+        by_fund.setdefault((h["cik"], h.get("series_id") or h["fund"]), []).append(h)
+    trust_latest = {}
+    for h in holdings:
+        if h.get("as_of"):
+            trust_latest[h["cik"]] = max(trust_latest.get(h["cik"], ""), h["as_of"])
+    notes = []
+    for (cik, _), rows in by_fund.items():
+        dates = {r["as_of"] for r in rows if r.get("as_of")}
+        latest = max(rows, key=lambda r: r.get("as_of") or "")
+        fund = latest["fund"]
+        # one point only, and a current one (a fund seen only in the earlier filing has since sold out)
+        if len(dates) == 1 and (dt.date.fromisoformat(trust_latest[cik])
+                                - dt.date.fromisoformat(latest["as_of"])).days <= TARGET_WINDOW_DAYS:
+            notes.append({"type": "no_earlier_filing", "filer": latest["filer"], "cik": cik, "fund": fund,
+                          "latest_as_of": latest.get("as_of"),
+                          "note": "no earlier holding from this fund; the trust's other funds' filings are not comparable"})
+    return notes
+
+
 def marks(aliases, user_agent, since, per_filer, max_filers, verbose=False):
     hits = []
     for alias in aliases:
         # separate searches, so a flood of fund filings cannot push lenders past the cap
         for forms in (["10-K", "10-Q"], ["NPORT-P"]):
-            found, summary = edgar_search(alias, forms, since, None, user_agent, 300)
+            found, summary = edgar_search(alias, forms, since, None, user_agent, SEARCH_CAP)
             hits += found
             if summary["truncated"] or verbose:
                 emit(summary)
@@ -523,8 +602,6 @@ def marks(aliases, user_agent, since, per_filer, max_filers, verbose=False):
     ranked = sorted(latest, key=lambda c: (c in lender, latest[c]), reverse=True)
     keep = set(ranked[:max_filers])
     chosen, notes = choose_filings([h for h in hits if h["cik"] in keep], per_filer)
-    for note in notes:
-        emit(note)
     # an N-PORT filing's HTML exhibit repeats holdings its XML already gives in full
     has_xml = {h["accession"] for h in chosen if h["url"].lower().endswith(".xml")}
     chosen = [h for h in chosen if h["url"].lower().endswith(".xml") or h["accession"] not in has_xml
@@ -537,6 +614,7 @@ def marks(aliases, user_agent, since, per_filer, max_filers, verbose=False):
         if h["url"].lower().endswith(".xml") or key not in seen:
             seen.add(key)
             unique.append(h)
+    holders, fund_rows = set(), []
     for filing in unique:
         base = {"filer": filing["filer"], "form": filing["form"], "filed": filing["filed"],
                 "period_ending": filing["period_ending"], "url": filing["url"]}
@@ -559,8 +637,21 @@ def marks(aliases, user_agent, since, per_filer, max_filers, verbose=False):
             continue
         if not rows and verbose:  # usually a filer that names the borrower as a customer
             emit({**base, "type": "no_matching_rows"})
+        if rows:
+            holders.add(filing["cik"])
         for row in rows:
             emit({**base, "type": kind, **row})
+            if kind == "fund_holding":
+                fund_rows.append({**base, **row, "cik": filing["cik"]})
+    # trend gaps, only for filers that hold the borrower (a company naming it as a
+    # customer has no trend to report)
+    trust_level = {n["cik"] for n in notes}
+    for note in notes:
+        if note["cik"] in holders or verbose:
+            emit(note)
+    for note in fund_trend_notes(fund_rows, per_filer):
+        if note["cik"] not in trust_level:  # the trust-level note already says it
+            emit(note)
 
 
 # ---------------------------------------------------------------- GLEIF ----
@@ -618,10 +709,14 @@ def gleif_entity(record):
 def gleif_search(name, limit, fetcher=None):
     q = urllib.parse.urlencode({"filter[fulltext]": name, "page[size]": str(limit)})
     data = gleif_json(f"/lei-records?{q}", fetcher) or {"data": []}
-    for rec in data.get("data", []):
+    records = data.get("data", [])
+    for rec in records:
         ent = gleif_entity(rec)
         yield {"type": "gleif_candidate", **{k: ent[k] for k in (
             "lei", "legal_name", "jurisdiction", "registered_as", "entity_status", "lei_status", "legal_address", "url")}}
+    if not records:  # no LEI is itself a result; say so rather than print nothing
+        yield {"type": "gleif_no_match", "query": name, "url": f"{GLEIF}/lei-records?{q}",
+               "note": "no LEI record matches this name; try another spelling or a parent's name"}
 
 
 def gleif_exception(lei, level, fetcher=None):
@@ -792,11 +887,28 @@ def parse_red_flags(markdown):
     return flags
 
 
+MIN_QUOTE_WORDS = 4
+
+
+def quote_warnings(page, quote, matched):
+    """Why a found quote may still not prove the flag: too short to carry the
+    flagged figures, or matched in several places (the context shows the first)."""
+    warnings = []
+    if len(re.findall(r"\w+", re.sub(r"<[^>]+>", " ", quote))) < MIN_QUOTE_WORDS:
+        warnings.append(f"quote has fewer than {MIN_QUOTE_WORDS} words, so finding it does not show the flagged "
+                        "figures; quote the whole row or sentence")
+    count = page.count(matched) if matched else 0
+    if count > 1:
+        warnings.append(f"quote appears {count} times on the page; the context shows the first, "
+                        "which may be another row or period")
+    return warnings
+
+
 def verify_reports(paths, user_agent, fetcher=None):
     """Check every red flag's quote against its cited pages. Each page is fetched
     once; a flag passes when its quote is found on any URL it cites."""
     fetcher = fetcher or (lambda u: fetch(u, user_agent))
-    pages, totals = {}, {"confirmed": 0, "not_found": 0, "unreachable": 0, "no_quote": 0}
+    pages, totals = {}, {"confirmed": 0, "not_found": 0, "unreachable": 0, "no_quote": 0, "no_url": 0}
 
     def page_text(url):
         if url not in pages:
@@ -814,7 +926,7 @@ def verify_reports(paths, user_agent, fetcher=None):
             record = {"type": "red_flag_check", "report": report, **flag}
             if not flag["quote"] or not flag["urls"]:
                 record["result"] = "no_quote" if not flag["quote"] else "no_url"
-                totals["no_quote"] += 1
+                totals[record["result"]] += 1
                 yield record
                 continue
             errors = []
@@ -826,6 +938,9 @@ def verify_reports(paths, user_agent, fetcher=None):
                 pos, span = find_quote(text, flag["quote"])
                 if pos >= 0:
                     record.update(result="confirmed", matched_url=url, context=text[max(0, pos - 80): pos + span + 80])
+                    warnings = quote_warnings(text, flag["quote"], text[pos:pos + span])
+                    if warnings:
+                        record["warnings"] = warnings
                     totals["confirmed"] += 1
                     break
             else:
