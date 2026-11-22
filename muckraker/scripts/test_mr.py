@@ -6,6 +6,7 @@ import io
 import json
 import os
 import pathlib
+import struct
 import sys
 import tempfile
 import unittest
@@ -573,7 +574,13 @@ class PageImages(unittest.TestCase):
             with open(out[0]["path"], "rb") as f:
                 self.assertTrue(f.read().startswith(b"\x89PNG"))
             self.assertEqual(out[-1]["images"], 2)
+            self.assertEqual((out[0]["width"], out[0]["height"]), (8, 3))
             self.assertEqual(len(list(mr.page_images(pdf, tmp, mr.parse_pages("2")))), 2)
+            halved = next(mr.page_images(pdf, tmp, scale=2))  # the record gives the saved size
+            with open(halved["path"], "rb") as f:
+                saved = struct.unpack(">II", f.read(24)[16:24])
+            self.assertEqual((halved["width"], halved["height"]), saved)
+            self.assertEqual(saved, (4, 2))
         self.assertEqual(mr.parse_pages("1-3, 7"), {1, 2, 3, 7})
 
     def test_oversized_image_is_refused(self):
