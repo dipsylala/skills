@@ -1733,7 +1733,11 @@ def page_images(pdf, out_dir, pages=None, scale=1):
         written += 1
         yield {"type": "uk_accounts_page", **base, "path": path}
     note = "image n is page n in a scanned filing; open the pages you need with your file reader"
-    if not written and pdf_text(pdf):
+    try:
+        has_text = not written and bool(pdf_text(pdf))
+    except ValueError:
+        has_text = False
+    if has_text:
         note = "no page images to save: this PDF was made by software and has a text layer; read it with mr.py pdf-text"
     yield {"type": "uk_accounts_pages", "images": count, "written": written, "out_dir": out_dir, "note": note}
 
@@ -1774,10 +1778,18 @@ def _pdf_hex(raw):
     return bytes.fromhex(re.sub(rb"[^0-9A-Fa-f]", b"", raw[1:-1]).decode().ljust(2, "0"))
 
 
+MAX_PDF_OBJECTS = 200000
+MAX_PDF_DECODED = MAX_BODY  # decompressed bytes across all of a PDF's streams
+
+
 def _pdf_objects(pdf):
-    """Object number -> (dictionary bytes, decoded stream bytes or None)."""
-    objects = {}
+    """Object number -> (dictionary bytes, decoded stream bytes or None). Raises
+    ValueError when the PDF holds too many objects or its streams decompress to
+    more than MAX_PDF_DECODED bytes in all, so a fetched PDF cannot exhaust memory."""
+    objects, decoded = {}, 0
     for m in _PDF_OBJ_RE.finditer(pdf):
+        if len(objects) >= MAX_PDF_OBJECTS:
+            raise ValueError(f"more than {MAX_PDF_OBJECTS} objects in the PDF")
         body = m.group(3)
         split = re.search(rb"\bstream\r?\n", body)
         if not split:
@@ -1788,13 +1800,17 @@ def _pdf_objects(pdf):
         if re.search(rb"/Filter\s*/FlateDecode\b", d):
             z = zlib.decompressobj()
             try:
-                data = z.decompress(data, MAX_PAGE_BITMAP)
+                data = z.decompress(data, min(MAX_PAGE_BITMAP, MAX_PDF_DECODED - decoded + 1))
             except zlib.error:
                 data = None
             if z.unconsumed_tail:
                 raise ValueError("a stream decompresses to more than a page's worth of data")
         elif re.search(rb"/Filter", d):
             data = None
+        if data:
+            decoded += len(data)
+            if decoded > MAX_PDF_DECODED:
+                raise ValueError(f"the PDF's streams decompress to more than {MAX_PDF_DECODED} bytes")
         objects[int(m.group(1))] = (d, data)
     return objects
 
@@ -2262,8 +2278,11 @@ def main(argv=None):
             else:
                 with open(a.pdf, "rb") as f:
                     pdf = f.read()
-            for r in pdf_text_records(pdf, a.pdf):
-                emit(r)
+            try:
+                for r in pdf_text_records(pdf, a.pdf):
+                    emit(r)
+            except ValueError as e:
+                emit({"type": "error", "source": a.pdf, "error": str(e)})
         elif a.cmd == "uk-pages":
             if a.pdf.startswith(("http://", "https://")):
                 pdf = fetch_bytes(a.pdf, None)

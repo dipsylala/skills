@@ -902,6 +902,19 @@ class AikidoRunFixes(unittest.TestCase):
         [r] = mr.pdf_text_records(b"%PDF-1.4\n1 0 obj << /Type /Page >> endobj", "scan.pdf")
         self.assertEqual(r["type"], "pdf_no_text")
 
+    def test_pdf_decompression_total_is_capped(self):
+        # many small streams that each inflate well under the per-stream cap
+        bomb = mr.zlib.compress(b"\0" * 1_000_000)
+        objs = b"".join(b"%d 0 obj\n<< /Filter /FlateDecode >>\nstream\n" % i + bomb + b"\nendstream\nendobj\n"
+                        for i in range(1, 30))
+        saved = mr.MAX_PDF_DECODED
+        mr.MAX_PDF_DECODED = 10_000_000
+        try:
+            with self.assertRaises(ValueError):
+                mr.pdf_text(b"%PDF-1.7\n" + objs)
+        finally:
+            mr.MAX_PDF_DECODED = saved
+
     def test_uk_pages_points_to_pdf_text(self):
         with tempfile.TemporaryDirectory() as d:
             out = list(mr.page_images(tiny_text_pdf(), d))
