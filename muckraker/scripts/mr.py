@@ -966,6 +966,17 @@ def website_quote(item):
     return f"{d.strftime('%d %b %Y')} {item.get('type')}" if d else None
 
 
+def covid_extension(due):
+    """Hint when an accounts deadline fell in the COVID-19 period, when Companies House gave 3-month extensions."""
+    if dt.date(2020, 3, 25) <= due <= dt.date(2021, 4, 5):
+        return ("the deadline fell in the COVID-19 period: most accounts deadlines up to 5 April 2021 got an automatic "
+                "3-month extension (Corporate Insolvency and Governance Act 2020); check")
+    if dt.date(2021, 4, 6) <= due <= dt.date(2022, 4, 5):
+        return ("the deadline fell in the COVID-19 period: Companies House granted 3-month extensions on application, "
+                "accepted automatically for COVID-19 reasons; the register does not show whether one was granted; check")
+    return None
+
+
 def late_filing(item, company_type):
     """A flag record if a filing went in after its statutory deadline, else None."""
     form, filed, action = item.get("type", ""), _date(item.get("date")), _date(item.get("action_date"))
@@ -1093,9 +1104,15 @@ def ch_report(number, ch, max_filings=200, today=None, list_filings=25):
         if late and late["flag"] == "late accounts":
             due = _date(late["due"])
             near = [d for d in ref_date_changes if due - dt.timedelta(days=550) <= d <= due]
+            hints = []
             if near:
-                late["possible_extension"] = (f"an AA01 (change of accounting reference date) was filed on "
-                                              f"{max(near).isoformat()}, which can move the deadline; check it")
+                hints.append(f"an AA01 (change of accounting reference date) was filed on "
+                             f"{max(near).isoformat()}, which can move the deadline; check it")
+            covid = covid_extension(due)
+            if covid:
+                hints.append(covid)
+            if hints:
+                late["possible_extension"] = "; ".join(hints)
         page_url = f"{web}/filing-history?page={i // 25 + 1}"  # the website lists 25 filings a page
         if late:
             counts[late["severity"]] += 1
