@@ -669,6 +669,21 @@ class UkAccounts(unittest.TestCase):
         r = next(r for r in out if r["type"] == "uk_accounts_latest_scanned")
         self.assertEqual((r["scanned_made_up_dates"], r["notes_from"]), (["2025-12-31"], "2018-12-31"))
 
+    def test_reference_date_change_is_not_accounts(self):
+        # AA01 sits in the accounts category but changes the accounting reference date
+        filings = {"items": [
+            {"type": "AA01", "date": "2026-05-12", "transaction_id": "t0", "links": {"document_metadata": "m0"},
+             "description_values": {"made_up_date": "2027-04-30", "new_date": "2027-01-31"}}]}
+
+        class FakeCH:
+            def get(self, path):
+                return filings
+
+            def metadata(self, url):
+                return {"resources": {"application/pdf": {}}, "pages": 1}
+        out = list(mr.uk_accounts("17147597", FakeCH()))
+        self.assertEqual([r["type"] for r in out], ["uk_accounts_none"])
+
 
 class RunSixFixes(unittest.TestCase):
     def test_severity_on_flags(self):
