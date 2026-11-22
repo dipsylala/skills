@@ -77,12 +77,14 @@ def fetch(url, user_agent, retries=2, auth=None, accept=None):
 def fetch_bytes(url, user_agent, retries=2, auth=None, accept=None):
     """Return the raw body of `url`. `auth` is sent as an Authorization header
     on this request only, never on a redirect (Companies House documents redirect
-    to signed storage URLs that reject it)."""
+    to signed storage URLs that reject it). `user_agent` is the user's SEC contact,
+    so it goes to sec.gov only; every other host gets a generic one."""
     global _last_sec_request
-    is_sec = urllib.parse.urlparse(url).hostname.endswith("sec.gov")
+    host = urllib.parse.urlparse(url).hostname or ""
+    is_sec = host == "sec.gov" or host.endswith(".sec.gov")
     if is_sec and not user_agent:
         raise FetchError("sec.gov needs --user-agent or MUCKRAKER_SEC_UA")
-    headers = {"User-Agent": user_agent or "muckraker", "Accept-Encoding": "gzip"}
+    headers = {"User-Agent": user_agent if is_sec else "muckraker", "Accept-Encoding": "gzip"}
     if accept:
         headers["Accept"] = accept
     for attempt in range(retries + 1):

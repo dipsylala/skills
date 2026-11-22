@@ -876,6 +876,31 @@ class Fetch(unittest.TestCase):
         with self.assertRaises(mr.FetchError):
             mr.fetch("https://data.sec.gov/submissions/CIK0000000001.json", None)
 
+    def test_sec_contact_goes_to_sec_gov_only(self):
+        sent = {}
+
+        class Response(io.BytesIO):
+            headers = {}
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        def urlopen(request, timeout):
+            sent[urllib.parse.urlparse(request.full_url).hostname] = request.get_header("User-agent")
+            return Response(b"ok")
+        contact = "Jane Doe jane@example.com"
+        original, mr.urllib.request.urlopen = mr.urllib.request.urlopen, urlopen
+        try:
+            for url in ("https://www.sec.gov/x", "https://efts.sec.gov/x",
+                        "https://find-and-update.company-information.service.gov.uk/x",
+                        "https://tech.eu/x", "https://notsec.gov/x"):
+                mr.fetch(url, contact, retries=0)
+        finally:
+            mr.urllib.request.urlopen = original
+        self.assertEqual(sent["www.sec.gov"], contact)
+        self.assertEqual(sent["efts.sec.gov"], contact)
+        for host in ("find-and-update.company-information.service.gov.uk", "tech.eu", "notsec.gov"):
+            self.assertEqual(sent[host], "muckraker")
+
 
 if __name__ == "__main__":
     unittest.main()
