@@ -50,7 +50,7 @@ Create a run folder for each company outside the user's project: in the session'
 
 Some sources you run yourself with the script instead of sending an agent, as the sections below say: UK Companies House when you can run Python and `COMPANIES_HOUSE_API_KEY` is set (run it before sending the agents, since it decides who writes Financials), Financials too when the UK accounts are the only filed accounts, the French, Irish, and Luxembourg registers (`mr.py fr`, `mr.py ie`, `mr.py lu`) for each French, Irish, or Luxembourg company whenever you can run Python (before the agents, since its records go into their prompts), GLEIF ownership whenever you can run Python, and Debt and valuation marks when you can also give sec.gov the SEC `User-Agent` (run those two while the agents work). Send one agent per other chosen source per company, all at once, in parallel. Each prompt contains:
 
-- the absolute paths of [references/brief.md](references/brief.md) and the agent's source file, with the instruction to read both first;
+- the absolute paths of [references/brief.md](references/brief.md), the agent's source file, and `<run folder>/facts.md`, with the instruction to read all three first;
 - that company's entity record from step 1;
 - the absolute path of its report file: `<run folder>/<source file name>`, for example `<run folder>/press.md`;
 - the SEC `User-Agent` value, for the agents marked "Queries sec.gov" only;
@@ -61,6 +61,17 @@ Some sources you run yourself with the script instead of sending an agent, as th
 - for the National registers and Financials agents, the absolute paths of the `lu-<RCS number>.jsonl` files and their saved extracts when you made them, with the instruction to take Luxembourg's accounts from them and not to download the Centrale des Bilans files again.
 
 Each agent writes its full report to that file and replies with only its status line (the brief gives the format). Wait for the status lines; leave the report files unread until step 4. If an agent has not replied long after the others, stop it, record its source as `FAILED: no reply` under Gaps, and continue.
+
+### The facts file, written by you
+
+Agents in earlier runs spent much of their budget finding the same basics: four to six of them searched the same funding rounds, leadership page, and about page. Before sending the agents (after the scripts that run first), write `<run folder>/facts.md` with what step 1 and those scripts established, so each agent starts from it instead of finding it again. Spend at most three more lookups on it: the company's leadership or about page, one search for its funding rounds, and its careers page. Keep it under about 60 lines, one fact per line, each with its source URL, and no analysis:
+
+- **Entities:** each legal entity in the entity record with its jurisdiction, register number, LEI, and the parent and subsidiaries known so far; former names.
+- **People in company roles:** the CEO, CFO, chair, and founders, with their titles as the company's own page gives them.
+- **Funding:** each round found so far, with date, stage, amount, and lead investors.
+- **Footprint:** website, careers page, headquarters and other offices, and the headcount the company claims.
+
+Mark anything unconfirmed as such. Agents treat these facts as known: they cite them from the file's URLs when they use them, check and extend them only where their own source file asks for that (the Startup agent still owns funding, and the Company profile agent leadership), and record any contradiction they find under Facts with both URLs. Only you write the file.
 
 ### UK Companies House, run by you
 

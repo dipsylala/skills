@@ -18,7 +18,7 @@ Take each database's page URL from a search result, not from the company name: s
 
 ## Checks
 
-1. **Funding claims:** each round the databases and funding news report, with its date, stage, amount and currency, and investors, tagged by source. Note where sources disagree on stage or amount, and whether the amounts are the same round in different currencies.
+1. **Funding claims:** start from the rounds in the facts file, confirm each in the databases, and add the rounds it is missing: each round the databases and funding news report, with its date, stage, amount and currency, and investors, tagged by source. Note where sources disagree on stage or amount, and whether the amounts are the same round in different currencies.
 2. **Grants:** each award, with the funder, project title, amount, start and end dates, and status.
 3. **Crowdfunding:** any campaign, with the platform, target, amount raised, date, and outcome.
 4. **Accelerators:** any programme, with its cohort or date.
