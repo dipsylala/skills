@@ -1742,13 +1742,15 @@ def page_images(pdf, out_dir, pages=None, scale=1):
     yield {"type": "uk_accounts_pages", "images": count, "written": written, "out_dir": out_dir, "note": note}
 
 
+# a PDF number; its parts cannot repartition, so a long digit run cannot make the matcher backtrack
+_PDF_NUM = rb"-?(?:\d{1,32}(?:\.\d{0,32})?|\.\d{1,32})"
 _PDF_TEXT_TOKEN_RE = re.compile(
     rb"\((?:\\.|[^\\)])*\)"            # literal string
     rb"|<[0-9A-Fa-f\s]*>"              # hex string
     rb"|\[|\]"
-    rb"|/([^\s/\[\]()<>]+)\s+-?\d*\.?\d+\s+Tf\b"   # font selection
-    rb"|(-?\d*\.?\d+)\s+(-?\d*\.?\d+)\s+T[dD]\b"
-    rb"|-?\d*\.?\d+"
+    rb"|/([^\s/\[\]()<>]+)\s+" + _PDF_NUM + rb"\s+Tf\b"   # font selection
+    rb"|(" + _PDF_NUM + rb")\s+(" + _PDF_NUM + rb")\s+T[dD]\b"
+    rb"|" + _PDF_NUM +
     rb"|T\*|Tj|TJ|'|\"|ET\b|BT\b", re.S)
 _PDF_ESCAPES = {b"n": b"\n", b"r": b"\r", b"t": b"\t", b"b": b"\b", b"f": b"\f",
                 b"(": b"(", b")": b")", b"\\": b"\\"}
@@ -1913,7 +1915,7 @@ def pdf_content_text(content, fonts=None):
             in_array = True
         elif tok == b"]":
             in_array = False
-        elif in_array and re.fullmatch(rb"-?\d*\.?\d+", tok) and float(tok) < -200:
+        elif in_array and re.fullmatch(_PDF_NUM, tok) and float(tok) < -200:
             out.append(" ")  # a wide kerning gap inside TJ is a space
         elif tok in (b"T*", b"'", b'"', b"ET"):
             out.append("\n")

@@ -915,6 +915,11 @@ class AikidoRunFixes(unittest.TestCase):
         finally:
             mr.MAX_PDF_DECODED = saved
 
+    def test_long_digit_run_tokenizes_quickly(self):
+        start = mr.time.monotonic()
+        mr.pdf_content_text(b"BT " + b"1" * 200000 + b" ET")
+        self.assertLess(mr.time.monotonic() - start, 2)
+
     def test_uk_pages_points_to_pdf_text(self):
         with tempfile.TemporaryDirectory() as d:
             out = list(mr.page_images(tiny_text_pdf(), d))
