@@ -4,6 +4,8 @@ The UK register of companies, at `https://find-and-update.company-information.se
 
 ## Access
 
+When Python is available and `COMPANIES_HOUSE_API_KEY` is set, the coordinator runs this source itself with `mr.py ch` (SKILL.md step 3), which also works out late filings against the statutory deadlines; this file's checks apply either way. The routes below are the manual path.
+
 - With an API key in the `COMPANIES_HOUSE_API_KEY` environment variable: call `https://api.company-information.service.gov.uk` with the key as the HTTP basic auth username and an empty password. Keep the key out of your report and out of any command output you quote.
 - Without a key: fetch the public website pages. For company number `<n>`: `/company/<n>`, `/company/<n>/officers`, `/company/<n>/persons-with-significant-control`, `/company/<n>/filing-history`, `/company/<n>/charges`, `/company/<n>/insolvency`.
 - Find the company number with the website's search (`/search/companies?q=<name>`) or the API's `/search/companies?q=<name>`. When several companies match, use the one whose name, address, and status fit the entity record; list the near misses under Gaps.
