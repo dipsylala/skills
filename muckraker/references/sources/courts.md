@@ -1,6 +1,6 @@
 # Courts and insolvency
 
-Find cases the company is party to and any insolvency notices. Search the legal name, trading name, former names, and the group companies in the entity record. Insolvency registers outside the US and UK belong to the National registers agent, so leave them out. When your prompt gives `fr-<SIREN>.jsonl` files, French insolvency proceedings are its `fr_insolvency` records (none means BODACC has none); do not query BODACC again.
+Find cases the company is party to and any insolvency notices. Search the legal name, trading name, former names, and the group companies in the entity record. Insolvency registers and court records outside the US and UK belong to the National registers agent, so leave them out; where its country row names no court search, the coordinator lists that country's courts under Gaps. When your prompt gives `fr-<SIREN>.jsonl` files, French insolvency proceedings are its `fr_insolvency` records (none means BODACC has none); do not query BODACC again.
 
 ## Where to look
 

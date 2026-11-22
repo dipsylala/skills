@@ -68,7 +68,7 @@ Agents keep key values out of their reports and write `[REDACTED]` for any crede
 
 ### Python (for the fetcher script)
 
-`scripts/mr.py` fetches EDGAR filings and XBRL figures, finds how lenders and funds value a company's loans and shares, reads GLEIF ownership chains, searches and reads UK Companies House records and accounts (scanned ones as page images, electronic forms as text), and the French register with its BODACC notices, and checks red-flag quotes against their sources. It needs Python 3.9 or later and nothing else. Agents use it when it runs and fall back to fetching pages themselves when it doesn't, which is slower and costs far more tokens.
+`scripts/mr.py` fetches EDGAR filings and XBRL figures, finds how lenders and funds value a company's loans and shares, reads GLEIF ownership chains, searches and reads UK Companies House records and accounts (scanned ones as page images, electronic forms as text), the French register with its BODACC notices, and the Irish register's open data, and checks red-flag quotes against their sources. It needs Python 3.9 or later and nothing else. Agents use it when it runs and fall back to fetching pages themselves when it doesn't, which is slower and costs far more tokens.
 
 With Python, the coordinator also replaces up to three agents and most of its own checking with script calls. On Veracode:
 
