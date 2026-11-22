@@ -4,6 +4,7 @@ import datetime as dt
 import gzip
 import io
 import json
+import os
 import pathlib
 import sys
 import unittest
@@ -318,6 +319,27 @@ class MarksOutput(unittest.TestCase):
         no_earlier = [r["filer"] for r in out if r["type"] == "no_earlier_filing"]
         self.assertEqual(no_earlier, ["Holder BDC"])
 
+    def test_skip_seen_end_to_end(self):
+        # a second run appending to the first run's file prints nothing it already has
+        hits = [{"type": "search_hit", "filer": "Holder BDC", "cik": "1", "form": "10-Q", "filed": "2026-08-07",
+                 "period_ending": "2026-06-30", "accession": "1", "url": "https://www.sec.gov/1/doc.htm"}]
+        saved = (mr.edgar_search, mr.fetch, mr.emit)
+        mr.edgar_search = lambda *a: (hits if a[1] == ["10-K", "10-Q"] else [],
+                                      {"type": "search_summary", "truncated": False})
+        mr.fetch = lambda url, ua: fixture("table_rows.htm")
+        try:
+            first, second = [], []
+            mr.emit = first.append
+            mr.marks(["Mitnick"], "ua", "2025-08-01", 2, 20)
+            seen = {mr.record_key(r) for r in first}
+            mr.emit = second.append
+            mr.marks(["Mitnick"], "ua", "2025-08-01", 2, 20, False, seen)
+        finally:
+            mr.edgar_search, mr.fetch, mr.emit = saved
+        self.assertTrue(any(r["type"] == "table_row" for r in first))
+        self.assertFalse(any(r["type"] == "table_row" for r in second))
+        self.assertEqual(next(r for r in second if r["type"] == "already_seen")["skipped"], 1)
+
 
 class GleifNoMatch(unittest.TestCase):
     def test_no_candidate_is_reported(self):
@@ -476,6 +498,40 @@ class UkAccounts(unittest.TestCase):
         self.assertEqual(y23["figures"]["net_assets"], 3359475)  # from the newer filing
         self.assertEqual(y23["figures"]["turnover"], 10578415)  # filled from the older filing
         self.assertEqual(len(y23["sources"]), 2)
+
+
+class RunSixFixes(unittest.TestCase):
+    def test_severity_on_flags(self):
+        officer = mr.late_filing({"type": "TM01", "date": "2026-11-17", "action_date": "2026-10-15"}, "ltd")
+        accounts = mr.late_filing({"type": "AA", "date": "2024-10-31", "description_values": {"made_up_date": "2023-12-31"}}, "ltd")
+        self.assertEqual((officer["severity"], accounts["severity"]), ("minor", "major"))
+
+    def test_auditor_and_type_changes(self):
+        used = [  # newest first, as uk_accounts collects them
+            {"made_up_date": "2025-12-31", "auditor": "Zome (Statutory Auditor)", "accounts_type": "medium", "url": "u3"},
+            {"made_up_date": "2024-12-31", "auditor": "Zome Audit Limited (Statutory Auditor)", "accounts_type": "medium", "url": "u2"},
+            {"made_up_date": "2023-12-31", "auditor": "WD Audit Limited (Statutory Auditor)", "accounts_type": "full", "url": "u1"},
+        ]
+        changes = [(c["change"], c["from"], c["to"]) for c in mr.accounts_changes(used)]
+        self.assertEqual(changes, [("auditor", "WD Audit Limited (Statutory Auditor)", "Zome Audit Limited (Statutory Auditor)"),
+                                   ("accounts type", "full", "medium")])  # Zome -> Zome is the same firm
+
+    def test_group_balances_note(self):
+        doc = "<p>Amounts owed by group undertakings are interest free, unsecured and repayable on demand.</p>"
+        self.assertIn("interest free", mr.extract_notes(doc)["group_balances"][0])
+
+    def test_skip_seen_key(self):
+        r = {"url": "u", "identifier": "Acme loan", "as_of": "2026-09-30", "mark": 21.4}
+        self.assertEqual(mr.record_key(r), mr.record_key(dict(r, mark=99)))  # same holding, same period
+
+    def test_pdf_page_is_no_text_layer(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as f:
+            f.write('## Red flags\n\n1. **Revoked.** https://example.test/scan.pdf CHECKED: opened\n   Quote: "revoked"\n')
+        out = list(mr.verify_reports([f.name], None, fetcher=lambda u: "%PDF-1.4 binary"))
+        os.unlink(f.name)
+        self.assertEqual(out[0]["result"], "no_text_layer")
+        self.assertEqual(out[-1]["no_text_layer"], 1)
 
 
 class Fetch(unittest.TestCase):

@@ -625,7 +625,28 @@ def fund_trend_notes(holdings, per_filer):
     return notes
 
 
-def marks(aliases, user_agent, since, per_filer, max_filers, verbose=False):
+GENERIC_ALIAS_HITS = 2000  # a borrower name matching more filings than this is probably a common word
+
+
+def record_key(r):
+    """Identity of a holding record, to skip ones an earlier run already printed."""
+    return (r.get("url"), r.get("identifier") or r.get("name") or r.get("row"), r.get("title"), r.get("as_of"))
+
+
+def load_seen(path):
+    seen = set()
+    if path and os.path.exists(path):
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    seen.add(record_key(json.loads(line)))
+                except ValueError:
+                    continue
+    return seen
+
+
+def marks(aliases, user_agent, since, per_filer, max_filers, verbose=False, seen=None):
+    seen = seen or set()
     hits = []
     for alias in aliases:
         # separate searches, so a flood of fund filings cannot push lenders past the cap
@@ -634,6 +655,10 @@ def marks(aliases, user_agent, since, per_filer, max_filers, verbose=False):
             hits += found
             if summary["truncated"] or verbose:
                 emit(summary)
+            if summary.get("total", 0) > GENERIC_ALIAS_HITS:
+                emit({"type": "generic_alias", "alias": alias, "forms": forms, "total": summary.get("total"),
+                      "note": "this name matches thousands of filings, so it is probably a common word; "
+                              "results for it are mostly unrelated and the search was cut short"})
     # lenders (10-K/10-Q schedules) before funds (N-PORT), most recent first, so
     # --max-filers keeps the loan books and the freshest holders
     latest, lender = {}, set()
@@ -650,13 +675,13 @@ def marks(aliases, user_agent, since, per_filer, max_filers, verbose=False):
               or not h["form"].startswith("NPORT")]
     # a trust can attach the same schedule (one large HTML file) to every fund's
     # filing; read one copy per filer, file name, and month
-    seen, unique = set(), []
+    seen_docs, unique = set(), []
     for h in chosen:
         key = (h["cik"], h["url"].rsplit("/", 1)[-1].lower(), h["filed"][:7])
-        if h["url"].lower().endswith(".xml") or key not in seen:
-            seen.add(key)
+        if h["url"].lower().endswith(".xml") or key not in seen_docs:
+            seen_docs.add(key)
             unique.append(h)
-    holders, fund_rows = set(), []
+    holders, fund_rows, skipped = set(), [], 0
     for filing in unique:
         base = {"filer": filing["filer"], "form": filing["form"], "filed": filing["filed"],
                 "period_ending": filing["period_ending"], "url": filing["url"]}
@@ -682,7 +707,11 @@ def marks(aliases, user_agent, since, per_filer, max_filers, verbose=False):
         if rows:
             holders.add(filing["cik"])
         for row in rows:
-            emit({**base, "type": kind, **row})
+            record = {**base, "type": kind, **row}
+            if record_key(record) in seen:  # already in the file this run appends to
+                skipped += 1
+                continue
+            emit(record)
             if kind == "fund_holding":
                 fund_rows.append({**base, **row, "cik": filing["cik"]})
     # trend gaps, only for filers that hold the borrower (a company naming it as a
@@ -698,6 +727,9 @@ def marks(aliases, user_agent, since, per_filer, max_filers, verbose=False):
         emit({"type": "no_holdings_found", "aliases": aliases, "searched_since": since,
               "filings_matched": len(hits),
               "note": "no lender schedule or fund holding names these borrowers; nothing failed"})
+    if skipped:
+        emit({"type": "already_seen", "skipped": skipped,
+              "note": "records already in the --skip-seen file were left out, so appending does not double-count"})
 
 
 # ---------------------------------------------------------------- GLEIF ----
@@ -912,7 +944,7 @@ def late_filing(item, company_type):
         months = 6 if company_type == "plc" else 9
         due = _add_months(_date(values["made_up_date"]), months)
         if filed > due:
-            return {"flag": "late accounts", "form": form, "filed": filed.isoformat(),
+            return {"flag": "late accounts", "severity": "major", "form": form, "filed": filed.isoformat(),
                     "made_up_date": values["made_up_date"], "due": due.isoformat(), "days_late": (filed - due).days,
                     "rule": f"accounts due {months} months after the period end (first accounts and extensions differ; check)"}
         return None
@@ -920,7 +952,7 @@ def late_filing(item, company_type):
         return None
     days = (filed - action).days
     if days > limit:
-        return {"flag": "late filing", "form": form, "filed": filed.isoformat(), "event_date": action.isoformat(),
+        return {"flag": "late filing", "severity": "minor", "form": form, "filed": filed.isoformat(), "event_date": action.isoformat(),
                 "days_after_event": days, "days_late": days - limit, "rule": rule,
                 "description": describe_filing(item)}
     return None
@@ -947,9 +979,11 @@ def ch_report(number, ch, max_filings=200, today=None, list_filings=25):
            "confirmation_next_due": cs.get("next_due"), "confirmation_overdue": cs.get("overdue"),
            "has_charges": p.get("has_charges"), "has_insolvency_history": p.get("has_insolvency_history"),
            "registered_office_in_dispute": p.get("registered_office_is_in_dispute"), "url": web}
+    overdue = 0
     for field, what in (("accounts_overdue", "accounts overdue"), ("confirmation_overdue", "confirmation statement overdue")):
         if (acc if field == "accounts_overdue" else cs).get("overdue"):
-            yield {"type": "ch_flag", "flag": what, "url": web}
+            overdue += 1
+            yield {"type": "ch_flag", "flag": what, "severity": "major", "url": web}
 
     officers = (ch.get(f"/company/{number}/officers?items_per_page=100") or {}).get("items", [])
     recent = 0
@@ -1006,6 +1040,7 @@ def ch_report(number, ch, max_filings=200, today=None, list_filings=25):
         if not items or start >= page.get("total_count", 0):
             break
     filings = filings[:max_filings]
+    counts = {"major": 0, "minor": 0, "minor_last_24_months": 0}
     appointed = {o.get("appointed_on") for o in officers if o.get("appointed_on")}
     ref_date_changes = [_date(f.get("date")) for f in filings if f.get("type") == "AA01" and f.get("date")]
     for i, f in enumerate(filings):
@@ -1025,12 +1060,20 @@ def ch_report(number, ch, max_filings=200, today=None, list_filings=25):
                                               f"{max(near).isoformat()}, which can move the deadline; check it")
         page_url = f"{web}/filing-history?page={i // 25 + 1}"  # the website lists 25 filings a page
         if late:
+            counts[late["severity"]] += 1
+            if late["severity"] == "minor" and (today - _date(late["filed"])).days <= 730:
+                counts["minor_last_24_months"] += 1
             yield {"type": "ch_flag", **late, "quote": quote, "url": page_url}
         if GAZETTE_FORMS_RE.match(f.get("type") or ""):
-            yield {"type": "ch_flag", "flag": "gazette notice", "form": f.get("type"), "filed": f.get("date"),
+            counts["major"] += 1
+            yield {"type": "ch_flag", "flag": "gazette notice", "severity": "major", "form": f.get("type"), "filed": f.get("date"),
                    "description": describe_filing(f), "quote": quote, "url": page_url}
     yield {"type": "ch_summary", "company_number": number, "officers": len(officers), "pscs": len(pscs),
-           "psc_statements": len(statements), "filings_read": min(len(filings), max_filings)}
+           "psc_statements": len(statements), "filings_read": min(len(filings), max_filings),
+           "major_flags": counts["major"] + overdue, "minor_late_filings": counts["minor"],
+           "minor_late_filings_last_24_months": counts["minor_last_24_months"],
+           "note": ("minor flags are officer, PSC and confirmation-statement filings made late: register "
+                    "housekeeping, worth reporting as a red flag only as a pattern (several in two years)")}
 
 
 # ---------------------------------------------------------- UK accounts ----
@@ -1135,6 +1178,8 @@ NOTE_TOPICS = {  # topic: phrase patterns, most specific first; earlier tiers fi
                       r"going concern"],
     "events_after_year_end": [r"post balance sheet|subsequent event|events? after the (?:reporting|balance sheet|end of)"],
     "debt_and_covenants": [r"covenant|borrowing facilit|loan facilit|secured on|security over"],
+    "group_balances": [r"amounts? owed (?:by|to) (?:group|parent|related)|due (?:from|to) (?:group|parent|related) (?:undertaking|compan)",
+                       r"related part(?:y|ies)"],
 }
 
 
@@ -1166,7 +1211,7 @@ def uk_accounts(number, ch, sets=3):
     web = f"{CH_WEB}/company/{number}"
     page = ch.get(f"/company/{number}/filing-history?category=accounts&items_per_page=50") or {}
     filings = [f for f in page.get("items") or [] if (f.get("type") or "").startswith("AA")]
-    combined, used = {}, 0
+    combined, used, used_filings = {}, 0, []
     for f in filings:
         if used >= sets:
             break
@@ -1191,11 +1236,19 @@ def uk_accounts(number, ch, sets=3):
             continue
         figures, texts = parse_uk_ixbrl(doc)
         used += 1
+        kind = re.search(r"accounts type (\w+)", base["description"] or "")
+        used_filings.append({"made_up_date": base["made_up_date"], "auditor": texts.get("auditor"),
+                             "accounts_type": kind.group(1) if kind else None, "url": doc_url})
         yield {"type": "uk_accounts_filing", **base, **texts, "periods": sorted(figures, reverse=True), "url": doc_url}
         if used == 1:  # the latest accounts' notes
             notes = extract_notes(doc)
             if notes:
                 yield {"type": "uk_accounts_notes", **base, "notes": notes, "url": doc_url}
+            latest = figures.get(max(figures)) if figures else {}
+            if latest is not None and "bank_borrowings" not in latest:
+                yield {"type": "uk_accounts_borrowings", **base, "bank_borrowings_tagged": False, "url": doc_url,
+                       "note": "the latest accounts tag no bank borrowings or overdrafts; confirm in the "
+                               "creditors note before reporting that the company has no borrowings"}
         for end, row in figures.items():
             # newer accounts restate earlier years, so a figure already taken from newer
             # accounts stays; older accounts only fill figures the newer ones lack
@@ -1234,6 +1287,28 @@ def uk_accounts(number, ch, sets=3):
             derived["employees_change_pct"] = round(100 * (b["employees"] / a["employees"] - 1), 1)
         if derived:
             yield {"type": "uk_accounts_derived", "period_end": cur, "versus": prev, **derived}
+    for change in accounts_changes(used_filings):
+        yield change
+
+
+def _auditor_key(name):
+    """An auditor's name without suffixes, so "Zome Audit Limited (Statutory Auditor)"
+    and "Zome (Statutory Auditor)" count as the same firm."""
+    s = re.sub(r"\(.*?\)|statutory auditors?|chartered accountants|registered auditors?", " ", (name or "").lower())
+    s = re.sub(r"\b(audit|limited|ltd|llp|plc|uk|and|&)\b|[^a-z ]", " ", s)
+    return " ".join(s.split())
+
+
+def accounts_changes(used_filings):
+    """Auditor and accounts-type changes between consecutive accounts, newest first in the input."""
+    ordered = [f for f in reversed(used_filings) if f["made_up_date"]]
+    for prev, cur in zip(ordered, ordered[1:]):
+        if prev["auditor"] and cur["auditor"] and _auditor_key(prev["auditor"]) != _auditor_key(cur["auditor"]):
+            yield {"type": "uk_accounts_change", "change": "auditor", "from": prev["auditor"], "to": cur["auditor"],
+                   "between": [prev["made_up_date"], cur["made_up_date"]], "url": cur["url"]}
+        if prev["accounts_type"] and cur["accounts_type"] and prev["accounts_type"] != cur["accounts_type"]:
+            yield {"type": "uk_accounts_change", "change": "accounts type", "from": prev["accounts_type"],
+                   "to": cur["accounts_type"], "between": [prev["made_up_date"], cur["made_up_date"]], "url": cur["url"]}
 
 
 # --------------------------------------------------------------- quote -----
@@ -1355,12 +1430,17 @@ def verify_reports(paths, user_agent, fetcher=None):
     """Check every red flag's quote against its cited pages. Each page is fetched
     once; a flag passes when its quote is found on any URL it cites."""
     fetcher = fetcher or (lambda u: fetch(u, user_agent))
-    pages, totals = {}, {"confirmed": 0, "not_found": 0, "unreachable": 0, "no_quote": 0, "no_url": 0}
+    pages = {}
+    totals = {"confirmed": 0, "not_found": 0, "unreachable": 0, "no_text_layer": 0, "no_quote": 0, "no_url": 0}
 
     def page_text(url):
         if url not in pages:
             try:
-                pages[url] = ("ok", text_of(fetcher(url)).lower())
+                body = fetcher(url)
+                if body.lstrip()[:5] == "%PDF-":  # a PDF has no searchable text here (often a scan)
+                    pages[url] = ("pdf", None)
+                else:
+                    pages[url] = ("ok", text_of(body).lower())
             except FetchError as e:
                 pages[url] = ("error", str(e))
         return pages[url]
@@ -1376,22 +1456,33 @@ def verify_reports(paths, user_agent, fetcher=None):
                 totals[record["result"]] += 1
                 yield record
                 continue
-            errors = []
+            errors, pdfs = [], []
             for url in flag["urls"]:
                 status, text = page_text(url)
                 if status == "error":
                     errors.append(f"{url}: {text}")
                     continue
+                if status == "pdf":
+                    pdfs.append(url)
+                    continue
                 pos, span = find_quote(text, flag["quote"])
                 if pos >= 0:
-                    record.update(result="confirmed", matched_url=url, context=text[max(0, pos - 80): pos + span + 80])
+                    # an XML quote's match starts at its first element; context before it
+                    # belongs to the previous holding, so start there
+                    lead = 0 if re.search(r"<[A-Za-z/][^>]*>", flag["quote"]) else 80
+                    record.update(result="confirmed", matched_url=url,
+                                  context=text[max(0, pos - lead): pos + span + 80])
                     warnings = quote_warnings(text, flag["quote"], text[pos:pos + span])
                     if warnings:
                         record["warnings"] = warnings
                     totals["confirmed"] += 1
                     break
             else:
-                if errors and len(errors) == len(flag["urls"]):
+                if pdfs and len(pdfs) + len(errors) == len(flag["urls"]):
+                    record.update(result="no_text_layer", pdfs=pdfs,
+                                  note="the cited page is a PDF with no text to search (often a scan); read it yourself")
+                    totals["no_text_layer"] += 1
+                elif errors and len(errors) == len(flag["urls"]):
                     record.update(result="unreachable", errors=errors,
                                   note="no cited page could be fetched; check it in a browser")
                     totals["unreachable"] += 1
@@ -1453,6 +1544,8 @@ def main(argv=None):
                    help="earliest filing date (default: about 15 months ago)")
     s.add_argument("--per-filer", type=int, default=2, help="filings per holder: latest plus earlier ones")
     s.add_argument("--max-filers", type=int, default=20)
+    s.add_argument("--skip-seen", metavar="FILE",
+                   help="leave out records already in this JSON-lines file (an earlier marks run you append to)")
     s.add_argument("--verbose", action="store_true",
                    help="also print search summaries and filings with no matching rows")
 
@@ -1505,7 +1598,7 @@ def main(argv=None):
             for r in hits:
                 emit(r)
         elif a.cmd == "marks":
-            marks(a.aliases, a.user_agent, a.since, a.per_filer, a.max_filers, a.verbose)
+            marks(a.aliases, a.user_agent, a.since, a.per_filer, a.max_filers, a.verbose, load_seen(a.skip_seen))
         elif a.cmd == "gleif":
             target = a.name_or_lei.strip().upper()
             results = gleif_report(target, a.max_children) if LEI_RE.match(target) else gleif_search(a.name_or_lei, a.limit)
