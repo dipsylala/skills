@@ -68,7 +68,7 @@ Agents keep key values out of their reports and write `[REDACTED]` for any crede
 
 ### Python (for the fetcher script)
 
-`scripts/mr.py` fetches EDGAR filings and XBRL figures, finds how lenders and funds value a company's loans and shares, reads GLEIF ownership chains and UK Companies House records and accounts (scanned ones as page images, electronic forms as text), and checks red-flag quotes against their sources. It needs Python 3.9 or later and nothing else. Agents use it when it runs and fall back to fetching pages themselves when it doesn't, which is slower and costs far more tokens.
+`scripts/mr.py` fetches EDGAR filings and XBRL figures, finds how lenders and funds value a company's loans and shares, reads GLEIF ownership chains, UK Companies House records and accounts (scanned ones as page images, electronic forms as text), and the French register with its BODACC notices, and checks red-flag quotes against their sources. It needs Python 3.9 or later and nothing else. Agents use it when it runs and fall back to fetching pages themselves when it doesn't, which is slower and costs far more tokens.
 
 With Python, the coordinator also replaces up to three agents and most of its own checking with script calls. On Veracode:
 
@@ -76,6 +76,7 @@ With Python, the coordinator also replaces up to three agents and most of its ow
 
 - **Lender and fund marks:** `marks` took about 30 seconds and returned about 10k tokens of output, against 144k tokens for an agent using the script and about 167k for one working by hand.
 - **GLEIF ownership:** `gleif` takes a few seconds, against about 100k tokens for an agent.
+- **French register:** `fr` read GitGuardian SAS's register record and all 16 of its BODACC notices in about a second, flagging five financial years with no accounts-filing notice. On the run before it existed, three agents re-queried BODACC separately and hedged on that gap.
 - **Red-flag checks:** `verify-report` checked all 16 red flags in a run's 13 reports in about 6 seconds, against about 30 tool calls when the coordinator opened each page itself. Pages that refuse scripts, such as S&P's, still need a browser.
 
 Run its offline tests with:

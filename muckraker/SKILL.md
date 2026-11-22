@@ -48,14 +48,15 @@ Done when the source list is fixed and the SEC contact has been given or decline
 
 Create a run folder for each company outside the user's project: in the session's scratchpad or temp directory if the runtime names one, otherwise `<system temp>/muckraker/<company-slug>-<YYYYMMDD-HHMM>/`. Record its absolute path in your next message so it survives context compaction.
 
-Some sources you run yourself with the script instead of sending an agent, as the sections below say: UK Companies House when you can run Python and `COMPANIES_HOUSE_API_KEY` is set (run it before sending the agents, since it decides who writes Financials), Financials too when the UK accounts are the only filed accounts, GLEIF ownership whenever you can run Python, and Debt and valuation marks when you can also give sec.gov the SEC `User-Agent` (run those two while the agents work). Send one agent per other chosen source per company, all at once, in parallel. Each prompt contains:
+Some sources you run yourself with the script instead of sending an agent, as the sections below say: UK Companies House when you can run Python and `COMPANIES_HOUSE_API_KEY` is set (run it before sending the agents, since it decides who writes Financials), Financials too when the UK accounts are the only filed accounts, the French register (`mr.py fr`) for each French company whenever you can run Python (before the agents, since its records go into their prompts), GLEIF ownership whenever you can run Python, and Debt and valuation marks when you can also give sec.gov the SEC `User-Agent` (run those two while the agents work). Send one agent per other chosen source per company, all at once, in parallel. Each prompt contains:
 
 - the absolute paths of [references/brief.md](references/brief.md) and the agent's source file, with the instruction to read both first;
 - that company's entity record from step 1;
 - the absolute path of its report file: `<run folder>/<source file name>`, for example `<run folder>/press.md`;
 - the SEC `User-Agent` value, for the agents marked "Queries sec.gov" only;
 - the absolute path of [scripts/mr.py](scripts/mr.py), the skill's fetcher for EDGAR filings, XBRL figures, lender and fund marks, and quote checks;
-- for the Financials agent, the absolute path of `uk-accounts.jsonl` when you made one.
+- for the Financials agent, the absolute path of `uk-accounts.jsonl` when you made one;
+- for the National registers, Financials, and Courts agents, the absolute paths of the `fr-<SIREN>.jsonl` files when you made them, with the instruction to take France's register facts from them and not to query the French register APIs or BODACC again.
 
 Each agent writes its full report to that file and replies with only its status line (the brief gives the format). Wait for the status lines; leave the report files unread until step 4. If an agent has not replied long after the others, stop it, record its source as `FAILED: no reply` under Gaps, and continue.
 
@@ -73,6 +74,16 @@ If `COMPANIES_HOUSE_API_KEY` is not set or the script fails, send the UK Compani
 ### Financials, run by you when only UK accounts are filed
 
 When the entity has no tagged SEC financials (no CIK, or `mr.py edgar-facts <CIK>` returns `no_xbrl_financials`) and the entity record names no company outside the UK and US that files accounts, `uk-accounts` has covered every filed set of accounts. If it also printed no `uk_accounts_latest_scanned` record (the newest accounts have a text layer), write `<run folder>/financials.md` yourself from the `uk-accounts` records instead of sending the Financials agent, working through the checks in [financials.md](references/sources/financials.md): the multi-year table, the derived figures, the notes from `uk_accounts_notes`, and any `sign_mismatch` or `uk_accounts_scanned` records. Say under Gaps that group accounts are not published, and leave group figures from ratings or press to step 4. In every other case, including newest accounts that are scans, send the Financials agent with the path of `uk-accounts.jsonl`.
+
+### French register, run by you
+
+For each French company in the entity record (the entity, a French parent or a French subsidiary; the SIREN is the 9-digit number in its LEI record or `mr.py fr "<name>"` lists candidates), before sending the agents:
+
+1. Run `python <skill folder>/scripts/mr.py fr <SIREN> > "<run folder>/fr-<SIREN>.jsonl"`. It returns the register profile (`fr_company`), officers and the statutory auditor (`fr_officer`), the register's published figures or a `fr_finances` record with `published: false` (accounts filed confidentially under art. L. 232-25, or not filed), and the company's BODACC notices as typed records: `fr_accounts_filed` (financial year end, confidential or not), `fr_capital` (each increase or reduction with the capital before and after), `fr_officer_change` (the notice's own wording), `fr_insolvency`, and `fr_struck_off`. A `fr_flag` record is a financial year whose accounts should have had a BODACC filing notice by now and have none.
+2. Add the officers and any departed officer named in `fr_officer_change` to the entity record, so the Sanctions and offshore agent screens them.
+3. Give the file's path to the National registers, Financials, and Courts agents (step 3's prompt list). The `fr_capital` records are the capital-increase timeline for step 4's funding cross-check.
+
+BODACC publishes about two million accounts-filing notices a year, confidential filings included, so a `fr_flag` means the accounts were probably not filed; INPI would confirm it but needs an account. A change of year end can also produce one, so check the next filed year end before calling it unfiled. If the script fails, the National registers agent queries the register as its France row says.
 
 ### GLEIF ownership, run by you
 

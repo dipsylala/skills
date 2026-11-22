@@ -1,6 +1,6 @@
 # Courts and insolvency
 
-Find cases the company is party to and any insolvency notices. Search the legal name, trading name, former names, and the group companies in the entity record.
+Find cases the company is party to and any insolvency notices. Search the legal name, trading name, former names, and the group companies in the entity record. When your prompt gives `fr-<SIREN>.jsonl` files, French insolvency proceedings are its `fr_insolvency` records (none means BODACC has none); do not query BODACC again.
 
 ## Where to look
 
