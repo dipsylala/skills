@@ -1416,7 +1416,8 @@ def uk_accounts(number, ch, sets=3):
                 yield {"type": "uk_accounts_scanned", **base, "pages": meta.get("pages"),
                        "url": f"{web}/filing-history/{f.get('transaction_id')}/document?format=pdf",
                        "note": "filed as a PDF only, usually a scan with no text layer. Read it: run mr.py uk-pages "
-                               "<url> <folder> and open the page images it writes, starting with the contents page. "
+                               "<url> <folder>, which writes text.txt when the PDF has a text layer and otherwise "
+                               "page images to open, starting with the contents page. "
                                "Its figures may also appear as prior-year comparatives in the next accounts"}
                 if not used and base["made_up_date"] not in scanned_newer:  # an amendment repeats the date
                     scanned_newer.append(base["made_up_date"])
@@ -1663,14 +1664,455 @@ def pdf_images(pdf):
         d = m.group(1)
         if not re.search(rb"/Subtype\s*/Image\b", d):
             continue
-        length, size = re.search(rb"/Length\s+(\d+)(?:\s+(\d+)\s+R)?", d), None
-        if length and length.group(2):  # an indirect length: "8 0 R" points at "8 0 obj 12345 endobj"
-            target = re.search(rb"\b%s\s+%s\s+obj\s*(\d+)\s*endobj" % (length.group(1), length.group(2)), pdf)
-            size = int(target.group(1)) if target else None
-        elif length:
-            size = int(length.group(1))
+        size = _stream_length(d, pdf)
         start = m.end()
         yield d, pdf[start:start + size] if size else pdf[start:pdf.find(b"endstream", start)].rstrip(b"\r\n")
+
+
+# --------------------------------------------------------- Belgium -----
+
+NBB_API = "https://consult.cbso.nbb.be/api"
+# Schedule codes in the National Bank of Belgium's figures CSV, signed as the accounts print them
+BE_CODES = {
+    "70": "turnover", "9900": "gross_margin", "62": "staff_costs", "630": "depreciation",
+    "9901": "operating_profit", "9903": "profit_before_tax", "9904": "profit_loss",
+    "21": "intangible_assets", "28": "financial_fixed_assets", "50/53": "current_investments",
+    "54/58": "cash", "20/58": "total_assets", "110": "contributions", "14": "retained_profit_loss",
+    "10/15": "net_assets", "170/4": "financial_debt_over_1y", "43": "financial_debt_within_1y",
+    "17/49": "total_liabilities", "9087": "average_fte",
+}
+
+
+def be_number(number):
+    """A Belgian enterprise number as the NBB writes it: 10 digits ("BE 0792.914.919" -> "0792914919")."""
+    digits = re.sub(r"\D", "", number)
+    return digits.zfill(10) if len(digits) == 9 else digits
+
+
+def _nbb_rows(text):
+    """{label or code: value} from the NBB's two-column CSV ("10/15","59927450.56")."""
+    return {m.group(1): m.group(2) for m in re.finditer(r'^"([^"]*)","([^"]*)"', text, re.M)}
+
+
+def be_accounts(number, fetcher, sets=3):
+    """Multi-year figures from a Belgian company's accounts filed with the National Bank
+    of Belgium's Central Balance Sheet Office. `fetcher(url)` returns the page text."""
+    number = be_number(number)
+    list_url = f"{NBB_API}/rs-consult/published-deposits?page=0&size=20&enterpriseNumber={number}" \
+               "&sort=periodEndDate,desc"  # the API returns HTTP 500 without sort
+    try:
+        deposits = (json.loads(fetcher(list_url)) or {}).get("content") or []
+    except (FetchError, ValueError) as e:
+        yield {"type": "error", "url": list_url, "error": str(e)}
+        return
+    if not deposits:
+        yield {"type": "be_accounts_none", "enterprise_number": number, "url": list_url,
+               "note": "the National Bank of Belgium lists no filed accounts for this enterprise number"}
+        return
+    # one filing per period, the latest deposited (a correction replaces the initial filing)
+    deposits.sort(key=lambda d: (d.get("periodEndDate") or "", d.get("depositDate") or ""), reverse=True)
+    years, latest = {}, True
+    for d in deposits:
+        end = (d.get("periodEndDate") or "")[:10]
+        if end in years or not d.get("id"):
+            continue
+        if len(years) >= sets:
+            break
+        csv_url = f"{NBB_API}/external/broker/public/deposits/consult/csv/{d['id']}"
+        pdf_url = f"{NBB_API}/external/broker/public/deposits/pdf/{d['id']}"
+        base = {"period_start": (d.get("periodStartDate") or "")[:10] or None, "period_end": end,
+                "filed": (d.get("depositDate") or "")[:10] or None, "reference": d.get("reference"),
+                "model": d.get("modelId"), "model_name": d.get("modelName"), "deposit_type": d.get("type"),
+                "language": d.get("language"), "approved": (d.get("generalAssemblyApprovalDate") or "")[:10] or None}
+        filing = {"type": "be_accounts_filing", **base, "pdf_url": pdf_url, "csv_url": csv_url}
+        if latest:
+            filing["note"] = ("the figures below come from the CSV; for the auditor, the board's going-concern "
+                              "justification, and the participations (subsidiaries) list, read the PDF: "
+                              "mr.py uk-pages <pdf_url> <folder> writes its text")
+        yield filing
+        try:
+            rows = _nbb_rows(fetcher(csv_url))
+        except FetchError as e:
+            yield {"type": "error", **base, "url": csv_url, "error": str(e)}
+            continue
+        figures = {}
+        for code, name in BE_CODES.items():
+            try:
+                figures[name] = float(rows[code])
+            except (KeyError, ValueError):
+                pass
+        years[end] = figures
+        record = {"type": "be_accounts_year", "period_end": end, "figures": figures, "source": csv_url}
+        if "turnover" not in figures:
+            record["not_disclosed"] = ["turnover"]
+            record["note"] = "the abridged model need not disclose turnover; gross_margin is its top line"
+        yield record
+        if latest:
+            if figures.get("net_assets", 0) < 0:
+                yield {"type": "be_accounts_flag", "flag": "negative_equity", "period_end": end,
+                       "net_assets": figures["net_assets"], "url": pdf_url,
+                       "rule": "negative equity in the latest filed accounts (code 10/15)"}
+            if rows.get("Liquidation flag", "").upper() == "TRUE":
+                yield {"type": "be_accounts_flag", "flag": "liquidation", "period_end": end, "url": pdf_url,
+                       "rule": "the filing is marked as made by a company in liquidation"}
+        latest = False
+    ends = sorted(years)
+    for prev, cur in zip(ends, ends[1:]):
+        a, b = years[prev], years[cur]
+        derived = {}
+        if a.get("turnover") and "turnover" in b:
+            derived["turnover_growth_pct"] = round(100 * (b["turnover"] / a["turnover"] - 1), 1)
+        for name in ("cash", "net_assets", "contributions"):
+            if name in a and name in b:
+                derived[f"{name}_change"] = round(b[name] - a[name], 2)
+        cash_a, cash_b = (y.get("cash", 0) + y.get("current_investments", 0) for y in (a, b))
+        if any(k in y for y in (a, b) for k in ("cash", "current_investments")):
+            derived["cash_and_investments_change"] = round(cash_b - cash_a, 2)
+        if a.get("average_fte") and "average_fte" in b:
+            derived["average_fte_change_pct"] = round(100 * (b["average_fte"] / a["average_fte"] - 1), 1)
+        if derived:
+            yield {"type": "be_accounts_derived", "period_end": cur, "versus": prev, **derived}
+
+
+# ------------------------------------------------- PDF text layer -----
+# Enough of PDF to read text that a program wrote (Companies House's electronic forms,
+# generated accounts): objects and object streams, the page tree, fonts' ToUnicode maps,
+# and the text operators. Scans have no text and go to page_images instead.
+
+_PDF_DELIMS = b"()<>[]{}/%"
+_PDF_NUMBER = re.compile(rb"[+-]?(?:\d+(?:\.\d*)?|\.\d+)$")
+
+
+def _pdf_tokens(data):
+    """(kind, value) tokens: num, name, str (bytes), kw (operators and keywords),
+    and the delimiters << >> [ ]. Inline image data (BI ... ID <bytes> EI) is skipped."""
+    i, n = 0, len(data)
+    while i < n:
+        c = data[i:i + 1]
+        if c.isspace() or c == b"\x00":
+            i += 1
+        elif c == b"%":
+            while i < n and data[i:i + 1] not in (b"\r", b"\n"):
+                i += 1
+        elif c == b"(":
+            depth, i, out = 1, i + 1, bytearray()
+            while i < n and depth:
+                ch = data[i:i + 1]
+                if ch == b"\\" and i + 1 < n:
+                    nxt = data[i + 1:i + 2]
+                    if nxt in b"01234567":
+                        octal = re.match(rb"[0-7]{1,3}", data[i + 1:i + 4]).group(0)
+                        out.append(int(octal, 8) & 255)
+                        i += 1 + len(octal)
+                        continue
+                    out += {b"n": b"\n", b"r": b"\r", b"t": b"\t", b"b": b"\b", b"f": b"\f"}.get(nxt, b"" if nxt in b"\r\n" else nxt)
+                    i += 2
+                    continue
+                depth += (ch == b"(") - (ch == b")")
+                if depth:
+                    out += ch
+                i += 1
+            yield "str", bytes(out)
+        elif data[i:i + 2] in (b"<<", b">>"):
+            yield data[i:i + 2].decode(), None
+            i += 2
+        elif c == b"<":
+            end = data.find(b">", i)
+            end = n if end < 0 else end
+            digits = re.sub(rb"[^0-9A-Fa-f]", b"", data[i + 1:end])
+            yield "str", bytes.fromhex((digits + b"0" * (len(digits) % 2)).decode())
+            i = end + 1
+        elif c in (b"[", b"]"):
+            yield c.decode(), None
+            i += 1
+        else:
+            j = i + 1
+            while j < n and not data[j:j + 1].isspace() and data[j:j + 1] not in _PDF_DELIMS:
+                j += 1
+            word = data[i:j] if c != b"/" else data[i + 1:j]
+            if c == b"/":
+                yield "name", word.decode("latin-1")
+            elif len(word) <= 64 and _PDF_NUMBER.match(word):  # longer is never a number
+                yield "num", float(word)
+            else:
+                yield "kw", word.decode("latin-1")
+                if word == b"ID":  # inline image data runs to the next whitespace-delimited EI
+                    m = re.compile(rb"\sEI(?=\s|$)").search(data, j + 1)
+                    j = m.end() if m else n
+            i = max(j, i + 1)
+
+
+def _pdf_value(tokens, first):
+    """One object from a token iterator, `first` being its first token: dicts and
+    arrays nest, and "n g R" becomes ("ref", n)."""
+    kind, value = first
+    if kind not in ("<<", "["):
+        return (kind, value)
+    close, items = (">>" if kind == "<<" else "]"), []
+    for tok in tokens:
+        if tok[0] == close:
+            break
+        if tok == ("kw", "R") and len(items) >= 2 and all(
+                isinstance(v, tuple) and v[0] == "num" for v in items[-2:]):
+            items[-2:] = [("ref", int(items[-2][1]))]
+            continue
+        items.append(_pdf_value(tokens, tok))
+    if kind == "[":
+        return items
+    return {k[1]: v for k, v in zip(items[::2], items[1::2]) if isinstance(k, tuple) and k[0] == "name"}
+
+
+def _pdf_parse(data):
+    """The first object in some bytes (an object's body), or None."""
+    tokens = _pdf_tokens(data)
+    first = next(tokens, None)
+    return _pdf_value(tokens, first) if first else None
+
+
+def _stream_length(d, pdf):
+    """A stream's /Length from its dictionary bytes, following an indirect length."""
+    length = re.search(rb"/Length\s+(\d+)(?:\s+(\d+)\s+R)?", d)
+    if length and length.group(2):  # an indirect length: "8 0 R" points at "8 0 obj 12345 endobj"
+        target = re.search(rb"\b%s\s+%s\s+obj\s*(\d+)\s*endobj" % (length.group(1), length.group(2)), pdf)
+        return int(target.group(1)) if target else None
+    return int(length.group(1)) if length else None
+
+
+def _inflate(d, data):
+    """A stream's decoded bytes, or None for a filter other than FlateDecode."""
+    filters = re.findall(rb"/(\w+)", (re.search(rb"/Filter\s*(\[[^\]]*\]|/\w+)", d) or [b"", b""])[1])
+    if not filters:
+        return data
+    if filters != [b"FlateDecode"]:
+        return None
+    z = zlib.decompressobj()
+    try:
+        out = z.decompress(data, MAX_PAGE_STREAM)
+    except zlib.error:
+        out = b""
+    if z.unconsumed_tail:
+        raise ValueError(f"a stream decodes to more than {MAX_PAGE_STREAM} bytes")
+    return out
+
+
+def _pdf_objects(pdf):
+    """{object number: (dict bytes, decoded stream or None)}, later objects replacing
+    earlier ones as incremental updates do, with object streams unpacked."""
+    objs, pos = {}, 0
+    obj_re, end_re = re.compile(rb"(\d+)\s+\d+\s+obj\b"), re.compile(rb"\bstream\r?\n|\bendobj\b")
+    while m := obj_re.search(pdf, pos):
+        s = end_re.search(pdf, m.end())
+        if not s:
+            break
+        head = pdf[m.end():s.start()]
+        if s.group(0).startswith(b"stream"):
+            size = _stream_length(head, pdf)
+            end = s.end() + size if size is not None else pdf.find(b"endstream", s.end())
+            end = len(pdf) if end < 0 else end
+            objs[int(m.group(1))] = (head, _inflate(head, pdf[s.end():end]))
+            pos = end
+        else:
+            objs[int(m.group(1))] = (head, None)
+            pos = s.end()
+    for head, data in list(objs.values()):
+        if data and re.search(rb"/Type\s*/ObjStm\b", head):
+            first = re.search(rb"/First\s+(\d+)", head)
+            nums = [int(float(v)) for k, v in _pdf_tokens(data[:int(first.group(1))]) if k == "num"] if first else []
+            pairs = list(zip(nums[::2], nums[1::2]))
+            for i, (num, off) in enumerate(pairs):
+                start = int(first.group(1)) + off
+                end = int(first.group(1)) + pairs[i + 1][1] if i + 1 < len(pairs) else len(data)
+                objs.setdefault(num, (data[start:end], None))
+    return objs
+
+
+def _to_unicode(cmap):
+    """({code bytes: text}, code length in bytes) from a ToUnicode CMap stream."""
+    def text(hexbytes):
+        return hexbytes.decode("utf-16-be", errors="replace")
+    width, out = 2, {}
+    space = re.search(rb"begincodespacerange\s*<([0-9A-Fa-f]+)>", cmap)
+    if space:
+        width = max(1, len(space.group(1)) // 2)
+    for block in re.findall(rb"beginbfchar(.*?)endbfchar", cmap, re.S):
+        for src, dst in re.findall(rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]*)>", block):
+            out[bytes.fromhex(src.decode())] = text(bytes.fromhex(dst.decode()))
+    for block in re.findall(rb"beginbfrange(.*?)endbfrange", cmap, re.S):
+        for lo, hi, rest in re.findall(rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*(<[0-9A-Fa-f]*>|\[[^\]]*\])", block):
+            a, b, size = int(lo, 16), int(hi, 16), len(lo) // 2
+            if b - a > 65535:
+                continue
+            if rest.startswith(b"["):
+                dsts = [bytes.fromhex(x.decode()) for x in re.findall(rb"<([0-9A-Fa-f]*)>", rest)]
+                for k, dst in enumerate(dsts[:b - a + 1]):
+                    out[(a + k).to_bytes(size, "big")] = text(dst)
+            else:
+                dst = bytes.fromhex(rest[1:-1].decode())
+                for k in range(b - a + 1):
+                    last = (int.from_bytes(dst[-2:], "big") + k) & 0xFFFF if len(dst) >= 2 else 0
+                    out[(a + k).to_bytes(size, "big")] = text(dst[:-2] + last.to_bytes(2, "big"))
+    return out, width
+
+
+def _mult(m, n):
+    a, b, c, d, e, f = m
+    A, B, C, D, E, F = n
+    return [a * A + b * C, a * B + b * D, c * A + d * C, c * B + d * D, e * A + f * C + E, e * B + f * D + F]
+
+
+def _content_text(content, fonts):
+    """The text a page's content stream shows, a line break wherever the baseline moves
+    and a space where a run starts well past where the last one ended."""
+    out, operands, stack = [], [], []
+    ctm, tm, tlm = [1, 0, 0, 1, 0, 0], [1, 0, 0, 1, 0, 0], [1, 0, 0, 1, 0, 0]
+    font, size, leading, last = None, 12.0, 0.0, None  # last: (x, y, estimated end x, height)
+    placed = False  # the next run was placed with Tm (a new cell), not moved a glyph along with Td
+
+    def nums(k):
+        vals = [v for kind, v in operands[-k:] if kind == "num"]
+        return vals if len(vals) == k else None
+
+    def show(strings):
+        nonlocal last, placed
+        cmap, width = fonts.get(font, ({}, 1))
+        m = _mult(tm, ctm)
+        x, y = m[4], m[5]
+        height = abs(size * (m[2] ** 2 + m[3] ** 2) ** 0.5) or 1
+        em = abs(size * (m[0] ** 2 + m[1] ** 2) ** 0.5) or 1
+        text = ""
+        for s in strings:
+            if isinstance(s, float):  # a TJ adjustment, in thousandths of an em; large ones are spaces
+                if s < -250 and text and not text.endswith(" "):
+                    text += " "
+                continue
+            if cmap:
+                text += "".join(cmap.get(s[i:i + width], "") for i in range(0, len(s), width))
+            elif width == 2:
+                continue  # two-byte codes without a ToUnicode map cannot be read
+            else:
+                text += s.decode("cp1252", errors="replace")
+        if not text:
+            return
+        if last is not None:
+            lx, ly, lend, lh = last
+            if abs(y - ly) > 0.5 * max(height, lh):
+                out.append("\n")
+            elif (x - lend > 0.8 * em or x < lx - 0.5 * em or (placed and x > lx)) \
+                    and not out[-1].endswith((" ", "\n")) and not text.startswith(" "):
+                out.append(" ")
+        out.append(text)
+        last, placed = (x, y, x + 0.5 * em * len(text), height), False
+
+    tokens = _pdf_tokens(content)
+    for tok in tokens:
+        kind, value = tok
+        if kind in ("<<", "["):
+            operands.append(("val", _pdf_value(tokens, tok)))
+            continue
+        if kind != "kw":
+            operands.append(tok)
+            continue
+        op = value
+        if op == "q":
+            stack.append(ctm)
+        elif op == "Q":
+            ctm = stack.pop() if stack else ctm
+        elif op == "cm" and nums(6):
+            ctm = _mult(nums(6), ctm)
+        elif op == "BT":
+            tm = tlm = [1, 0, 0, 1, 0, 0]
+        elif op == "Tm" and nums(6):
+            tm = tlm = nums(6)
+            placed = True
+        elif op in ("Td", "TD") and nums(2):
+            tx, ty = nums(2)
+            if op == "TD":
+                leading = -ty
+            tm = tlm = _mult([1, 0, 0, 1, tx, ty], tlm)
+        elif op == "TL" and nums(1):
+            leading = nums(1)[0]
+        elif op == "T*":
+            tm = tlm = _mult([1, 0, 0, 1, 0, -leading], tlm)
+        elif op == "Tf" and len(operands) >= 2 and operands[-2][0] == "name":
+            font, size = operands[-2][1], operands[-1][1] if operands[-1][0] == "num" else size
+        elif op in ("Tj", "'", '"') and operands and operands[-1][0] == "str":
+            if op != "Tj":
+                tm = tlm = _mult([1, 0, 0, 1, 0, -leading], tlm)
+            show([operands[-1][1]])
+        elif op == "TJ" and operands and operands[-1][0] == "val" and isinstance(operands[-1][1], list):
+            show([v for k, v in operands[-1][1] if k in ("str", "num")])
+        operands = []
+    return "".join(out).strip()
+
+
+def pdf_text(pdf, pages=None):
+    """[(page number, text)] for each page of a PDF with a text layer, in page order;
+    [] when no page tree can be read. `pages` limits it to those page numbers."""
+    objs = _pdf_objects(pdf)
+
+    def get(v):
+        while isinstance(v, tuple) and v[0] == "ref":
+            head, _ = objs.get(v[1], (b"", None))
+            v = _pdf_parse(head)
+        return v
+
+    def stream(v):
+        return objs.get(v[1], (b"", None))[1] if isinstance(v, tuple) and v[0] == "ref" else None
+
+    roots = re.findall(rb"/Root\s+(\d+)\s+\d+\s+R", pdf)
+    root = get(("ref", int(roots[-1]))) if roots else None
+    out, font_cache, seen = [], {}, set()
+
+    def fonts_of(resources):
+        found = {}
+        for name, ref in (get((get(resources) or {}).get("Font")) or {}).items():
+            key = ref[1] if isinstance(ref, tuple) else id(ref)
+            if key not in font_cache:
+                fdict = get(ref) or {}
+                cmap = stream(fdict.get("ToUnicode"))
+                identity = str(fdict.get("Encoding", ("", ""))[1]).startswith("Identity")
+                font_cache[key] = _to_unicode(cmap) if cmap else ({}, 2 if identity else 1)
+            found[name] = font_cache[key]
+        return found
+
+    def walk(node, resources):
+        if not isinstance(node, tuple) or node[0] != "ref" or node[1] in seen or len(out) >= MAX_PAGES:
+            return
+        seen.add(node[1])
+        d = get(node) or {}
+        resources = d.get("Resources", resources)
+        if d.get("Type") == ("name", "Pages"):
+            for kid in get(d.get("Kids")) or []:
+                walk(kid, resources)
+        elif d.get("Type") == ("name", "Page"):
+            number = len(out) + 1
+            contents = d.get("Contents")
+            parts = get(contents) if isinstance(get(contents), list) else [contents]
+            content = b"\n".join(s for s in (stream(p) for p in parts) if s)
+            out.append((number, _content_text(content, fonts_of(resources)) if not pages or number in pages else None))
+
+    if isinstance(root, dict):
+        walk(root.get("Pages"), None)
+    return [(n, t) for n, t in out if t is not None]
+
+
+def page_text(pdf, out_dir, pages=None):
+    """Write a PDF's text layer to out_dir/text.txt; yields one record when the PDF has
+    one and nothing for a scan."""
+    try:
+        texts = pdf_text(pdf, pages)
+    except (ValueError, RecursionError) as e:
+        yield {"type": "error", "error": f"text layer: {e}"}
+        return
+    if not any(t.strip() for _, t in texts):
+        return
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, "text.txt")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n\n".join(f"--- page {n} ---\n{t}" for n, t in texts) + "\n")
+    yield {"type": "uk_accounts_text", "pages": len(texts), "chars": sum(len(t) for _, t in texts), "path": path,
+           "note": "this PDF has a text layer (not a scan): read text.txt, which keeps each page's lines "
+                   "in the order the filing draws them; page images below are only needed for scans"}
 
 
 def parse_pages(spec):
@@ -1994,7 +2436,12 @@ def main(argv=None):
     s.add_argument("company_number")
     s.add_argument("--sets", type=int, default=3, help="accounts filings to read (each covers two years)")
 
-    s = sub.add_parser("uk-pages", help="save a scanned accounts PDF's pages as images an agent can read")
+    s = sub.add_parser("be-accounts", help="Belgium: multi-year figures from accounts filed with the National Bank")
+    s.add_argument("enterprise_number", help="10-digit enterprise number, such as 0792.914.919")
+    s.add_argument("--sets", type=int, default=3, help="accounts filings to read, one per year")
+
+    s = sub.add_parser("uk-pages", help="save a Companies House PDF's text layer, or a scan's pages as images, "
+                                        "for an agent to read")
     s.add_argument("pdf", help="the uk_accounts_scanned record's url, or a local PDF file")
     s.add_argument("out_dir")
     s.add_argument("--pages", help="pages to save, such as 1-5,33 (default: all)")
@@ -2051,13 +2498,19 @@ def main(argv=None):
                 else uk_accounts(a.company_number, ch, a.sets)
             for r in results:
                 emit(r)
+        elif a.cmd == "be-accounts":
+            for r in be_accounts(a.enterprise_number, lambda u: fetch(u, None), a.sets):
+                emit(r)
         elif a.cmd == "uk-pages":
             if a.pdf.startswith(("http://", "https://")):
                 pdf = fetch_bytes(a.pdf, None)
             else:
                 with open(a.pdf, "rb") as f:
                     pdf = f.read()
-            for r in page_images(pdf, a.out_dir, parse_pages(a.pages) if a.pages else None, a.scale):
+            pages = parse_pages(a.pages) if a.pages else None
+            for r in page_text(pdf, a.out_dir, pages):
+                emit(r)
+            for r in page_images(pdf, a.out_dir, pages, a.scale):
                 emit(r)
         elif a.cmd == "verify-report":
             for r in verify_reports(report_paths(a.targets), a.user_agent):

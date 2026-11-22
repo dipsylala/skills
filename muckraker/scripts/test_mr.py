@@ -583,6 +583,34 @@ class PageImages(unittest.TestCase):
             self.assertEqual(saved, (4, 2))
         self.assertEqual(mr.parse_pages("1-3, 7"), {1, 2, 3, 7})
 
+    def test_text_layer_pdf(self):
+        # Shaped like Companies House's electronic forms: an Identity-H font with a ToUnicode
+        # map, glyphs placed one at a time with Td, each line in its own cm; plus a simple font
+        # whose TJ array has a word-sized gap
+        cmap = (b"begincmap\n1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n2 beginbfchar\n"
+                b"<0001> <0020>\n<0002> <0039>\nendbfchar\n1 beginbfrange\n<0003> <0005> <0041>\nendbfrange\nendcmap")
+        page = (b"q 1 0 0 -1 0 800 cm q 1 0 0 1 0 50 cm BT /F1 12 Tf 1 0 0 -1 0 10 Tm "
+                b"0 0 Td <0003> Tj 7 0 Td <0004> Tj 7 0 Td <0005> Tj 7 0 Td <0001> Tj 4 0 Td <0002> Tj ET Q "
+                b"q 1 0 0 1 0 70 cm BT /F2 12 Tf 1 0 0 -1 0 10 Tm [(Number) -3000 (999)] TJ ET Q "
+                b"BT /F2 12 Tf 1 0 0 -1 300 80 Tm (\\(paid\\)) Tj ET Q")
+        z = zlib.compress(page)
+        pdf = (b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+               b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 /Resources << /Font << /F1 5 0 R /F2 7 0 R >> >> >>\nendobj\n"
+               b"3 0 obj\n<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>\nendobj\n"
+               + b"4 0 obj\n<< /Length %d /Filter /FlateDecode >>\nstream\n" % len(z) + z + b"\nendstream\nendobj\n"
+               + b"5 0 obj\n<< /Type /Font /Subtype /Type0 /Encoding /Identity-H /ToUnicode 6 0 R >>\nendobj\n"
+               + b"6 0 obj\n<< /Length %d >>\nstream\n" % len(cmap) + cmap + b"\nendstream\nendobj\n"
+               + b"7 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n"
+               + b"trailer\n<< /Root 1 0 R >>\n%%EOF")
+        self.assertEqual(mr.pdf_text(pdf), [(1, "ABC 9\nNumber 999 (paid)")])
+        with tempfile.TemporaryDirectory() as tmp:
+            out = list(mr.page_text(pdf, tmp))
+            self.assertEqual([r["type"] for r in out], ["uk_accounts_text"])
+            with open(out[0]["path"], encoding="utf-8") as f:
+                self.assertIn("Number 999 (paid)", f.read())
+            scan = b"%PDF-1.1\n1 0 obj\n<< /Subtype /Image /Width 1 /Height 1 /Length 1 >>\nstream\nx\nendstream\nendobj\n"
+            self.assertEqual(list(mr.page_text(scan, tmp)), [])  # a scan has no text layer
+
     def test_oversized_image_is_refused(self):
         # A few bytes of "V0" codes claiming 100000 x 100000 pixels must not build a 1.25 GB bitmap.
         with self.assertRaises(ValueError):
@@ -668,6 +696,51 @@ class UkAccounts(unittest.TestCase):
         self.assertLess(types.index("uk_accounts_latest_scanned"), types.index("uk_accounts_notes"))
         r = next(r for r in out if r["type"] == "uk_accounts_latest_scanned")
         self.assertEqual((r["scanned_made_up_dates"], r["notes_from"]), (["2025-12-31"], "2018-12-31"))
+
+
+class BeAccounts(unittest.TestCase):
+    DEPOSITS = {"content": [
+        {"id": "new", "reference": "2026-00387896", "enterpriseNumber": "0792914919", "periodStartDate": "2025-02-01T00:00:00Z",
+         "periodEndDate": "2026-01-31T00:00:00Z", "depositDate": "2026-08-05T12:47:35.857Z", "modelId": "m81-f",
+         "modelName": "Verkort model kapitaalloze vennootschap", "type": "Initial", "language": "NL",
+         "generalAssemblyApprovalDate": "2026-07-14T00:00:00Z", "enterpriseName": "Aikido Security"},
+        {"id": "old", "reference": "2025-00436608", "enterpriseNumber": "0792914919", "periodStartDate": "2024-02-01T00:00:00Z",
+         "periodEndDate": "2025-01-31T00:00:00Z", "depositDate": "2025-08-29T10:00:00Z", "modelId": "m81-f",
+         "modelName": "Verkort model kapitaalloze vennootschap", "type": "Initial", "language": "NL",
+         "generalAssemblyApprovalDate": "2025-07-31T00:00:00Z", "enterpriseName": "Aikido Security"}]}
+    NEW = ('"Reference number","2026-00387896"\n"Accounting period end date","2026-01-31"\n"Liquidation flag","TRUE"\n'
+           '"10/15","-1500.5"\n"9904","-13929899.25"\n"54/58","9549417.96"\n"9087","27.1"\n"9999","1"\n')
+    OLD = ('"Reference number","2025-00436608"\n"Accounting period end date","2025-01-31"\n"Liquidation flag","FALSE"\n'
+           '"10/15","14728176.59"\n"9904","-4192620.52"\n"54/58","2765960.07"\n"9087","8.2"\n')
+
+    def fetcher(self, deposits):
+        def fetch(url):
+            self.urls.append(url)
+            if "published-deposits" in url:
+                return json.dumps(deposits)
+            return self.NEW if url.endswith("/new") else self.OLD
+        self.urls = []
+        return fetch
+
+    def test_years_flags_and_changes(self):
+        out = list(mr.be_accounts("BE 0792.914.919", self.fetcher(self.DEPOSITS)))
+        self.assertIn("enterpriseNumber=0792914919", self.urls[0])
+        self.assertIn("sort=periodEndDate", self.urls[0])
+        filing = next(r for r in out if r["type"] == "be_accounts_filing")
+        self.assertEqual((filing["period_end"], filing["filed"], filing["model"]), ("2026-01-31", "2026-08-05", "m81-f"))
+        self.assertTrue(filing["pdf_url"].endswith("/deposits/pdf/new"))
+        years = {r["period_end"]: r for r in out if r["type"] == "be_accounts_year"}
+        self.assertEqual(years["2026-01-31"]["figures"],
+                         {"net_assets": -1500.5, "profit_loss": -13929899.25, "cash": 9549417.96, "average_fte": 27.1})
+        self.assertIn("turnover", years["2026-01-31"]["not_disclosed"])
+        derived = next(r for r in out if r["type"] == "be_accounts_derived")
+        self.assertEqual(derived["cash_change"], round(9549417.96 - 2765960.07, 2))
+        flags = sorted(r["flag"] for r in out if r["type"] == "be_accounts_flag")
+        self.assertEqual(flags, ["liquidation", "negative_equity"])
+
+    def test_no_accounts(self):
+        out = list(mr.be_accounts("0123456789", self.fetcher({"content": []})))
+        self.assertEqual([r["type"] for r in out], ["be_accounts_none"])
 
 
 class RunSixFixes(unittest.TestCase):
