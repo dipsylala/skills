@@ -68,21 +68,28 @@ def read_body(stream, gzipped, limit=MAX_BODY):
     return b"".join(out)
 
 
-def fetch(url, user_agent, retries=2):
-    """Return the decoded body of `url`."""
+def fetch(url, user_agent, retries=2, auth=None, accept=None):
+    """Return the decoded body of `url`. `auth` is sent as an Authorization header
+    on this request only, never on a redirect (Companies House documents redirect
+    to signed storage URLs that reject it)."""
     global _last_sec_request
     is_sec = urllib.parse.urlparse(url).hostname.endswith("sec.gov")
     if is_sec and not user_agent:
         raise FetchError("sec.gov needs --user-agent or MUCKRAKER_SEC_UA")
     headers = {"User-Agent": user_agent or "muckraker", "Accept-Encoding": "gzip"}
+    if accept:
+        headers["Accept"] = accept
     for attempt in range(retries + 1):
         if is_sec:
             wait = SEC_MIN_INTERVAL - (time.monotonic() - _last_sec_request)
             if wait > 0:
                 time.sleep(wait)
             _last_sec_request = time.monotonic()
+        request = urllib.request.Request(url, headers=headers)
+        if auth:
+            request.add_unredirected_header("Authorization", auth)
         try:
-            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60) as r:
+            with urllib.request.urlopen(request, timeout=60) as r:
                 body = read_body(r, r.headers.get("Content-Encoding") == "gzip")
                 return body.decode("utf-8", errors="replace")
         except urllib.error.HTTPError as e:
@@ -283,7 +290,26 @@ def holding_notes(text, fair_value=None):
 
 _CONTEXT_RE = re.compile(r"<xbrli:context\b[^>]*\bid=\"([^\"]+)\"[^>]*>(.*?)</xbrli:context>", re.S)
 _TYPED_RE = re.compile(r"<xbrldi:typedMember\b[^>]*dimension=\"us-gaap:InvestmentIdentifierAxis\"[^>]*>(.*?)</xbrldi:typedMember>", re.S)
-_FACT_RE = re.compile(r"<ix:(nonFraction|nonNumeric)\b([^>]*)>(.*?)</ix:\1>", re.S)
+# Numbers and text facts are matched separately, and self-closing tags (<ix:nonNumeric ... />,
+# empty facts) are skipped: otherwise a match runs on to the next closing tag and swallows
+# the facts in between, such as an employee count inside a text block.
+_NUMBER_FACT_RE = re.compile(r"<ix:nonFraction\b([^>]*?)(?<!/)>(.*?)</ix:nonFraction>", re.S)
+_TEXT_FACT_RE = re.compile(r"<ix:nonNumeric\b([^>]*?)(?<!/)>(.*?)</ix:nonNumeric>", re.S)
+
+
+class _Fact:
+    __slots__ = ("kind", "attrs", "raw", "pos")
+
+    def __init__(self, kind, m):
+        self.kind, self.attrs, self.raw, self.pos = kind, m.group(1), m.group(2), m.start()
+
+
+def iter_facts(doc):
+    """Inline XBRL facts in document order: kind ('nonFraction' or 'nonNumeric'),
+    attributes, inner markup, and position."""
+    facts = [_Fact("nonFraction", m) for m in _NUMBER_FACT_RE.finditer(doc)]
+    facts += [_Fact("nonNumeric", m) for m in _TEXT_FACT_RE.finditer(doc)]
+    return sorted(facts, key=lambda f: f.pos)
 _TR_OPEN_RE = re.compile(r"<tr\b", re.I)
 
 
@@ -378,8 +404,8 @@ def parse_ixbrl_holdings(doc, aliases):
     if not contexts:
         return []
     rows, durations, fact_ids, fv_pos = {}, {}, {}, {}
-    for m in _FACT_RE.finditer(doc):
-        attrs, raw = m.group(2), m.group(3)
+    for fact in iter_facts(doc):
+        attrs, raw = fact.attrs, fact.raw
         cid = _attr(attrs, "contextRef")
         if cid not in contexts:
             continue
@@ -398,7 +424,7 @@ def parse_ixbrl_holdings(doc, aliases):
         if is_instant:
             rows.setdefault((ident, date), {})[field] = value
             if field == "fair_value":
-                fv_pos[(ident, date)] = m.start()
+                fv_pos[(ident, date)] = fact.pos
         else:
             durations.setdefault(ident, {})[field] = value
     flagged = _flagged_footnotes(doc, fact_ids)
@@ -792,6 +818,339 @@ def gleif_report(lei, max_children=200, fetcher=None):
            "offshore_parents": [p["lei"] for p in offshore]}
 
 
+# ------------------------------------------------------ Companies House ----
+
+CH_API = "https://api.company-information.service.gov.uk"
+CH_WEB = "https://find-and-update.company-information.service.gov.uk"
+# statutory filing windows, in days after the event (Companies Act 2006)
+OFFICER_FORMS = {"AP01", "AP02", "AP03", "AP04", "TM01", "TM02", "CH01", "CH02", "CH03", "CH04"}
+PSC_FORMS = {f"PSC0{i}" for i in range(1, 10)}
+GAZETTE_FORMS_RE = re.compile(r"^(GAZ\d|DISS|SOAS)", re.I)
+
+
+class CompaniesHouse:
+    def __init__(self, key, fetcher=None):
+        if not key and fetcher is None:
+            raise FetchError("Companies House commands need COMPANIES_HOUSE_API_KEY")
+        import base64
+        self.auth = "Basic " + base64.b64encode(f"{key}:".encode()).decode() if key else None
+        self._fetch = fetcher or (lambda url, accept=None: fetch(url, None, auth=self.auth, accept=accept))
+
+    def get(self, path):
+        """API JSON, or None for 404."""
+        try:
+            return json.loads(self._fetch(CH_API + path))
+        except FetchError as e:
+            if "HTTP 404" in str(e):
+                return None
+            raise
+
+    def document(self, metadata_url, accept):
+        return self._fetch(metadata_url.rstrip("/") + "/content", accept=accept)
+
+    def metadata(self, metadata_url):
+        return json.loads(self._fetch(metadata_url))
+
+
+def _date(s):
+    return dt.date.fromisoformat(s) if s else None
+
+
+def _add_months(d, months):
+    y, m = divmod(d.month - 1 + months, 12)
+    year, month = d.year + y, m + 1
+    days = [31, 29 if year % 4 == 0 and (year % 100 or year % 400 == 0) else 28,
+            31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1]
+    return dt.date(year, month, min(d.day, days))
+
+
+def describe_filing(item):
+    """Readable description from Companies House's description key and values."""
+    values = item.get("description_values") or {}
+    desc = (item.get("description") or "").replace("-", " ")
+    extra = ", ".join(f"{k.replace('_', ' ')}: {v}" for k, v in values.items() if isinstance(v, str))
+    return f"{desc} ({extra})" if extra else desc
+
+
+def late_filing(item, company_type):
+    """A flag record if a filing went in after its statutory deadline, else None."""
+    form, filed, action = item.get("type", ""), _date(item.get("date")), _date(item.get("action_date"))
+    values = item.get("description_values") or {}
+    if not filed:
+        return None
+    if form in OFFICER_FORMS and action:
+        limit, rule = 14, "officer changes must be filed within 14 days"
+    elif form in PSC_FORMS and action:
+        limit, rule = 28, "PSC changes: 14 days to update the register, then 14 days to file"
+    elif form == "CS01" and action:
+        limit, rule = 14, "confirmation statements must be filed within 14 days of the made-up date"
+    elif form.startswith("AA") and values.get("made_up_date"):
+        months = 6 if company_type == "plc" else 9
+        due = _add_months(_date(values["made_up_date"]), months)
+        if filed > due:
+            return {"flag": "late accounts", "form": form, "filed": filed.isoformat(),
+                    "made_up_date": values["made_up_date"], "due": due.isoformat(), "days_late": (filed - due).days,
+                    "rule": f"accounts due {months} months after the period end (first accounts and extensions differ; check)"}
+        return None
+    else:
+        return None
+    days = (filed - action).days
+    if days > limit:
+        return {"flag": "late filing", "form": form, "filed": filed.isoformat(), "event_date": action.isoformat(),
+                "days_after_event": days, "days_late": days - limit, "rule": rule,
+                "description": describe_filing(item)}
+    return None
+
+
+def ch_report(number, ch, max_filings=200, today=None, list_filings=25):
+    """Profile, officers, PSCs, charges, insolvency, filing history and computed flags."""
+    number = number.strip().upper()
+    today = today or dt.date.today()
+    web = f"{CH_WEB}/company/{number}"
+    p = ch.get(f"/company/{number}")
+    if not p:
+        yield {"type": "error", "error": f"no company {number}"}
+        return
+    acc, cs = p.get("accounts") or {}, p.get("confirmation_statement") or {}
+    yield {"type": "ch_profile", "company_number": number, "name": p.get("company_name"),
+           "status": p.get("company_status"), "company_type": p.get("type"), "jurisdiction": p.get("jurisdiction"),
+           "incorporated": p.get("date_of_creation"), "dissolved": p.get("date_of_cessation"),
+           "registered_office": ", ".join(v for v in (p.get("registered_office_address") or {}).values() if v),
+           "sic_codes": p.get("sic_codes") or [],
+           "previous_names": [n.get("name") for n in p.get("previous_company_names") or []],
+           "last_accounts": acc.get("last_accounts"), "next_accounts_due": acc.get("next_due"),
+           "accounts_overdue": acc.get("overdue"), "confirmation_last": cs.get("last_made_up_to"),
+           "confirmation_next_due": cs.get("next_due"), "confirmation_overdue": cs.get("overdue"),
+           "has_charges": p.get("has_charges"), "has_insolvency_history": p.get("has_insolvency_history"),
+           "registered_office_in_dispute": p.get("registered_office_is_in_dispute"), "url": web}
+    for field, what in (("accounts_overdue", "accounts overdue"), ("confirmation_overdue", "confirmation statement overdue")):
+        if (acc if field == "accounts_overdue" else cs).get("overdue"):
+            yield {"type": "ch_flag", "flag": what, "url": web}
+
+    officers = (ch.get(f"/company/{number}/officers?items_per_page=100") or {}).get("items", [])
+    recent = 0
+    for o in officers:
+        rec = {"type": "ch_officer", "name": o.get("name"), "role": o.get("officer_role"),
+               "appointed_on": o.get("appointed_on"), "resigned_on": o.get("resigned_on"), "url": f"{web}/officers"}
+        for d in (o.get("appointed_on"), o.get("resigned_on")):
+            if d and (today - _date(d)).days <= 730:
+                recent += 1
+        yield rec
+    yield {"type": "ch_officer_summary", "current": sum(1 for o in officers if not o.get("resigned_on")),
+           "resigned": sum(1 for o in officers if o.get("resigned_on")),
+           "appointments_and_resignations_last_24_months": recent}
+
+    pscs = (ch.get(f"/company/{number}/persons-with-significant-control?items_per_page=100") or {}).get("items", [])
+    for s in pscs:
+        ident = s.get("identification") or {}
+        yield {"type": "ch_psc", "name": s.get("name"), "kind": s.get("kind"),
+               "natures_of_control": s.get("natures_of_control") or [], "notified_on": s.get("notified_on"),
+               "ceased_on": s.get("ceased_on"), "country_of_residence": s.get("country_of_residence"),
+               "registered_in": ident.get("country_registered") or ident.get("place_registered"),
+               "registration_number": ident.get("registration_number"), "url": f"{web}/persons-with-significant-control"}
+    statements = (ch.get(f"/company/{number}/persons-with-significant-control-statements") or {}).get("items", [])
+    for s in statements:
+        yield {"type": "ch_psc_statement", "statement": (s.get("statement") or "").replace("-", " "),
+               "notified_on": s.get("notified_on"), "ceased_on": s.get("ceased_on"),
+               "url": f"{web}/persons-with-significant-control"}
+
+    if p.get("has_charges"):
+        for c in (ch.get(f"/company/{number}/charges?items_per_page=100") or {}).get("items", []):
+            yield {"type": "ch_charge", "status": c.get("status"), "created_on": c.get("created_on"),
+                   "delivered_on": c.get("delivered_on"), "satisfied_on": c.get("satisfied_on"),
+                   "persons_entitled": [x.get("name") for x in c.get("persons_entitled") or []],
+                   "classification": (c.get("classification") or {}).get("description"),
+                   "charge_code": c.get("charge_code"), "url": f"{web}/charges"}
+    if p.get("has_insolvency_history"):
+        for case in (ch.get(f"/company/{number}/insolvency") or {}).get("cases", []):
+            yield {"type": "ch_insolvency", "case_type": case.get("type"),
+                   "dates": {d.get("type"): d.get("date") for d in case.get("dates") or []},
+                   "practitioners": [x.get("name") for x in case.get("practitioners") or []],
+                   "url": f"{web}/insolvency"}
+
+    filings, start = [], 0
+    while len(filings) < max_filings:
+        page = ch.get(f"/company/{number}/filing-history?items_per_page=100&start_index={start}") or {}
+        items = page.get("items") or []
+        filings += items
+        start += len(items)
+        if not items or start >= page.get("total_count", 0):
+            break
+    for i, f in enumerate(filings[:max_filings]):
+        if i < list_filings:  # every filing is checked for flags; only the latest are listed
+            yield {"type": "ch_filing", "date": f.get("date"), "form": f.get("type"), "category": f.get("category"),
+                   "description": describe_filing(f), "event_date": f.get("action_date"),
+                   "url": f"{web}/filing-history/{f.get('transaction_id')}/document?format=pdf"}
+        late = late_filing(f, p.get("type"))
+        if late:
+            yield {"type": "ch_flag", **late, "url": f"{web}/filing-history"}
+        if GAZETTE_FORMS_RE.match(f.get("type") or ""):
+            yield {"type": "ch_flag", "flag": "gazette notice", "form": f.get("type"), "filed": f.get("date"),
+                   "description": describe_filing(f), "url": f"{web}/filing-history"}
+    yield {"type": "ch_summary", "company_number": number, "officers": len(officers), "pscs": len(pscs),
+           "psc_statements": len(statements), "filings_read": min(len(filings), max_filings)}
+
+
+# ---------------------------------------------------------- UK accounts ----
+
+UK_FIGURES = {  # field: local names in the UK FRS / IFRS taxonomies, first found wins
+    "turnover": ["TurnoverRevenue", "Turnover", "Revenue", "RevenueFromContractsWithCustomers"],
+    "gross_profit": ["GrossProfitLoss", "GrossProfit"],
+    "operating_profit": ["OperatingProfitLoss", "ProfitLossFromOperatingActivities"],
+    "profit_before_tax": ["ProfitLossOnOrdinaryActivitiesBeforeTax", "ProfitLossBeforeTax"],
+    "net_profit": ["ProfitLoss", "ProfitLossForPeriod"],
+    "cash": ["CashBankOnHand", "CashCashEquivalents", "CashAndCashEquivalents"],
+    "current_assets": ["CurrentAssets"],
+    "net_current_assets": ["NetCurrentAssetsLiabilities"],
+    "net_assets": ["NetAssetsLiabilities", "Equity"],
+    "bank_borrowings": ["BankBorrowings", "BankBorrowingsOverdrafts", "BankOverdrafts", "LoansFromBanks"],
+    "owed_by_group": ["AmountsOwedByGroupUndertakings"],
+    "owed_to_group": ["AmountsOwedToGroupUndertakings"],
+    "operating_cash_flow": ["NetCashFlowsFromUsedInOperatingActivities", "NetCashGeneratedFromOperations"],
+    "employees": ["AverageNumberEmployeesDuringPeriod"],
+    "director_remuneration": ["DirectorRemuneration"],
+}
+UK_DURATION_FIELDS = {"turnover", "gross_profit", "operating_profit", "profit_before_tax", "net_profit",
+                      "operating_cash_flow", "employees", "director_remuneration"}
+UK_TEXT = {  # field: local names of text facts describing the accounts
+    "accounts_type": ["AccountsType"], "audited": ["AccountsStatusAuditedOrUnaudited"],
+    "standards": ["AccountingStandardsApplied"], "dormant": ["EntityDormantTruefalse"],
+    "going_concern_basis": ["FinancialStatementsArePreparedOnGoing-concernBasisTruefalse"],
+    "auditor": ["NameEntityAuditors", "NameSeniorStatutoryAuditorOnBehalfAuditor", "NameIndividualAuditor"],
+    "period_start": ["StartDateForPeriodCoveredByReport"], "period_end": ["EndDateForPeriodCoveredByReport"],
+}
+
+
+def parse_uk_ixbrl(doc):
+    """Figures per period end and the accounts' descriptive facts from iXBRL accounts.
+
+    Uses facts with no dimension (the entity's own totals) or, for group accounts,
+    the consolidated member, so segment and note breakdowns are left out."""
+    contexts = {}
+    for cid, body in _CONTEXT_RE.findall(doc):
+        members = re.findall(r"<xbrldi:explicitMember\b[^>]*>([^<]+)<", body)
+        typed = re.search(r"<xbrldi:typedMember", body)
+        if typed or any("consolidated" not in m.lower() for m in members):
+            continue
+        consolidated = bool(members)
+        instant = re.search(r"<xbrli:instant>([^<]+)", body)
+        start = re.search(r"<xbrli:startDate>([^<]+)", body)
+        end = re.search(r"<xbrli:endDate>([^<]+)", body)
+        if instant:
+            contexts[cid] = (instant.group(1), None, consolidated)
+        elif start and end:
+            contexts[cid] = (end.group(1), start.group(1), consolidated)
+    local_to_field = {n: f for f, names in UK_FIGURES.items() for n in names}
+    table, texts, negative = {}, {}, {}
+    for fact in iter_facts(doc):
+        kind, attrs, raw = fact.kind, fact.attrs, fact.raw
+        name = (_attr(attrs, "name") or "").split(":")[-1]
+        cid = _attr(attrs, "contextRef")
+        if kind == "nonNumeric":
+            for field, names in UK_TEXT.items():
+                if name in names and field not in texts:
+                    texts[field] = text_of(raw)
+            continue
+        field = local_to_field.get(name)
+        if not field or cid not in contexts:
+            continue
+        end, start, consolidated = contexts[cid]
+        if field in UK_DURATION_FIELDS:
+            if not start or not 350 <= (_date(end) - _date(start)).days <= 380:
+                continue
+        elif start:
+            continue
+        value = _number(attrs, raw)
+        if value is None:
+            continue
+        row = table.setdefault(end, {})
+        rank = UK_FIGURES[field].index(name) - (10 if consolidated else 0)  # group totals first, then preferred name
+        if field not in row or rank < row[field][1]:
+            row[field] = (value, rank)
+            if _attr(attrs, "sign") == "-":
+                negative.setdefault(end, set()).add(field)
+            else:
+                negative.get(end, set()).discard(field)
+    figures = {}
+    for end, row in table.items():
+        figures[end] = {f: v for f, (v, _) in row.items()}
+        if negative.get(end):
+            figures[end]["tagged_negative"] = sorted(negative[end])
+    return figures, texts
+
+
+def uk_accounts(number, ch, sets=3):
+    """Multi-year figures from the latest accounts filings that have an iXBRL version."""
+    number = number.strip().upper()
+    web = f"{CH_WEB}/company/{number}"
+    page = ch.get(f"/company/{number}/filing-history?category=accounts&items_per_page=50") or {}
+    filings = [f for f in page.get("items") or [] if (f.get("type") or "").startswith("AA")]
+    combined, used = {}, 0
+    for f in filings:
+        if used >= sets:
+            break
+        meta_url = (f.get("links") or {}).get("document_metadata")
+        doc_url = f"{web}/filing-history/{f.get('transaction_id')}/document?format=xhtml&download=1"
+        base = {"filed": f.get("date"), "form": f.get("type"),
+                "made_up_date": (f.get("description_values") or {}).get("made_up_date"),
+                "description": describe_filing(f)}
+        if not meta_url:
+            yield {"type": "uk_accounts_unavailable", **base, "reason": "no document on file"}
+            continue
+        try:
+            meta = ch.metadata(meta_url)
+            if "application/xhtml+xml" not in (meta.get("resources") or {}):
+                yield {"type": "uk_accounts_needs_ocr", **base,
+                       "url": f"{web}/filing-history/{f.get('transaction_id')}/document?format=pdf",
+                       "note": "filed as a PDF only, often a scanned image; figures may still appear as prior-year comparatives in the next accounts"}
+                continue
+            doc = ch.document(meta_url, "application/xhtml+xml")
+        except FetchError as e:
+            yield {"type": "error", **base, "error": str(e)}
+            continue
+        figures, texts = parse_uk_ixbrl(doc)
+        used += 1
+        yield {"type": "uk_accounts_filing", **base, **texts, "periods": sorted(figures, reverse=True), "url": doc_url}
+        for end, row in figures.items():
+            # newer accounts restate earlier years, so a figure already taken from newer
+            # accounts stays; older accounts only fill figures the newer ones lack
+            have, urls = combined.setdefault(end, ({}, []))
+            added = False
+            for k, v in row.items():
+                if k == "tagged_negative":
+                    continue
+                if k not in have:
+                    have[k] = v
+                    added = True
+                    if k in row.get("tagged_negative", []):
+                        have.setdefault("tagged_negative", []).append(k)
+            if added:
+                urls.append(doc_url)
+    for end in sorted(combined, reverse=True):
+        row, urls = combined[end]
+        figures = {k: v for k, v in row.items() if k != "tagged_negative"}
+        record = {"type": "uk_accounts_year", "period_end": end, "figures": figures, "sources": urls}
+        if row.get("tagged_negative"):
+            record["tagged_negative"] = sorted(row["tagged_negative"])
+            record["note"] = ("the filer tagged these figures as negative; UK filers often tag signs wrongly, "
+                              "so check them against the printed accounts (quote-check the figure)")
+        yield record
+    ends = sorted(combined)
+    for prev, cur in zip(ends, ends[1:]):
+        a, b = combined[prev][0], combined[cur][0]
+        derived = {}
+        if a.get("turnover") and "turnover" in b:
+            derived["turnover_growth_pct"] = round(100 * (b["turnover"] / a["turnover"] - 1), 1)
+        if b.get("turnover") and "operating_profit" in b:
+            derived["operating_margin_pct"] = round(100 * b["operating_profit"] / b["turnover"], 1)
+        if "cash" in a and "cash" in b:
+            derived["cash_change"] = b["cash"] - a["cash"]
+        if a.get("employees") and "employees" in b:
+            derived["employees_change_pct"] = round(100 * (b["employees"] / a["employees"] - 1), 1)
+        if derived:
+            yield {"type": "uk_accounts_derived", "period_end": cur, "versus": prev, **derived}
+
+
 # --------------------------------------------------------------- quote -----
 
 def _find_in_order(page, parts, window):
@@ -1017,6 +1376,15 @@ def main(argv=None):
     s.add_argument("--limit", type=int, default=10, help="search candidates to return")
     s.add_argument("--max-children", type=int, default=200)
 
+    s = sub.add_parser("ch", help="UK Companies House: profile, officers, PSCs, charges, filings, late-filing flags")
+    s.add_argument("company_number")
+    s.add_argument("--max-filings", type=int, default=200, help="filings to read and check for late-filing flags")
+    s.add_argument("--list-filings", type=int, default=25, help="latest filings to list in the output")
+
+    s = sub.add_parser("uk-accounts", help="UK Companies House: multi-year figures from iXBRL accounts")
+    s.add_argument("company_number")
+    s.add_argument("--sets", type=int, default=3, help="accounts filings to read (each covers two years)")
+
     s = sub.add_parser("verify-report", help="check every red flag's quote in source reports against its cited pages")
     s.add_argument("targets", nargs="+", help="report files, or a run folder (every .md except dossier.md)")
 
@@ -1056,6 +1424,12 @@ def main(argv=None):
         elif a.cmd == "gleif":
             target = a.name_or_lei.strip().upper()
             results = gleif_report(target, a.max_children) if LEI_RE.match(target) else gleif_search(a.name_or_lei, a.limit)
+            for r in results:
+                emit(r)
+        elif a.cmd in ("ch", "uk-accounts"):
+            ch = CompaniesHouse(os.environ.get("COMPANIES_HOUSE_API_KEY"))
+            results = ch_report(a.company_number, ch, a.max_filings, list_filings=a.list_filings) if a.cmd == "ch" \
+                else uk_accounts(a.company_number, ch, a.sets)
             for r in results:
                 emit(r)
         elif a.cmd == "verify-report":

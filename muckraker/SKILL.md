@@ -48,15 +48,26 @@ Done when the source list is fixed and the SEC contact has been given or decline
 
 Create a run folder for each company outside the user's project: in the session's scratchpad or temp directory if the runtime names one, otherwise `<system temp>/muckraker/<company-slug>-<YYYYMMDD-HHMM>/`. Record its absolute path in your next message so it survives context compaction.
 
-Send one agent per chosen source per company, all at once, in parallel, except the sources you run yourself with the script while the agents work, as the next two sections say: GLEIF ownership whenever you can run Python, and Debt and valuation marks when you can also give sec.gov the SEC `User-Agent`. Each prompt contains:
+Some sources you run yourself with the script instead of sending an agent, as the sections below say: UK Companies House when you can run Python and `COMPANIES_HOUSE_API_KEY` is set (run it before sending the agents, since the Financials agent uses its accounts output), GLEIF ownership whenever you can run Python, and Debt and valuation marks when you can also give sec.gov the SEC `User-Agent` (run those two while the agents work). Send one agent per other chosen source per company, all at once, in parallel. Each prompt contains:
 
 - the absolute paths of [references/brief.md](references/brief.md) and the agent's source file, with the instruction to read both first;
 - that company's entity record from step 1;
 - the absolute path of its report file: `<run folder>/<source file name>`, for example `<run folder>/press.md`;
 - the SEC `User-Agent` value, for the agents marked "Queries sec.gov" only;
-- the absolute path of [scripts/mr.py](scripts/mr.py), the skill's fetcher for EDGAR filings, XBRL figures, lender and fund marks, and quote checks.
+- the absolute path of [scripts/mr.py](scripts/mr.py), the skill's fetcher for EDGAR filings, XBRL figures, lender and fund marks, and quote checks;
+- for the Financials agent, the absolute path of `uk-accounts.jsonl` when you made one.
 
 Each agent writes its full report to that file and replies with only its status line (the brief gives the format). Wait for the status lines; leave the report files unread until step 4. If an agent has not replied long after the others, stop it, record its source as `FAILED: no reply` under Gaps, and continue.
+
+### UK Companies House, run by you
+
+For each UK company in the entity record (the entity, a UK parent or a UK subsidiary), before sending the agents:
+
+1. Run `python <skill folder>/scripts/mr.py ch <company number> > "<run folder>/companies-house-<number>.jsonl"`. It returns the profile, officers, persons with significant control and their statements, charges, insolvency cases, the latest filings, and `ch_flag` records: overdue accounts or confirmation statements, Gazette notices, and filings made after their statutory deadline, each with the rule it breaks.
+2. Run `python <skill folder>/scripts/mr.py uk-accounts <company number> > "<run folder>/uk-accounts.jsonl"` (append with `>>` for a second company). It returns each year's figures from the iXBRL accounts, the auditor and going-concern basis, year-on-year changes, and `uk_accounts_needs_ocr` for accounts filed only as a PDF.
+3. Write `<run folder>/companies-house.md` from the `ch` records, in the brief's report format, working through the checks in [companies-house.md](references/sources/companies-house.md). Late filings and overdue items are established findings (the register's own dates); a late-accounts flag says its deadline assumes no extension or first-accounts period, so say so. Each red flag cites the record's URL and quotes the filing description with its dates.
+
+If `COMPANIES_HOUSE_API_KEY` is not set or the script fails, send the UK Companies House agent instead, and the Financials agent reads the accounts itself.
 
 ### GLEIF ownership, run by you
 
@@ -75,7 +86,7 @@ If the script fails or returns nothing for any name, send the Debt and valuation
 
 If the runtime has no subagents, work through the sources yourself one at a time, following the same two files for each and writing the same report files. If it has no web access at all, stop and tell the user: this skill cannot run without it.
 
-Done when every agent has replied, every report file exists or the agent's status line says why it does not, and you have written the GLEIF ownership and Debt and valuation marks reports or sent their agents.
+Done when every agent has replied, every report file exists or the agent's status line says why it does not, and you have written the reports for the sources you ran yourself (UK Companies House, GLEIF ownership, Debt and valuation marks) or sent their agents.
 
 ## 4. Write the dossier
 

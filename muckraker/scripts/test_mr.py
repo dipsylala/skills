@@ -1,5 +1,6 @@
 """Offline tests for mr.py parsers, run with: python -m unittest muckraker/scripts/test_mr.py"""
 
+import datetime as dt
 import gzip
 import io
 import json
@@ -341,6 +342,101 @@ class VerifyWarnings(unittest.TestCase):
             pathlib.Path(f.name).unlink()
         self.assertEqual(records[0]["result"], "no_url")
         self.assertEqual((records[-1]["no_url"], records[-1]["no_quote"]), (1, 0))
+
+
+class CompaniesHouseLateFilings(unittest.TestCase):
+    def test_officer_psc_and_confirmation_windows(self):
+        tm01 = {"type": "TM01", "date": "2026-11-17", "action_date": "2026-10-15"}
+        self.assertEqual(mr.late_filing(tm01, "ltd")["days_late"], 19)
+        on_time = {"type": "AP01", "date": "2026-01-10", "action_date": "2025-12-29"}
+        self.assertIsNone(mr.late_filing(on_time, "ltd"))
+        psc = {"type": "PSC01", "date": "2024-05-09", "action_date": "2024-04-12"}  # 27 days: within 28
+        self.assertIsNone(mr.late_filing(psc, "ltd"))
+        cs = {"type": "CS01", "date": "2026-04-28", "action_date": "2026-04-09"}
+        self.assertEqual(mr.late_filing(cs, "ltd")["days_late"], 5)
+
+    def test_accounts_deadline_by_company_type(self):
+        aa = {"type": "AA", "date": "2024-10-31", "description_values": {"made_up_date": "2023-12-31"}}
+        self.assertEqual(mr.late_filing(aa, "ltd")["due"], "2024-09-30")
+        self.assertEqual(mr.late_filing(aa, "plc")["due"], "2024-06-30")
+        early = {"type": "AA", "date": "2024-09-15", "description_values": {"made_up_date": "2023-12-31"}}
+        self.assertIsNone(mr.late_filing(early, "ltd"))
+
+    def test_report_from_api(self):
+        api = {
+            "/company/01234567": {"company_name": "ACME LTD", "company_status": "active", "type": "ltd",
+                                  "accounts": {"overdue": True}, "confirmation_statement": {"overdue": False},
+                                  "has_charges": False, "has_insolvency_history": False},
+            "/company/01234567/officers": {"items": [
+                {"name": "DOE, Jane", "officer_role": "director", "appointed_on": "2026-01-02",
+                 "date_of_birth": {"month": 1, "year": 1970}, "address": {"premises": "1"}}]},
+            "/company/01234567/persons-with-significant-control": {"items": []},
+            "/company/01234567/persons-with-significant-control-statements": {"items": [
+                {"statement": "no-individual-or-entity-with-signficant-control", "notified_on": "2020-01-01"}]},
+            "/company/01234567/filing-history": {"total_count": 3, "items": [
+                {"type": "GAZ1", "date": "2026-10-01", "category": "gazette", "transaction_id": "t1",
+                 "description": "gazette-notice-compulsory"},
+                {"type": "TM01", "date": "2026-09-30", "action_date": "2026-08-01", "transaction_id": "t2",
+                 "description": "termination-director"},
+                {"type": "AP01", "date": "2026-01-05", "action_date": "2026-01-02", "transaction_id": "t3",
+                 "description": "appoint-director"}]},
+        }
+
+        def fake(url, accept=None):
+            path = url[len(mr.CH_API):].split("?")[0]
+            if path in api:
+                return json.dumps(api[path])
+            raise mr.FetchError(f"HTTP 404 for {url}")
+        out = list(mr.ch_report("01234567", mr.CompaniesHouse(None, fetcher=fake),
+                                today=dt.date(2026, 11, 22), list_filings=2))
+        flags = [r["flag"] for r in out if r["type"] == "ch_flag"]
+        self.assertEqual(flags, ["accounts overdue", "gazette notice", "late filing"])
+        officer = next(r for r in out if r["type"] == "ch_officer")
+        self.assertNotIn("date_of_birth", officer)  # people only in their company roles
+        self.assertNotIn("address", officer)
+        self.assertEqual(sum(1 for r in out if r["type"] == "ch_filing"), 2)  # listed, though all 3 were checked
+        self.assertEqual(out[-1]["filings_read"], 3)
+
+
+class UkAccounts(unittest.TestCase):
+    def test_entity_totals_texts_and_signs(self):
+        figures, texts = mr.parse_uk_ixbrl(fixture("uk_accounts.xhtml"))
+        y25 = figures["2025-12-31"]
+        self.assertEqual(y25["turnover"], 10578415)  # not the US segment's 999
+        self.assertEqual(y25["employees"], 53)  # after a self-closing text fact
+        self.assertEqual(y25["cash"], 1435903)
+        self.assertEqual(y25["operating_cash_flow"], -613886)
+        self.assertEqual(y25["tagged_negative"], ["operating_cash_flow"])
+        self.assertEqual(figures["2024-12-31"]["employees"], 63)
+        self.assertEqual(texts["going_concern_basis"], "true")
+        self.assertEqual(texts["auditor"], "Zome (Statutory Auditor)")
+        self.assertNotIn("audited", texts)  # the self-closing fact has no value
+
+    def test_older_accounts_fill_gaps_newer_ones_lack(self):
+        newer = '<xbrli:context id="a"><xbrli:period><xbrli:instant>2023-12-31</xbrli:instant></xbrli:period></xbrli:context>' \
+                '<ix:nonFraction contextRef="a" name="c:NetAssetsLiabilities" decimals="0">3,359,475</ix:nonFraction>'
+        older = fixture("uk_accounts.xhtml").replace("2025", "2023").replace("2024", "2022")
+        docs = {"m1": newer, "m2": older}
+        filings = {"items": [
+            {"type": "AA", "date": "2025-09-12", "transaction_id": "t1", "links": {"document_metadata": "m1"},
+             "description_values": {"made_up_date": "2024-12-31"}},
+            {"type": "AA", "date": "2024-10-31", "transaction_id": "t2", "links": {"document_metadata": "m2"},
+             "description_values": {"made_up_date": "2023-12-31"}}]}
+
+        class FakeCH:
+            def get(self, path):
+                return filings
+
+            def metadata(self, url):
+                return {"resources": {"application/xhtml+xml": {}}}
+
+            def document(self, url, accept):
+                return docs[url]
+        out = list(mr.uk_accounts("07217991", FakeCH(), sets=2))
+        y23 = next(r for r in out if r["type"] == "uk_accounts_year" and r["period_end"] == "2023-12-31")
+        self.assertEqual(y23["figures"]["net_assets"], 3359475)  # from the newer filing
+        self.assertEqual(y23["figures"]["turnover"], 10578415)  # filled from the older filing
+        self.assertEqual(len(y23["sources"]), 2)
 
 
 class Fetch(unittest.TestCase):
