@@ -1281,6 +1281,100 @@ class OfficersLayoffsHiring(unittest.TestCase):
         self.assertEqual([(r["date"], r["open_roles"]) for r in out], [("2025-01-01", 2), ("2025-02-01", 1)])
         self.assertEqual(next(mr.job_history("ashby", "acme", get))["type"], "jobs_history_unavailable")
 
+
+def cdb_block(rcs, end, deposited, fields, form="CA_BILANABR"):
+    rows = "".join(f'<Field id="x"><Label>{label}</Label><Data>{value}</Data><PreviousData>0</PreviousData>'
+                   f'<Reference xsi:nil="true"/>' for label, value in fields)
+    return (f"<Declarer><RcsNumber>{rcs}</RcsNumber><LegalUnitName>Acme S.A.</LegalUnitName>"
+            f'<Declaration language="FR" model="2" type="{form}"><StartDate>{end[:4]}-01-01</StartDate>'
+            f"<EndDate>{end}</EndDate><YearRef>{end[:4]}</YearRef><RCSDepositDate>{deposited}T09:00:00Z</RCSDepositDate>"
+            f"<ID_Doc>{end}{form}</ID_Doc><Currency>EUR</Currency><FormData>{rows}</FormData></Declaration></Declarer>")
+
+
+class LuxembourgRunFixes(unittest.TestCase):
+    def lu(self, blocks_by_url, today=dt.date(2026, 11, 22)):
+        dataset = {"resources": [{"title": "deposit-2026q3.xml", "url": "u/2026q3"},
+                                 {"title": "deposit-2025q3.xml", "url": "u/2025q3"},
+                                 {"title": "notes.pdf", "url": "u/x"}]}
+        return list(mr.lu_report("b 165616", quarters=12, fetcher=lambda u: json.dumps(dataset),
+                                 streamer=lambda url, rcs: blocks_by_url.get(url, []), today=today))
+
+    def test_figures_late_filing_and_negative_equity(self):
+        fy24 = cdb_block("B165616", "2024-12-31", "2025-11-30", [
+            ("TOTAL DU BILAN (ACTIF)", "2500000.00"), ("Capitaux propres", "-5670000.00"),
+            ("Capital souscrit", "100000.00"), ("Avoirs en banques, avoirs en compte de chèques postaux", "113000.00"),
+            ("Dettes", "8000000.00"), ("Emprunts convertibles", "6300000.00")])
+        fy24_pl = cdb_block("B165616", "2024-12-31", "2025-11-30", [
+            ("Chiffre d&apos;affaires net", "4000000.00"), ("Résultat de l&apos;exercice", "-9600000.00")], form="CA_COMPABR")
+        fy25 = cdb_block("B165616", "2025-12-31", "2026-07-15", [("Capitaux propres", "-1270000.00")])
+        out = self.lu({"u/2025q3": [fy24, fy24_pl], "u/2026q3": [fy25]})
+        years = {r["year_end"]: r for r in out if r["type"] == "lu_accounts_year"}
+        self.assertEqual((years["2024-12-31"]["equity"], years["2024-12-31"]["cash"], years["2024-12-31"]["turnover"],
+                          years["2024-12-31"]["net_result"], years["2024-12-31"]["convertible_loans"]),
+                         (-5670000.0, 113000.0, 4000000.0, -9600000.0, 6300000.0))
+        self.assertNotIn("debts", {k for k, v in years["2024-12-31"].items() if v == 100000.0})  # capital is not equity
+        flags = [(r["flag"], r["year_end"]) for r in out if r["type"] == "lu_flag"]
+        self.assertEqual(flags, [("late accounts", "2024-12-31"), ("negative equity", "2025-12-31")])
+        late = next(r for r in out if r.get("flag") == "late accounts")
+        self.assertEqual((late["due"], late["days_late"], late["recent"]), ("2025-07-31", 122, True))
+        self.assertEqual(out[-1]["quarters_searched"], ["2026q3", "2025q3"])
+
+    def test_unreadable_quarter_is_reported(self):
+        def streamer(url, rcs):
+            raise mr.FetchError("HTTP 503")
+        dataset = {"resources": [{"title": "deposit-2026q3.xml", "url": "u/2026q3"}]}
+        out = list(mr.lu_report("B1", fetcher=lambda u: json.dumps(dataset), streamer=streamer))
+        self.assertEqual(out[0]["type"], "lu_quarter_unreadable")
+
+    def test_gleif_fund_is_labelled(self):
+        rec = {"attributes": {"lei": "F1", "entity": {"legalName": {"name": "TADAWEB"}, "jurisdiction": "LU",
+                                                       "category": "FUND", "legalForm": {"id": "9999", "other": "SUB-FUND"}},
+                              "registration": {"status": "ISSUED"}}}
+        umbrella = {"attributes": {"lei": "U1", "entity": {"legalName": {"name": "Expansion 17 S.C.A., FIAR"}},
+                                   "registration": {"status": "ISSUED"}}}
+
+        def get(url):
+            path = url[len(mr.GLEIF):].split("?")[0]
+            if path == "/lei-records/F1":
+                return json.dumps({"data": rec})
+            if path == "/lei-records/F1/umbrella-fund":
+                return json.dumps({"data": umbrella})
+            raise mr.FetchError(f"HTTP 404 for {url}")
+        out = list(mr.gleif_report("F1", fetcher=get))
+        fund = next(r for r in out if r["type"] == "gleif_fund")
+        self.assertEqual((fund["legal_form_other"], fund["umbrella_fund"]), ("SUB-FUND", "Expansion 17 S.C.A., FIAR"))
+
+    def test_psc_mismatch_when_corporate_psc_ceased(self):
+        ch = fake_ch({"/company/11574511/persons-with-significant-control": {"items": [
+            {"name": "Tadaweb S.A.", "kind": "corporate-entity-person-with-significant-control",
+             "notified_on": "2018-09-13", "ceased_on": "2018-09-13"},
+            {"name": "Jane Doe", "kind": "individual-person-with-significant-control"}]}})
+        [r] = mr.psc_parent_mismatch("11574511", ch, ["The parent undertaking is Tadaweb S.A."])
+        self.assertEqual((r["statement"], r["last_corporate_psc"]), ("no current corporate PSC", "Tadaweb S.A."))
+        current = fake_ch({"/company/1/persons-with-significant-control": {"items": [
+            {"name": "Parent Ltd", "kind": "corporate-entity-person-with-significant-control"}]}})
+        self.assertEqual(list(mr.psc_parent_mismatch("1", current, ["parent"])), [])
+
+    def test_too_large_page_and_local_quote_check(self):
+        with tempfile.TemporaryDirectory() as d:
+            report = os.path.join(d, "financials.md")
+            with open(report, "w", encoding="utf-8") as f:
+                f.write("## Red flags\n1. **Negative equity** https://data.public.lu/big.xml Quote: \"Capitaux propres -5670000.00\"\n")
+            def fetcher(url):
+                raise mr.FetchError("response larger than 104857600 bytes")
+            records = list(mr.verify_reports([report], None, fetcher=fetcher))
+            self.assertEqual(records[0]["result"], "too_large")
+            extract = os.path.join(d, "cdb.xml")
+            with open(extract, "w", encoding="utf-8") as f:
+                f.write("<Field><Label>Capitaux propres</Label><Data>-5670000.00</Data></Field>")
+            out, saved = [], mr.emit
+            mr.emit = out.append
+            try:
+                mr.quote_check(extract, "Capitaux propres -5670000.00", None, 20)
+            finally:
+                mr.emit = saved
+            self.assertTrue(out[0]["found"])
+
 class Fetch(unittest.TestCase):
     def test_gzip_body_round_trips(self):
         body = b"<html>schedule</html>" * 100
