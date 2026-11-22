@@ -9,6 +9,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+import urllib.parse
 import zlib
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
@@ -695,6 +696,82 @@ class RunSixFixes(unittest.TestCase):
         self.assertEqual(out[0]["result"], "no_text_layer")
         self.assertEqual(out[-1]["no_text_layer"], 1)
 
+
+
+class RunSevenFixes(unittest.TestCase):
+    @staticmethod
+    def loan(fund, as_of, principal, mark, cusip="C1"):
+        return {"filer": "UBS Trust", "cik": "946110", "fund": fund, "as_of": as_of, "name": "Mitnick Corporate Purchaser",
+                "title": "Term Loan", "cusip": cusip, "balance": principal, "mark": mark, "url": as_of}
+
+    def test_loan_mark_change(self):
+        # the fund more than doubled its holding, so principal changes; CUSIP pairs the loan
+        holdings = [self.loan("Floating Rate High Income", "2025-07-31", 1000.0, 70.5),
+                    self.loan("Floating Rate High Income", "2026-07-31", 2500.0, 31.6)]
+        [c] = mr.fund_mark_changes(holdings)
+        self.assertEqual((c["from_mark"], c["to_mark"], c["change_points"], c["principal"], c["from_principal"]),
+                         (70.5, 31.6, -38.9, 2500.0, 1000.0))
+
+    def test_two_loans_paired_by_cusip(self):
+        holdings = [self.loan("F", "2025-07-31", 10.0, 90.0, "TL"), self.loan("F", "2025-07-31", 5.0, 95.0, "RV"),
+                    self.loan("F", "2026-07-31", 10.0, 30.0, "TL"), self.loan("F", "2026-07-31", 5.0, 60.0, "RV")]
+        got = sorted((c["from_mark"], c["to_mark"]) for c in mr.fund_mark_changes(holdings))
+        self.assertEqual(got, [(90.0, 30.0), (95.0, 60.0)])
+
+    def test_nport_distress_flags(self):
+        doc = fixture("nport.xml").replace("<isPaidKind>N</isPaidKind>", "<isPaidKind>Y</isPaidKind>", 1)
+        rows = mr.parse_nport_holdings(doc, ["Mitnick"])
+        self.assertEqual(rows[0]["fund_flags"], ["paid in kind"])
+        self.assertNotIn("fund_flags", mr.parse_nport_holdings(fixture("nport.xml"), ["Mitnick"])[0])
+
+    def test_covered_alias_note_names_the_phrase(self):
+        out, saved = [], mr.emit
+        mr.emit = out.append
+        try:
+            mr.skip_covered(["Mitnick Corp"], ["Mitnick"])
+        finally:
+            mr.emit = saved
+        self.assertIn('"Mitnick"', out[0]["note"])
+
+    def test_none_then_bullets_is_no_red_flags(self):
+        md = "## Red flags\n\nNone.\n\n- No crowdfunding round failed, because none was found.\n\n## Facts\n"
+        self.assertEqual(mr.parse_red_flags(md), [])
+
+    def test_bad_form_name_falls_back_to_each_form(self):
+        calls, saved = [], mr.fetch
+
+        def fake(url, ua):
+            forms = urllib.parse.parse_qs(urllib.parse.urlparse(url).query).get("forms", [""])[0]
+            calls.append(forms)
+            total = 38 if forms == "DEF 14A" else 0
+            hits = [{"_id": "0001-26-000001:p.htm", "_source": {"ciks": ["876167"], "form": "DEF 14A",
+                                                                 "file_date": "2026-03-01"}}] if total else []
+            return json.dumps({"hits": {"total": {"value": total}, "hits": hits}})
+        mr.fetch = fake
+        try:
+            hits, summary = mr.edgar_search("Veracode", ["DEF 14A", "SC 13D"], None, None, "ua", 1)
+        finally:
+            mr.fetch = saved
+        self.assertEqual(calls, ["DEF 14A,SC 13D", "DEF 14A", "SC 13D"])
+        self.assertEqual((len(hits), summary["total"], summary["forms_with_no_hits"]), (1, 38, ["SC 13D"]))
+
+    def test_cik_rejects_names(self):
+        self.assertEqual(mr.cik10("CIK1358559"), "0001358559")
+        with self.assertRaisesRegex(mr.FetchError, "edgar-search"):
+            mr.cik10("3M Company")
+
+    def test_no_charges_is_reported(self):
+        profile = {"company_name": "X LTD", "company_number": "07217991", "type": "ltd", "links": {}}
+
+        class FakeCH:
+            def get(self, path):
+                return profile if path == "/company/07217991" else None
+        out = list(mr.ch_report("07217991", FakeCH(), today=mr.dt.date(2026, 11, 22)))
+        self.assertEqual([r["count"] for r in out if r["type"] == "ch_charges"], [0])
+
+    def test_owed_by_named_parent_is_a_group_balance(self):
+        doc = "<p>At the year end, £3,240,355 (2024 - £2,572,241) was owed to the Company by Veracode Inc.</p>"
+        self.assertIn("3,240,355", mr.extract_notes(doc)["group_balances"][0])
 
 class Fetch(unittest.TestCase):
     def test_gzip_body_round_trips(self):

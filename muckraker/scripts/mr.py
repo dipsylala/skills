@@ -114,10 +114,11 @@ def emit(record):
 
 
 def cik10(cik):
-    digits = re.sub(r"\D", "", str(cik))
-    if not digits:
-        raise FetchError(f"not a CIK: {cik}")
-    return digits.zfill(10)
+    m = re.fullmatch(r"\s*(?:CIK)?\s*(\d{1,10})\s*", str(cik), re.I)
+    if not m:
+        raise FetchError(f'not a CIK: {cik}. Find the company\'s CIK with: mr.py edgar-search "{cik}", '
+                         f"or https://www.sec.gov/cgi-bin/browse-edgar?company={urllib.parse.quote(str(cik))}")
+    return m.group(1).zfill(10)
 
 
 _INVISIBLE_RE = re.compile("[­​‌‍⁠﻿]")  # soft hyphens, zero-width characters
@@ -255,6 +256,22 @@ def edgar_search(query, forms, start, end, user_agent, max_hits):
     hits = hits[:max_hits]
     summary = {"type": "search_summary", "phrase": query, "forms": forms or None,
                "total": total, "returned": len(hits), "truncated": len(hits) < total}
+    if not total and forms and len(forms) > 1:
+        # one unknown form name (EDGAR has "SCHEDULE 13D", not "SC 13D") empties the
+        # whole list, so search each form on its own and report the ones that found nothing
+        hits, summary = [], {"type": "search_summary", "phrase": query, "forms": forms,
+                             "total": 0, "returned": 0, "truncated": False, "forms_with_no_hits": []}
+        for form in forms:
+            found, part = edgar_search(query, [form], start, end, user_agent, max_hits)
+            hits += found
+            summary["total"] += part["total"]
+            if not part["total"]:
+                summary["forms_with_no_hits"].append(form)
+        hits = hits[:max_hits]
+        summary["returned"] = len(hits)
+        summary["truncated"] = len(hits) < summary["total"]
+        summary["note"] = ("the combined search found nothing, so each form was searched alone; a form with no "
+                           "hits may be misspelled (EDGAR uses names like SCHEDULE 13D and DEF 14A)")
     return hits, summary
 
 
@@ -557,6 +574,10 @@ def parse_nport_holdings(doc, aliases):
             v = find_text(sec, f"debtSec/{tag}")
             if v is not None:
                 record[tag] = v
+        flags = [label for tag, label in (("isDefault", "in default"), ("areIntrstPmntsInArrs", "interest in arrears"),
+                                          ("isPaidKind", "paid in kind")) if record.get(tag) == "Y"]
+        if flags:  # the fund's own report on the loan, like a BDC's flagged footnotes
+            record["fund_flags"] = flags
         if record.get("units") == "PA" and record.get("balance") and record.get("valUSD", -1) >= 0:
             record["mark"] = round(100 * record["valUSD"] / record["balance"], 1)
         notes = holding_notes(f"{name} {title}", record.get("valUSD"))
@@ -649,28 +670,43 @@ def fund_key(h):
 
 
 def fund_mark_changes(holdings):
-    """Per fund share line, the change in value per share from its earliest to its
-    latest point. Lines are paired by an unchanged share count, or, when the fund
-    holds one line at each date, by that line."""
+    """Per fund holding line, the change from its earliest to its latest point:
+    value per share for shares, `mark` (value as a percentage of principal) for
+    loans. Share lines are paired by an unchanged share count, loans by the same
+    CUSIP or title (a fund often buys or sells part of a loan), and otherwise a
+    fund's only line at each date is paired with itself."""
     by_fund = {}
     for h in holdings:
-        if h.get("value_per_share") is not None and h.get("as_of"):
-            by_fund.setdefault(fund_key(h), {}).setdefault(h["as_of"], []).append(h)
+        kind = "shares" if h.get("value_per_share") is not None else "loan" if h.get("mark") is not None else None
+        if kind and h.get("as_of"):
+            by_fund.setdefault((fund_key(h), kind), {}).setdefault(h["as_of"], []).append(h)
     out = []
-    for dates in by_fund.values():
+    for (_, kind), dates in by_fund.items():
         if len(dates) < 2:
             continue
         first, last = min(dates), max(dates)
         old, new = dates[first], dates[last]
-        pairs = [(o, n) for n in new for o in old if o["balance"] == n["balance"]]
+        if kind == "shares":
+            pairs = [(o, n) for n in new for o in old if o["balance"] == n["balance"]]
+        else:
+            pairs = [(o, n) for n in new for o in old
+                     if (o.get("cusip") and o.get("cusip") == n.get("cusip"))
+                     or (not o.get("cusip") and o.get("title") and o.get("title") == n.get("title"))]
+            if len(pairs) != len(new):  # titles that repeat across lines cannot tell them apart
+                pairs = []
         if not pairs and len(old) == 1 and len(new) == 1:
             pairs = [(old[0], new[0])]
         for o, n in pairs:
-            change = round(100 * (n["value_per_share"] / o["value_per_share"] - 1), 1) if o["value_per_share"] else None
-            out.append({"type": "fund_mark_change", "filer": n["filer"], "fund": n["fund"], "name": n["name"],
-                        "shares": n["balance"], "from_as_of": first, "to_as_of": last,
-                        "from_per_share": o["value_per_share"], "to_per_share": n["value_per_share"],
-                        "change_pct": change, "from_url": o["url"], "to_url": n["url"]})
+            record = {"type": "fund_mark_change", "filer": n["filer"], "fund": n["fund"], "name": n["name"],
+                      "from_as_of": first, "to_as_of": last, "from_url": o["url"], "to_url": n["url"]}
+            if kind == "shares":
+                change = round(100 * (n["value_per_share"] / o["value_per_share"] - 1), 1) if o["value_per_share"] else None
+                record.update({"shares": n["balance"], "from_per_share": o["value_per_share"],
+                               "to_per_share": n["value_per_share"], "change_pct": change})
+            else:
+                record.update({"principal": n["balance"], "from_principal": o["balance"], "from_mark": o["mark"],
+                               "to_mark": n["mark"], "change_points": round(n["mark"] - o["mark"], 1)})
+            out.append(record)
     return out
 
 
@@ -725,7 +761,7 @@ def skip_covered(aliases, searched):
         by = covering_alias(alias, searched)
         if by:
             emit({"type": "already_searched", "alias": alias, "covered_by": by,
-                  "note": "an earlier search for this phrase already matched every filing naming this alias"})
+                  "note": f'an earlier search for "{by}" already matched every filing naming this alias'})
         else:
             left.append(alias)
     return left
@@ -739,7 +775,7 @@ def marks(aliases, user_agent, since, per_filer, max_filers, verbose=False, seen
         by = covering_alias(alias, complete)
         if by:
             emit({"type": "already_searched", "alias": alias, "covered_by": by,
-                  "note": "this run's search for the shorter phrase already matched every filing naming this alias"})
+                  "note": f'a shorter alias in this run, "{by}", already matched every filing naming this alias'})
             continue
         whole = True
         # separate searches, so a flood of fund filings cannot push lenders past the cap
@@ -1127,7 +1163,11 @@ def ch_report(number, ch, max_filings=200, today=None, list_filings=25):
                "url": f"{web}/persons-with-significant-control"}
 
     # Always ask: the profile's has_charges can be stale (false while the register lists charges).
-    for c in (ch.get(f"/company/{number}/charges?items_per_page=100") or {}).get("items", []):
+    charges = (ch.get(f"/company/{number}/charges?items_per_page=100") or {}).get("items", [])
+    if not charges:
+        yield {"type": "ch_charges", "count": 0, "url": f"{web}/charges",
+               "note": "the charges register was read and lists no charges"}
+    for c in charges:
         yield {"type": "ch_charge", "status": c.get("status"), "created_on": c.get("created_on"),
                "delivered_on": c.get("delivered_on"), "satisfied_on": c.get("satisfied_on"),
                "persons_entitled": [x.get("name") for x in c.get("persons_entitled") or []],
@@ -1293,7 +1333,9 @@ NOTE_TOPICS = {  # topic: phrase patterns, most specific first; earlier tiers fi
                       r"going concern"],
     "events_after_year_end": [r"post balance sheet|subsequent event|events? after the (?:reporting|balance sheet|end of)"],
     "debt_and_covenants": [r"covenant|borrowing facilit|loan facilit|secured on|security over"],
-    "group_balances": [r"amounts? owed (?:by|to) (?:group|parent|related)|due (?:from|to) (?:group|parent|related) (?:undertaking|compan)",
+    "group_balances": [r"amounts? owed (?:by|to) (?:group|parent|related)|due (?:from|to) (?:group|parent|related) (?:undertaking|compan)"
+                       r"|owed (?:to|by) the company (?:by|to) \S"
+                       r"|(?:owed|due) (?:to|by|from) (?:its|the company's) (?:parent|fellow subsidiar|group)",
                        r"related part(?:y|ies)"],
 }
 
@@ -1394,8 +1436,9 @@ def uk_accounts(number, ch, sets=3):
         record = {"type": "uk_accounts_year", "period_end": end, "figures": figures, "sources": urls}
         if row.get("sign_mismatch"):
             record["sign_mismatch"] = sorted(row["sign_mismatch"])
-            record["note"] = ("figures use the sign printed in the accounts; the filer's XBRL sign tag disagrees "
-                              "for these, so a tool reading the tags would show the opposite sign")
+            record["note"] = ("figures use the sign printed in the accounts, which is right; the filer's XBRL sign "
+                              "tag disagrees for these, a tagging error by the filer, so a tool reading the tags "
+                              "would show the opposite sign. Not a red flag")
         yield record
     ends = sorted(combined)
     for prev, cur in zip(ends, ends[1:]):
@@ -1700,6 +1743,9 @@ def parse_red_flags(markdown):
     start = next((i for i, l in enumerate(lines)
                   if re.match(r"^\s*(#+\s*|\*\*)\s*Red flags\b", l, re.I)), None)
     if start is None:
+        return []
+    first = next((l for l in lines[start + 1:] if l.strip()), "")
+    if re.match(r"^\s*(none|no red flags)\b", first, re.I):  # "None." then explanatory bullets
         return []
     items, current = [], None
     for line in lines[start + 1:]:
