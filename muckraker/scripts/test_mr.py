@@ -481,6 +481,13 @@ class CompaniesHouseLateFilings(unittest.TestCase):
             raise mr.FetchError(f"HTTP 404 for {url}")
         flag = next(r for r in mr.ch_report("07654321", mr.CompaniesHouse(None, fetcher=fake)) if r.get("flag") == "late accounts")
         self.assertIn("2024-03-01", flag["possible_extension"])
+        self.assertNotIn("COVID", flag["possible_extension"])
+
+    def test_covid_extension_hint(self):
+        self.assertIn("automatic", mr.covid_extension(dt.date(2020, 9, 30)))
+        self.assertIn("on application", mr.covid_extension(dt.date(2021, 9, 30)))
+        self.assertIsNone(mr.covid_extension(dt.date(2022, 9, 30)))
+        self.assertIsNone(mr.covid_extension(dt.date(2019, 9, 30)))
 
 
 class UkAccounts(unittest.TestCase):
