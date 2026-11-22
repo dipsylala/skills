@@ -77,12 +77,14 @@ def fetch(url, user_agent, retries=2, auth=None, accept=None):
 def fetch_bytes(url, user_agent, retries=2, auth=None, accept=None):
     """Return the raw body of `url`. `auth` is sent as an Authorization header
     on this request only, never on a redirect (Companies House documents redirect
-    to signed storage URLs that reject it)."""
+    to signed storage URLs that reject it). `user_agent` is the user's SEC contact,
+    so it goes to sec.gov only; every other host gets a generic one."""
     global _last_sec_request
-    is_sec = urllib.parse.urlparse(url).hostname.endswith("sec.gov")
+    host = urllib.parse.urlparse(url).hostname or ""
+    is_sec = host == "sec.gov" or host.endswith(".sec.gov")
     if is_sec and not user_agent:
         raise FetchError("sec.gov needs --user-agent or MUCKRAKER_SEC_UA")
-    headers = {"User-Agent": user_agent or "muckraker", "Accept-Encoding": "gzip"}
+    headers = {"User-Agent": "muckraker", "Accept-Encoding": "gzip"}
     if accept:
         headers["Accept"] = accept
     for attempt in range(retries + 1):
@@ -92,6 +94,8 @@ def fetch_bytes(url, user_agent, retries=2, auth=None, accept=None):
                 time.sleep(wait)
             _last_sec_request = time.monotonic()
         request = urllib.request.Request(url, headers=headers)
+        if is_sec:  # unredirected, so a redirect to another host does not carry the contact
+            request.add_unredirected_header("User-Agent", user_agent)
         if auth:
             request.add_unredirected_header("Authorization", auth)
         try:
@@ -1899,8 +1903,11 @@ def verify_reports(paths, user_agent, fetcher=None):
                                   note="the cited page is a PDF with no text to search (often a scan); read it yourself")
                     totals["no_text_layer"] += 1
                 elif errors and len(errors) == len(flag["urls"]):
+                    no_contact = all("needs --user-agent" in e for e in errors)
                     record.update(result="unreachable", errors=errors,
-                                  note="no cited page could be fetched; check it in a browser")
+                                  note="sec.gov pages need the SEC contact: rerun with --user-agent (it is sent to "
+                                       "sec.gov only), or check the quote with quote-check" if no_contact
+                                  else "no cited page could be fetched; check it in a browser")
                     totals["unreachable"] += 1
                 else:
                     record.update(result="not_found", errors=errors or None)
