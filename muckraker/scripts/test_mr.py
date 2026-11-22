@@ -885,7 +885,9 @@ class Fetch(unittest.TestCase):
             def __exit__(self, *a): return False
 
         def urlopen(request, timeout):
-            sent[urllib.parse.urlparse(request.full_url).hostname] = request.get_header("User-agent")
+            # what urllib sends: unredirected headers win over ordinary ones
+            sent[urllib.parse.urlparse(request.full_url).hostname] = (
+                request.unredirected_hdrs.get("User-agent") or request.get_header("User-agent"))
             return Response(b"ok")
         contact = "Jane Doe jane@example.com"
         original, mr.urllib.request.urlopen = mr.urllib.request.urlopen, urlopen
@@ -900,6 +902,37 @@ class Fetch(unittest.TestCase):
         self.assertEqual(sent["efts.sec.gov"], contact)
         for host in ("find-and-update.company-information.service.gov.uk", "tech.eu", "notsec.gov"):
             self.assertEqual(sent[host], "muckraker")
+
+    def test_sec_contact_dropped_on_redirect(self):
+        captured = []
+
+        class Response(io.BytesIO):
+            headers = {}
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        def urlopen(request, timeout):
+            captured.append(request)
+            return Response(b"ok")
+        original, mr.urllib.request.urlopen = mr.urllib.request.urlopen, urlopen
+        try:
+            mr.fetch("https://www.sec.gov/x", "Jane Doe jane@example.com", retries=0)
+        finally:
+            mr.urllib.request.urlopen = original
+        # urllib's own redirect handling builds the next request from the ordinary headers only
+        followed = urllib.request.HTTPRedirectHandler().redirect_request(
+            captured[0], None, 302, "Found", {}, "https://elsewhere.example/y")
+        self.assertNotIn("Jane", str(followed.header_items()))
+
+    def test_missing_contact_explained(self):
+        def fetcher(url):
+            raise mr.FetchError("sec.gov needs --user-agent or MUCKRAKER_SEC_UA")
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "sec.md")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("SOURCE: SEC\n## Red flags\n1. **X** https://www.sec.gov/a QUOTE: \"one two three four five\"\n")
+            out = list(mr.verify_reports([path], None, fetcher=fetcher))
+        self.assertIn("--user-agent", out[0]["note"])
 
 
 if __name__ == "__main__":
