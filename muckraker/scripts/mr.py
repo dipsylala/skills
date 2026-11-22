@@ -2030,6 +2030,295 @@ def pdf_text_records(pdf, source):
 
 # --------------------------------------------------------------- quote -----
 
+# ------------------------------------------------------ officer history ----
+
+INSOLVENT_STATUSES = {"liquidation", "administration", "receivership", "voluntary-arrangement",
+                      "insolvency-proceedings"}
+DIRECTOR_ROLES = {"director", "llp-member", "llp-designated-member", "member"}
+
+
+def _name_tokens(name):
+    """Lower-case name words, for "SURNAME, Forenames" and "Forenames SURNAME" alike."""
+    return set(re.findall(r"[a-z]+", (name or "").lower()))
+
+
+SOLVENT_CASES = {"members-voluntary-liquidation"}  # a solvent winding-up, routine for group subsidiaries
+
+
+def insolvency_cases(ch, number):
+    """The company's insolvency case types, leaving out solvent (members') liquidations."""
+    cases = (ch.get(f"/company/{number}/insolvency") or {}).get("cases") or []
+    return [c.get("type") for c in cases if c.get("type") not in SOLVENT_CASES]
+
+
+def ch_officers(number, ch, max_appointments=100, max_checks=30):
+    """Each current director's other UK appointments: companies that went insolvent,
+    and any matching disqualification. Company roles only: no addresses or birth
+    dates in the output."""
+    number = number.strip().upper()
+    officers = (ch.get(f"/company/{number}/officers?items_per_page=100") or {}).get("items", [])
+    directors = [o for o in officers if not o.get("resigned_on") and o.get("officer_role") in DIRECTOR_ROLES]
+    flagged = 0
+    for o in directors:
+        link = ((o.get("links") or {}).get("officer") or {}).get("appointments")
+        if not link:
+            continue
+        data = ch.get(f"{link}?items_per_page={max_appointments}") or {}
+        items, insolvent, checked, unchecked = data.get("items") or [], [], 0, 0
+        for a in items:
+            to = a.get("appointed_to") or {}
+            other, status = to.get("company_number"), to.get("company_status")
+            if other == number or not (status in INSOLVENT_STATUSES or status == "dissolved"):
+                continue
+            if checked >= max_checks:
+                unchecked += status in INSOLVENT_STATUSES
+                continue
+            checked += 1
+            if status == "dissolved" and not (ch.get(f"/company/{other}") or {}).get("has_insolvency_history"):
+                continue  # struck off without an insolvency
+            cases = insolvency_cases(ch, other)  # a members' (solvent) liquidation is not an insolvency
+            if cases:
+                insolvent.append(other)
+                yield {"type": "ch_officer_insolvent_company", "officer": o.get("name"), "company_number": other,
+                       "company_name": to.get("company_name"), "status": status, "cases": cases,
+                       "role": a.get("officer_role"), "appointed_on": a.get("appointed_on"),
+                       "resigned_on": a.get("resigned_on"), "url": f"{CH_WEB}/company/{other}/insolvency"}
+        yield {"type": "ch_officer_history", "officer": o.get("name"), "role": o.get("officer_role"),
+               "appointments": data.get("total_results", len(items)), "read": len(items),
+               "active": sum(1 for a in items if (a.get("appointed_to") or {}).get("company_status") == "active"),
+               "insolvent_companies": len(insolvent), "unchecked_in_liquidation_or_administration": unchecked,
+               "url": f"{CH_WEB}{link}"}
+        if insolvent:
+            flagged += 1
+            many = len(insolvent) >= 2
+            yield {"type": "ch_flag", "flag": "director of insolvent companies" if many else "director of an insolvent company",
+                   "severity": "major" if many else "minor", "officer": o.get("name"), "companies": insolvent,
+                   "rule": "a director of two or more companies that went insolvent is the 'phoenix' pattern; one is "
+                           "common among founders, so check whether they served in the run-up",
+                   "url": f"{CH_WEB}{link}"}
+        dob = o.get("date_of_birth") or {}
+        q = urllib.parse.quote(o.get("name") or "")
+        for d in (ch.get(f"/search/disqualified-officers?q={q}&items_per_page=20") or {}).get("items", []):
+            born = _date((d.get("date_of_birth") or "")[:10] or None)
+            same_name = _name_tokens(d.get("title")) == _name_tokens(o.get("name"))
+            if same_name and born and dob and (born.year, born.month) == (dob.get("year"), dob.get("month")):
+                flagged += 1
+                yield {"type": "ch_flag", "flag": "disqualified director", "severity": "major", "officer": o.get("name"),
+                       "disqualification": d.get("description"),
+                       "rule": "the disqualified directors register lists someone with the same name and birth month",
+                       "url": CH_WEB + ((d.get("links") or {}).get("self") or "")}
+    yield {"type": "ch_officers_summary", "company_number": number, "directors": len(directors), "flags": flagged}
+
+
+# -------------------------------------------------------------- layoffs ----
+
+CA_WARN = "https://edd.ca.gov/siteassets/files/jobs_and_training/warn/warn_report1.xlsx"
+TX_WARN = "https://data.texas.gov/resource/8w53-c4f6.json"
+_XLSX = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+MAX_XLSX_UNPACKED = 50 * 1024 * 1024
+
+
+def xlsx_rows(data):
+    """Rows of every sheet in an .xlsx file, in sheet order, each a dict of column letter to text."""
+    import io
+    import zipfile
+    z = zipfile.ZipFile(io.BytesIO(data))
+    if sum(i.file_size for i in z.infolist()) > MAX_XLSX_UNPACKED:
+        raise ValueError("the spreadsheet unpacks to too much data")
+    shared = []
+    if "xl/sharedStrings.xml" in z.namelist():
+        shared = ["".join(t.text or "" for t in si.iter(_XLSX + "t"))
+                  for si in ET.fromstring(z.read("xl/sharedStrings.xml")).findall(_XLSX + "si")]
+    sheets = sorted((n for n in z.namelist() if re.match(r"xl/worksheets/sheet\d+\.xml$", n)),
+                    key=lambda n: int(re.search(r"(\d+)\.xml$", n).group(1)))
+    for name in sheets:
+        for row in ET.fromstring(z.read(name)).iter(_XLSX + "row"):
+            out = {}
+            for c in row.findall(_XLSX + "c"):
+                v = c.find(_XLSX + "v")
+                if v is None or v.text is None:
+                    continue
+                out[re.sub(r"\d", "", c.get("r") or "")] = shared[int(v.text)] if c.get("t") == "s" else v.text
+            yield out
+
+
+def _excel_date(value):
+    if value and re.fullmatch(r"\d+(\.\d+)?", value):
+        return (dt.date(1899, 12, 30) + dt.timedelta(days=int(float(value)))).isoformat()
+    return value
+
+
+def _name_match(name, text):
+    """True when every distinctive word of the company name appears in `text` as a word."""
+    words = distinctive_words(name) or set(re.findall(r"\w+", name.lower()))
+    return bool(words) and words <= set(re.findall(r"\w+", (text or "").lower()))
+
+
+def _int_or_none(value):
+    return int(value) if value and str(value).isdigit() else None
+
+
+def warn_ca(name, data):
+    header = None
+    for row in xlsx_rows(data):
+        cells = {k: re.sub(r"\s+", " ", v).strip() for k, v in row.items()}
+        if "Company" in cells.values() and any(v.startswith("Notice") for v in cells.values()):
+            header = {v.lower(): k for k, v in cells.items()}
+            continue
+        if not header:
+            continue
+        col = lambda label: cells.get(header.get(label, ""))
+        if _name_match(name, col("company")):
+            yield {"type": "warn_notice", "state": "CA", "company": col("company"),
+                   "notice_date": _excel_date(col("notice date")), "effective_date": _excel_date(col("effective date")),
+                   "employees": _int_or_none(col("no. of employees")), "kind": col("layoff/ closure"),
+                   "site": col("address"), "url": CA_WARN}
+
+
+def warn_report(name, fetcher=None):
+    """WARN notices naming the company in states that publish them as open data."""
+    get = fetcher or (lambda u: fetch_bytes(u, None))
+    covered, found = [], 0
+    try:
+        for r in warn_ca(name, get(CA_WARN)):
+            found += 1
+            yield r
+        covered.append("CA (current fiscal year from 1 July; earlier years are PDFs)")
+    except (FetchError, ValueError, KeyError) as e:
+        yield {"type": "warn_unavailable", "state": "CA", "error": str(e), "url": CA_WARN}
+    word = max(distinctive_words(name) or {name}, key=len).upper().replace("'", "''")
+    tx_url = TX_WARN + "?" + urllib.parse.urlencode({"$where": f"upper(job_site_name) like '%{word}%'", "$limit": 200})
+    try:
+        for r in json.loads(get(tx_url)):
+            if _name_match(name, r.get("job_site_name")):
+                found += 1
+                yield {"type": "warn_notice", "state": "TX", "company": r.get("job_site_name"),
+                       "notice_date": (r.get("notice_date") or "")[:10], "effective_date": (r.get("layoff_date") or "")[:10],
+                       "employees": _int_or_none(r.get("total_layoff_number")), "site": r.get("city_name"), "url": tx_url}
+        covered.append("TX (open data, updated every few months)")
+    except (FetchError, ValueError) as e:
+        yield {"type": "warn_unavailable", "state": "TX", "error": str(e), "url": tx_url}
+    yield {"type": "warn_summary", "query": name, "notices": found, "states_searched": covered,
+           "note": "WARN notices are filed for layoffs of 50 or more at one site; other states publish theirs as web "
+                   "pages or PDFs, so search those where the company has offices"}
+
+
+# --------------------------------------------------------------- hiring ----
+
+JOB_BOARDS = [  # provider, pattern for the board token in a careers page or URL
+    ("greenhouse", r"greenhouse\.io/embed/job_board(?:/js)?\?for=([A-Za-z0-9_-]+)"),
+    ("greenhouse", r"(?:boards|job-boards)(?:\.eu)?\.greenhouse\.io/([A-Za-z0-9_-]+)"),
+    ("lever", r"jobs(?:\.eu)?\.lever\.co/([A-Za-z0-9_-]+)"),
+    ("ashby", r"jobs\.ashbyhq\.com/([A-Za-z0-9_.-]+)"),
+]
+BOARD_PAGES = {"greenhouse": ["https://job-boards.greenhouse.io/{t}", "https://boards.greenhouse.io/{t}"],
+               "lever": ["https://jobs.lever.co/{t}"]}
+BOARD_JOB_LINK = {"greenhouse": r"/{t}/jobs/(\d+)", "lever": r"jobs\.lever\.co/{t}/([0-9a-f-]{{36}})"}
+
+
+def find_job_board(text):
+    """(provider, token) for the first job board linked from a careers page, or None."""
+    for provider, pattern in JOB_BOARDS:
+        for m in re.finditer(pattern, text):
+            if m.group(1).lower() not in ("embed", "jobs", "js"):
+                return provider, m.group(1)
+    return None
+
+
+def job_board_openings(provider, token, get):
+    """Open roles as (title, department, location) from the provider's public jobs API."""
+    if provider == "greenhouse":
+        url = f"https://boards-api.greenhouse.io/v1/boards/{token}/departments"
+        jobs = [(j.get("title"), d.get("name"), (j.get("location") or {}).get("name"))
+                for d in json.loads(get(url)).get("departments") or [] for j in d.get("jobs") or []]
+    elif provider == "lever":
+        url = f"https://api.lever.co/v0/postings/{token}?mode=json"
+        jobs = [(j.get("text"), (j.get("categories") or {}).get("team"), (j.get("categories") or {}).get("location"))
+                for j in json.loads(get(url))]
+    else:
+        url = f"https://api.ashbyhq.com/posting-api/job-board/{token}"
+        jobs = [(j.get("title"), j.get("department"), j.get("location"))
+                for j in json.loads(get(url)).get("jobs") or [] if j.get("isListed", True)]
+    return jobs, url
+
+
+def job_history(provider, token, get, months=12, pause=1.0):
+    """Approximate open-role counts from monthly Wayback Machine snapshots of the board page."""
+    link = BOARD_JOB_LINK.get(provider)
+    if not link:
+        yield {"type": "jobs_history_unavailable", "provider": provider,
+               "note": "this provider's board page is built by JavaScript, so archived copies hold no job list"}
+        return
+    pattern = re.compile(link.format(t=re.escape(token)))
+    rows = []
+    for page in BOARD_PAGES[provider]:
+        cdx = "https://web.archive.org/cdx/search/cdx?" + urllib.parse.urlencode(
+            {"url": page.format(t=token), "output": "json", "filter": "statuscode:200", "collapse": "timestamp:6"})
+        rows = (json.loads(get(cdx) or "[]") or [[]])[1:]
+        if rows:
+            break
+    if not rows:
+        yield {"type": "jobs_history_unavailable", "provider": provider, "note": "no archived copies of the board page"}
+        return
+    for ts, original in [(r[1], r[2]) for r in rows[-months:]]:
+        date, snap = f"{ts[:4]}-{ts[4:6]}-{ts[6:8]}", f"https://web.archive.org/web/{ts}id_/{original}"
+        try:
+            count = len(set(pattern.findall(get(snap))))
+        except FetchError as e:
+            yield {"type": "jobs_snapshot_unreadable", "date": date, "error": str(e)}
+            continue
+        yield {"type": "jobs_snapshot", "date": date, "open_roles": count, "approximate": True, "url": snap}
+        time.sleep(pause)
+
+
+def jobs_report(target, history=False, fetcher=None, pause=1.0):
+    """Open roles from the company's job board, by department and location, and
+    optionally a monthly trend from archived copies of the board page."""
+    get = fetcher or (lambda u: fetch(u, None))
+    m = re.fullmatch(r"(greenhouse|lever|ashby):([A-Za-z0-9_.-]+)", target)
+    board = (m.group(1), m.group(2)) if m else find_job_board(target)
+    if not board:
+        try:
+            board = find_job_board(get(target))
+        except FetchError as e:
+            yield {"type": "error", "error": str(e)}
+            return
+    guessed = False
+    if not board:  # many careers pages build the job list in JavaScript; try the domain's name as the board
+        label = (urllib.parse.urlparse(target).hostname or "").removeprefix("www.").split(".")[0]
+        for provider in ("greenhouse", "ashby", "lever"):
+            try:
+                if label and job_board_openings(provider, label, get)[0]:
+                    board, guessed = (provider, label), True
+                    break
+            except (FetchError, ValueError):
+                continue
+    if not board:
+        yield {"type": "jobs_board_unknown", "url": target,
+               "note": "no Greenhouse, Lever or Ashby board is linked from this page; pass provider:token if you know it"}
+        return
+    provider, token = board
+    try:
+        jobs, url = job_board_openings(provider, token, get)
+    except (FetchError, ValueError) as e:
+        yield {"type": "error", "error": f"{provider} board {token}: {e}"}
+        return
+    if guessed:
+        yield {"type": "jobs_board_guessed", "provider": provider, "board": token, "url": url,
+               "note": "the careers page links no board, so this one was found by the company's domain name; "
+                       "check that its job pages are the company's before using the counts"}
+
+    def tally(i):
+        counts = {}
+        for j in jobs:
+            counts[j[i] or "unspecified"] = counts.get(j[i] or "unspecified", 0) + 1
+        return dict(sorted(counts.items(), key=lambda x: -x[1]))
+    yield {"type": "jobs_openings", "provider": provider, "board": token, "open_roles": len(jobs),
+           "by_department": tally(1), "by_location": dict(list(tally(2).items())[:15]), "url": url}
+    if history:
+        yield from job_history(provider, token, get, pause=pause)
+
+
 # --------------------------------------------------------------- France ----
 
 FR_SEARCH = "https://recherche-entreprises.api.gouv.fr/search?q="
@@ -2572,6 +2861,17 @@ def main(argv=None):
     s.add_argument("name")
     s.add_argument("--limit", type=int, default=20)
 
+    s = sub.add_parser("ch-officers", help="UK Companies House: directors' other companies that went insolvent, and disqualifications")
+    s.add_argument("company_number")
+    s.add_argument("--max-appointments", type=int, default=100, help="appointments to read per director")
+
+    s = sub.add_parser("warn", help="US WARN layoff notices naming the company (states with open data)")
+    s.add_argument("name")
+
+    s = sub.add_parser("jobs", help="open roles from the company's job board, optionally with a monthly trend")
+    s.add_argument("target", help="the careers page URL, a job-board URL, or provider:token (greenhouse:acme)")
+    s.add_argument("--history", action="store_true", help="also count roles in monthly archived copies (slow)")
+
     s = sub.add_parser("uk-accounts", help="UK Companies House: multi-year figures from iXBRL accounts")
     s.add_argument("company_number")
     s.add_argument("--sets", type=int, default=3, help="accounts filings to read (each covers two years)")
@@ -2649,6 +2949,16 @@ def main(argv=None):
             results = ch_report(a.company_number, ch, a.max_filings, list_filings=a.list_filings) if a.cmd == "ch" \
                 else uk_accounts(a.company_number, ch, a.sets)
             for r in results:
+                emit(r)
+        elif a.cmd == "ch-officers":
+            ch = CompaniesHouse(os.environ.get("COMPANIES_HOUSE_API_KEY"))
+            for r in ch_officers(a.company_number, ch, a.max_appointments):
+                emit(r)
+        elif a.cmd == "warn":
+            for r in warn_report(a.name):
+                emit(r)
+        elif a.cmd == "jobs":
+            for r in jobs_report(a.target, a.history):
                 emit(r)
         elif a.cmd == "ie":
             for r in ie_report(a.cro_or_name):
