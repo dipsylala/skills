@@ -26,4 +26,4 @@ For each country the entity record names:
 3. **Accounts:** the latest filed accounts' period and filing date, and the headline figures where the register gives them free (revenue, profit or loss, equity, debt, auditor). Leave the full analysis to the Financials agent; record the figures here with their URL.
 4. **Insolvency:** any insolvency, liquidation, or winding-up notice, with its date and type.
 
-Report as red flags, established by the register: an insolvency, liquidation, or winding-up proceeding, a status other than active (struck off, dissolved, in liquidation), and a negative equity figure in the latest filed accounts.
+Report as red flags, established by the register: an insolvency, liquidation, or winding-up proceeding, a status other than active (struck off, dissolved, in liquidation), and a negative equity figure in the latest filed accounts, each only for a company that a register, GLEIF, or the accounts show belongs to the group. A company linked to the group only by press, such as an acquisition that may have been an asset purchase, goes under Facts with what links it.
