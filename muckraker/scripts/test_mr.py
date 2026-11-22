@@ -78,6 +78,17 @@ class NportHoldings(unittest.TestCase):
         self.assertEqual(r["isDefault"], "N")
         self.assertEqual(r["maturityDt"], "2029-05-02")
 
+    def test_quote_keeps_values_as_written(self):
+        r = mr.parse_nport_holdings(fixture("nport.xml"), ["Mitnick"])[0]
+        self.assertIn("<balance>1162621.57000000</balance> <valUSD>350449.02000000</valUSD>", r["quote"])
+        self.assertTrue(r["quote"].startswith("<name>"))
+        self.assertNotIn("value_per_share", r)  # a loan (units PA), not shares
+
+    def test_share_holding_gets_value_per_share(self):
+        doc = fixture("nport.xml").replace("<units>PA</units>", "<units>NS</units>")
+        r = mr.parse_nport_holdings(doc, ["Mitnick"])[0]
+        self.assertEqual(r["value_per_share"], round(350449.02 / 1162621.57, 4))
+
 
 class TableRows(unittest.TestCase):
     def test_keeps_holding_rows_only(self):
@@ -302,6 +313,25 @@ class FundTrend(unittest.TestCase):
                     {**self.row("NYLI Floating Rate Fund", "2025-07-31"), "series_id": "S1"}]
         self.assertEqual(mr.fund_trend_notes(holdings, per_filer=2), [])
 
+    def test_closed_end_fund_renamed_and_to_ampersand(self):
+        # closed-end funds file no series id; BlackRock renamed "and" to "&" between filings
+        holdings = [self.row("BlackRock Science & Technology Term Trust", "2026-06-30"),
+                    self.row("BlackRock Science and Technology Term Trust", "2025-06-30")]
+        self.assertEqual(mr.fund_trend_notes(holdings, per_filer=2), [])
+
+    def test_mark_change_per_share_line(self):
+        def line(fund, as_of, shares, value):
+            return {**self.row(fund, as_of), "name": "SNYK LIMITED", "balance": shares, "url": as_of,
+                    "value_per_share": round(value / shares, 4)}
+        holdings = [line("BST & Co", "2026-06-30", 1267643.0, 3422636.1),
+                    line("BST & Co", "2026-06-30", 2663936.0, 7192627.2),
+                    line("BST and Co", "2025-06-30", 2663936.0, 15397550.08),
+                    line("BST and Co", "2025-06-30", 1267643.0, 7326976.54)]
+        changes = sorted(mr.fund_mark_changes(holdings), key=lambda c: c["shares"])
+        self.assertEqual([(c["shares"], c["from_per_share"], c["to_per_share"], c["change_pct"]) for c in changes],
+                         [(1267643.0, 5.78, 2.7, -53.3), (2663936.0, 5.78, 2.7, -53.3)])
+        self.assertEqual(changes[0]["from_as_of"], "2025-06-30")
+
 
 class MarksOutput(unittest.TestCase):
     def test_trend_notes_only_for_holders(self):
@@ -341,6 +371,22 @@ class MarksOutput(unittest.TestCase):
         self.assertTrue(any(r["type"] == "table_row" for r in first))
         self.assertFalse(any(r["type"] == "table_row" for r in second))
         self.assertEqual(next(r for r in second if r["type"] == "already_seen")["skipped"], 1)
+
+    def test_broader_alias_in_same_run_covers_longer_ones(self):
+        searched, out, saved = [], [], (mr.edgar_search, mr.emit)
+
+        def search(alias, forms, *a):
+            searched.append(alias)
+            return [], {"type": "search_summary", "truncated": alias == "Falcon"}
+        mr.edgar_search, mr.emit = search, out.append
+        try:
+            mr.marks(["Snyk Limited", "Snyk", "Snyk, Inc.", "Falcon Purchaser", "Falcon"], "ua", "2025-08-01", 2, 20)
+        finally:
+            mr.edgar_search, mr.emit = saved
+        # "Falcon" was cut short, so the longer Falcon name still gets its own search
+        self.assertEqual(sorted(set(searched)), ["Falcon", "Falcon Purchaser", "Snyk"])
+        self.assertEqual(sorted((r["alias"], r["covered_by"]) for r in out if r["type"] == "already_searched"),
+                         [("Snyk Limited", "Snyk"), ("Snyk, Inc.", "Snyk")])
 
 
     def test_skip_seen_skips_covered_aliases(self):
@@ -592,6 +638,28 @@ class UkAccounts(unittest.TestCase):
         self.assertEqual(y23["figures"]["net_assets"], 3359475)  # from the newer filing
         self.assertEqual(y23["figures"]["turnover"], 10578415)  # filled from the older filing
         self.assertEqual(len(y23["sources"]), 2)
+
+    def test_scanned_latest_accounts_are_reported(self):
+        filings = {"items": [
+            {"type": "AA", "date": "2026-09-30", "transaction_id": "t0", "links": {"document_metadata": "m0"},
+             "description_values": {"made_up_date": "2025-12-31"}},
+            {"type": "AA", "date": "2019-09-30", "transaction_id": "t1", "links": {"document_metadata": "m1"},
+             "description_values": {"made_up_date": "2018-12-31"}}]}
+
+        class FakeCH:
+            def get(self, path):
+                return filings
+
+            def metadata(self, url):
+                return {"resources": {"application/pdf": {}} if url == "m0" else {"application/xhtml+xml": {}}}
+
+            def document(self, url, accept):
+                return fixture("uk_accounts.xhtml")
+        out = list(mr.uk_accounts("09677925", FakeCH()))
+        types = [r["type"] for r in out]
+        self.assertLess(types.index("uk_accounts_latest_scanned"), types.index("uk_accounts_notes"))
+        r = next(r for r in out if r["type"] == "uk_accounts_latest_scanned")
+        self.assertEqual((r["scanned_made_up_dates"], r["notes_from"]), (["2025-12-31"], "2018-12-31"))
 
 
 class RunSixFixes(unittest.TestCase):

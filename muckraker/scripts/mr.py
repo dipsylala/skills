@@ -541,10 +541,18 @@ def parse_nport_holdings(doc, aliases):
         record = {"fund": fund, "as_of": period, "name": name, "title": title}
         if series:
             record["series_id"] = series
+        raw = {}
         for tag in ("balance", "units", "curCd", "valUSD", "pctVal", "assetCat", "fairValLevel", "cusip", "lei"):
             v = find_text(sec, tag)
             if v is not None:
+                raw[tag] = v
                 record[tag] = float(v) if tag in ("balance", "valUSD", "pctVal") else v
+        # values exactly as the file writes them, ready for a red-flag quote
+        record["quote"] = " ".join(f"<{t}>{v}</{t}>" for t, v in
+                                   [("name", find_text(sec, "name"))] + [(t, raw.get(t)) for t in ("balance", "valUSD")]
+                                   if v is not None)
+        if record.get("units") == "NS" and record.get("balance") and "valUSD" in record:
+            record["value_per_share"] = round(record["valUSD"] / record["balance"], 4)
         for tag in ("maturityDt", "couponKind", "annualizedRt", "isDefault", "areIntrstPmntsInArrs", "isPaidKind"):
             v = find_text(sec, f"debtSec/{tag}")
             if v is not None:
@@ -611,7 +619,7 @@ def fund_trend_notes(holdings, per_filer):
         return []
     by_fund = {}
     for h in holdings:
-        by_fund.setdefault((h["cik"], h.get("series_id") or h["fund"]), []).append(h)
+        by_fund.setdefault(fund_key(h), []).append(h)
     trust_latest = {}
     for h in holdings:
         if h.get("as_of"):
@@ -628,6 +636,42 @@ def fund_trend_notes(holdings, per_filer):
                           "latest_as_of": latest.get("as_of"),
                           "note": "no earlier holding from this fund; the trust's other funds' filings are not comparable"})
     return notes
+
+
+def fund_key(h):
+    """A fund's identity across filings: its series id, or for a fund without one
+    (a closed-end fund) its name with "&"/"and", case and punctuation evened out,
+    since funds rename "Science and Technology" to "Science & Technology"."""
+    if h.get("series_id"):
+        return (h["cik"], h["series_id"])
+    name = re.sub(r"\s*&\s*", " and ", (h.get("fund") or "").lower())
+    return (h["cik"], " ".join(re.findall(r"\w+", name)))
+
+
+def fund_mark_changes(holdings):
+    """Per fund share line, the change in value per share from its earliest to its
+    latest point. Lines are paired by an unchanged share count, or, when the fund
+    holds one line at each date, by that line."""
+    by_fund = {}
+    for h in holdings:
+        if h.get("value_per_share") is not None and h.get("as_of"):
+            by_fund.setdefault(fund_key(h), {}).setdefault(h["as_of"], []).append(h)
+    out = []
+    for dates in by_fund.values():
+        if len(dates) < 2:
+            continue
+        first, last = min(dates), max(dates)
+        old, new = dates[first], dates[last]
+        pairs = [(o, n) for n in new for o in old if o["balance"] == n["balance"]]
+        if not pairs and len(old) == 1 and len(new) == 1:
+            pairs = [(old[0], new[0])]
+        for o, n in pairs:
+            change = round(100 * (n["value_per_share"] / o["value_per_share"] - 1), 1) if o["value_per_share"] else None
+            out.append({"type": "fund_mark_change", "filer": n["filer"], "fund": n["fund"], "name": n["name"],
+                        "shares": n["balance"], "from_as_of": first, "to_as_of": last,
+                        "from_per_share": o["value_per_share"], "to_per_share": n["value_per_share"],
+                        "change_pct": change, "from_url": o["url"], "to_url": n["url"]})
+    return out
 
 
 GENERIC_ALIAS_HITS = 2000  # a borrower name matching more filings than this is probably a common word
@@ -690,11 +734,18 @@ def skip_covered(aliases, searched):
 def marks(aliases, user_agent, since, per_filer, max_filers, verbose=False, seen=None):
     seen = seen or set()
     emit({"type": "marks_search", "aliases": aliases, "since": since})  # lets --skip-seen skip covered aliases
-    hits = []
-    for alias in aliases:
+    hits, complete = [], []  # complete: aliases whose searches returned every hit
+    for alias in sorted(aliases, key=len):  # broadest first, so it can cover the longer names
+        by = covering_alias(alias, complete)
+        if by:
+            emit({"type": "already_searched", "alias": alias, "covered_by": by,
+                  "note": "this run's search for the shorter phrase already matched every filing naming this alias"})
+            continue
+        whole = True
         # separate searches, so a flood of fund filings cannot push lenders past the cap
         for forms in (["10-K", "10-Q"], ["NPORT-P"]):
             found, summary = edgar_search(alias, forms, since, None, user_agent, SEARCH_CAP)
+            whole = whole and not summary["truncated"]
             hits += found
             if summary["truncated"] or verbose:
                 emit(summary)
@@ -702,6 +753,8 @@ def marks(aliases, user_agent, since, per_filer, max_filers, verbose=False, seen
                 emit({"type": "generic_alias", "alias": alias, "forms": forms, "total": summary.get("total"),
                       "note": "this name matches thousands of filings, so it is probably a common word; "
                               "results for it are mostly unrelated and the search was cut short"})
+        if whole:
+            complete.append(alias)
     # lenders (10-K/10-Q schedules) before funds (N-PORT), most recent first, so
     # --max-filers keeps the loan books and the freshest holders
     latest, lender = {}, set()
@@ -766,6 +819,8 @@ def marks(aliases, user_agent, since, per_filer, max_filers, verbose=False, seen
     for note in fund_trend_notes(fund_rows, per_filer):
         if note["cik"] not in trust_level:  # the trust-level note already says it
             emit(note)
+    for change in fund_mark_changes(fund_rows):
+        emit(change)
     if not holders:  # say so, so an empty result is not mistaken for a failure
         emit({"type": "no_holdings_found", "aliases": aliases, "searched_since": since,
               "filings_matched": len(hits),
@@ -1271,7 +1326,7 @@ def uk_accounts(number, ch, sets=3):
     web = f"{CH_WEB}/company/{number}"
     page = ch.get(f"/company/{number}/filing-history?category=accounts&items_per_page=50") or {}
     filings = [f for f in page.get("items") or [] if (f.get("type") or "").startswith("AA")]
-    combined, used, used_filings = {}, 0, []
+    combined, used, used_filings, scanned_newer = {}, 0, [], []
     for f in filings:
         if used >= sets:
             break
@@ -1291,6 +1346,8 @@ def uk_accounts(number, ch, sets=3):
                        "note": "filed as a PDF only, often a scanned image; figures may still appear as prior-year "
                                "comparatives in the next accounts. To read a scan, run mr.py uk-pages <url> <folder> "
                                "and open the page images it writes"}
+                if not used:
+                    scanned_newer.append(base["made_up_date"])
                 continue
             doc = ch.document(meta_url, "application/xhtml+xml")
         except FetchError as e:
@@ -1303,6 +1360,11 @@ def uk_accounts(number, ch, sets=3):
                              "accounts_type": kind.group(1) if kind else None, "url": doc_url})
         yield {"type": "uk_accounts_filing", **base, **texts, "periods": sorted(figures, reverse=True), "url": doc_url}
         if used == 1:  # the latest accounts' notes
+            if scanned_newer:
+                yield {"type": "uk_accounts_latest_scanned", "scanned_made_up_dates": scanned_newer,
+                       "notes_from": base["made_up_date"],
+                       "note": "the newest accounts are scans with no text layer, so the notes and latest figures "
+                               "here come from older accounts; read the newest scan before relying on them"}
             notes = extract_notes(doc)
             if notes:
                 yield {"type": "uk_accounts_notes", **base, "notes": notes, "url": doc_url}
