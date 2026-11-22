@@ -447,6 +447,23 @@ class CompaniesHouseLateFilings(unittest.TestCase):
         self.assertEqual(sum(1 for r in out if r["type"] == "ch_filing"), 2)  # listed, though all 4 were checked
         self.assertEqual(out[-1]["filings_read"], 4)
 
+    def test_charges_read_even_when_profile_says_none(self):
+        api = {
+            "/company/09677925": {"company_name": "S LTD", "type": "ltd", "accounts": {}, "confirmation_statement": {},
+                                  "has_charges": False},
+            "/company/09677925/charges": {"items": [
+                {"status": "outstanding", "created_on": "2026-04-14", "charge_code": "096779250007",
+                 "persons_entitled": [{"name": "HSBC Bank USA, National Association"}]}]},
+        }
+
+        def fake(url, accept=None):
+            path = url[len(mr.CH_API):].split("?")[0]
+            if path in api:
+                return json.dumps(api[path])
+            raise mr.FetchError(f"HTTP 404 for {url}")
+        charges = [r for r in mr.ch_report("09677925", mr.CompaniesHouse(None, fetcher=fake)) if r["type"] == "ch_charge"]
+        self.assertEqual([c["persons_entitled"] for c in charges], [["HSBC Bank USA, National Association"]])
+
     def test_late_accounts_note_possible_extension(self):
         api = {
             "/company/07654321": {"company_name": "B LTD", "type": "ltd", "accounts": {}, "confirmation_statement": {}},

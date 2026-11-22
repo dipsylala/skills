@@ -1055,13 +1055,13 @@ def ch_report(number, ch, max_filings=200, today=None, list_filings=25):
                "notified_on": s.get("notified_on"), "ceased_on": s.get("ceased_on"),
                "url": f"{web}/persons-with-significant-control"}
 
-    if p.get("has_charges"):
-        for c in (ch.get(f"/company/{number}/charges?items_per_page=100") or {}).get("items", []):
-            yield {"type": "ch_charge", "status": c.get("status"), "created_on": c.get("created_on"),
-                   "delivered_on": c.get("delivered_on"), "satisfied_on": c.get("satisfied_on"),
-                   "persons_entitled": [x.get("name") for x in c.get("persons_entitled") or []],
-                   "classification": (c.get("classification") or {}).get("description"),
-                   "charge_code": c.get("charge_code"), "url": f"{web}/charges"}
+    # Always ask: the profile's has_charges can be stale (false while the register lists charges).
+    for c in (ch.get(f"/company/{number}/charges?items_per_page=100") or {}).get("items", []):
+        yield {"type": "ch_charge", "status": c.get("status"), "created_on": c.get("created_on"),
+               "delivered_on": c.get("delivered_on"), "satisfied_on": c.get("satisfied_on"),
+               "persons_entitled": [x.get("name") for x in c.get("persons_entitled") or []],
+               "classification": (c.get("classification") or {}).get("description"),
+               "charge_code": c.get("charge_code"), "url": f"{web}/charges"}
     if p.get("has_insolvency_history"):
         for case in (ch.get(f"/company/{number}/insolvency") or {}).get("cases", []):
             yield {"type": "ch_insolvency", "case_type": case.get("type"),
