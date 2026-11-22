@@ -298,10 +298,23 @@ _TEXT_FACT_RE = re.compile(r"<ix:nonNumeric\b([^>]*?)(?<!/)>(.*?)</ix:nonNumeric
 
 
 class _Fact:
-    __slots__ = ("kind", "attrs", "raw", "pos")
+    __slots__ = ("kind", "attrs", "raw", "pos", "end")
 
     def __init__(self, kind, m):
-        self.kind, self.attrs, self.raw, self.pos = kind, m.group(1), m.group(2), m.start()
+        self.kind, self.attrs, self.raw, self.pos, self.end = kind, m.group(1), m.group(2), m.start(), m.end()
+
+
+def printed_negative(doc, fact):
+    """True when the page prints the fact as negative: in brackets, or with a minus
+    sign. Markup between the bracket and the number is ignored."""
+    shown = text_of(fact.raw)
+    if re.fullmatch(r"[-−–—]?", shown):  # a dash printed for zero has no sign
+        return False
+    if re.match(r"[-−]", shown):
+        return True
+    before = text_of(doc[max(0, fact.pos - 300):fact.pos] + "<x>")
+    after = text_of("<x>" + doc[fact.end:fact.end + 300])
+    return before.endswith("(") and after.startswith(")")
 
 
 def iter_facts(doc):
@@ -681,6 +694,10 @@ def marks(aliases, user_agent, since, per_filer, max_filers, verbose=False):
     for note in fund_trend_notes(fund_rows, per_filer):
         if note["cik"] not in trust_level:  # the trust-level note already says it
             emit(note)
+    if not holders:  # say so, so an empty result is not mistaken for a failure
+        emit({"type": "no_holdings_found", "aliases": aliases, "searched_since": since,
+              "filings_matched": len(hits),
+              "note": "no lender schedule or fund holding names these borrowers; nothing failed"})
 
 
 # ---------------------------------------------------------------- GLEIF ----
@@ -872,6 +889,13 @@ def describe_filing(item):
     return f"{desc} ({extra})" if extra else desc
 
 
+def website_quote(item):
+    """The filing as the Companies House filing-history page prints it ("31 Oct 2024 AA"),
+    so verify-report and quote-check can find it there."""
+    d = _date(item.get("date"))
+    return f"{d.strftime('%d %b %Y')} {item.get('type')}" if d else None
+
+
 def late_filing(item, company_type):
     """A flag record if a filing went in after its statutory deadline, else None."""
     form, filed, action = item.get("type", ""), _date(item.get("date")), _date(item.get("action_date"))
@@ -948,8 +972,13 @@ def ch_report(number, ch, max_filings=200, today=None, list_filings=25):
                "ceased_on": s.get("ceased_on"), "country_of_residence": s.get("country_of_residence"),
                "registered_in": ident.get("country_registered") or ident.get("place_registered"),
                "registration_number": ident.get("registration_number"), "url": f"{web}/persons-with-significant-control"}
-    statements = (ch.get(f"/company/{number}/persons-with-significant-control-statements") or {}).get("items", [])
-    for s in statements:
+    statements, seen_statements = [], set()
+    for s in (ch.get(f"/company/{number}/persons-with-significant-control-statements") or {}).get("items", []):
+        key = (s.get("statement"), s.get("notified_on"), s.get("ceased_on"))
+        if key in seen_statements:  # the register can hold the same statement twice
+            continue
+        seen_statements.add(key)
+        statements.append(s)
         yield {"type": "ch_psc_statement", "statement": (s.get("statement") or "").replace("-", " "),
                "notified_on": s.get("notified_on"), "ceased_on": s.get("ceased_on"),
                "url": f"{web}/persons-with-significant-control"}
@@ -976,17 +1005,30 @@ def ch_report(number, ch, max_filings=200, today=None, list_filings=25):
         start += len(items)
         if not items or start >= page.get("total_count", 0):
             break
-    for i, f in enumerate(filings[:max_filings]):
+    filings = filings[:max_filings]
+    appointed = {o.get("appointed_on") for o in officers if o.get("appointed_on")}
+    ref_date_changes = [_date(f.get("date")) for f in filings if f.get("type") == "AA01" and f.get("date")]
+    for i, f in enumerate(filings):
+        quote = website_quote(f)
         if i < list_filings:  # every filing is checked for flags; only the latest are listed
             yield {"type": "ch_filing", "date": f.get("date"), "form": f.get("type"), "category": f.get("category"),
-                   "description": describe_filing(f), "event_date": f.get("action_date"),
+                   "description": describe_filing(f), "event_date": f.get("action_date"), "quote": quote,
                    "url": f"{web}/filing-history/{f.get('transaction_id')}/document?format=pdf"}
         late = late_filing(f, p.get("type"))
+        if late and late["form"] in ("CH01", "CH02") and late.get("event_date") in appointed:
+            late = None  # a details change dated on an appointment day is a correction, not a late change
+        if late and late["flag"] == "late accounts":
+            due = _date(late["due"])
+            near = [d for d in ref_date_changes if due - dt.timedelta(days=550) <= d <= due]
+            if near:
+                late["possible_extension"] = (f"an AA01 (change of accounting reference date) was filed on "
+                                              f"{max(near).isoformat()}, which can move the deadline; check it")
+        page_url = f"{web}/filing-history?page={i // 25 + 1}"  # the website lists 25 filings a page
         if late:
-            yield {"type": "ch_flag", **late, "url": f"{web}/filing-history"}
+            yield {"type": "ch_flag", **late, "quote": quote, "url": page_url}
         if GAZETTE_FORMS_RE.match(f.get("type") or ""):
             yield {"type": "ch_flag", "flag": "gazette notice", "form": f.get("type"), "filed": f.get("date"),
-                   "description": describe_filing(f), "url": f"{web}/filing-history"}
+                   "description": describe_filing(f), "quote": quote, "url": page_url}
     yield {"type": "ch_summary", "company_number": number, "officers": len(officers), "pscs": len(pscs),
            "psc_statements": len(statements), "filings_read": min(len(filings), max_filings)}
 
@@ -1063,11 +1105,17 @@ def parse_uk_ixbrl(doc):
         value = _number(attrs, raw)
         if value is None:
             continue
+        # UK filers often get the sign attribute wrong (Veracode Ltd tags a printed
+        # inflow of 613,886 as negative and a printed (92,485) as positive), so the
+        # printed sign decides, and a disagreement is reported
+        tagged_neg = _attr(attrs, "sign") == "-" and value != 0
+        shown_neg = printed_negative(doc, fact)
+        value = -abs(value) if shown_neg else abs(value)
         row = table.setdefault(end, {})
         rank = UK_FIGURES[field].index(name) - (10 if consolidated else 0)  # group totals first, then preferred name
         if field not in row or rank < row[field][1]:
             row[field] = (value, rank)
-            if _attr(attrs, "sign") == "-":
+            if tagged_neg != shown_neg:
                 negative.setdefault(end, set()).add(field)
             else:
                 negative.get(end, set()).discard(field)
@@ -1075,8 +1123,41 @@ def parse_uk_ixbrl(doc):
     for end, row in table.items():
         figures[end] = {f: v for f, (v, _) in row.items()}
         if negative.get(end):
-            figures[end]["tagged_negative"] = sorted(negative[end])
+            figures[end]["sign_mismatch"] = sorted(negative[end])
     return figures, texts
+
+
+NOTE_TOPICS = {  # topic: phrase patterns, most specific first; earlier tiers fill the topic first
+    "parent_and_control": [r"ultimate parent|ultimate controlling|controlling party|ultimate holding",
+                           r"immediate parent|parent undertaking|smallest and largest group|consolidated financial statements .*obtained"],
+    "going_concern": [r"going concern.{0,200}(support|letter|material uncertaint|significant doubt|depend)"
+                      r"|(support|letter|depend).{0,200}going concern",
+                      r"going concern"],
+    "events_after_year_end": [r"post balance sheet|subsequent event|events? after the (?:reporting|balance sheet|end of)"],
+    "debt_and_covenants": [r"covenant|borrowing facilit|loan facilit|secured on|security over"],
+}
+
+
+def extract_notes(doc, per_topic=4, max_len=400):
+    """Sentences from the accounts' text that mention the parent chain, going
+    concern, events after the year end, or borrowing and covenants, so the notes
+    can be read without opening the whole document."""
+    text = text_of(re.sub(r"<(script|style|ix:header)\b.*?</\1>", " ", doc, flags=re.S | re.I))
+    sentences = [s.strip() for s in re.split(r"(?<=[.;])\s+(?=[A-Z(])", text)]
+    notes = {}
+    for topic, tiers in NOTE_TOPICS.items():
+        seen, picked = set(), []
+        for pattern in tiers:
+            for s in sentences:
+                if len(picked) >= per_topic:
+                    break
+                key = s.lower()[:120]
+                if key not in seen and re.search(pattern, s, re.I):
+                    seen.add(key)
+                    picked.append(s[:max_len])
+        if picked:
+            notes[topic] = picked
+    return notes
 
 
 def uk_accounts(number, ch, sets=3):
@@ -1111,29 +1192,33 @@ def uk_accounts(number, ch, sets=3):
         figures, texts = parse_uk_ixbrl(doc)
         used += 1
         yield {"type": "uk_accounts_filing", **base, **texts, "periods": sorted(figures, reverse=True), "url": doc_url}
+        if used == 1:  # the latest accounts' notes
+            notes = extract_notes(doc)
+            if notes:
+                yield {"type": "uk_accounts_notes", **base, "notes": notes, "url": doc_url}
         for end, row in figures.items():
             # newer accounts restate earlier years, so a figure already taken from newer
             # accounts stays; older accounts only fill figures the newer ones lack
             have, urls = combined.setdefault(end, ({}, []))
             added = False
             for k, v in row.items():
-                if k == "tagged_negative":
+                if k == "sign_mismatch":
                     continue
                 if k not in have:
                     have[k] = v
                     added = True
-                    if k in row.get("tagged_negative", []):
-                        have.setdefault("tagged_negative", []).append(k)
+                    if k in row.get("sign_mismatch", []):
+                        have.setdefault("sign_mismatch", []).append(k)
             if added:
                 urls.append(doc_url)
     for end in sorted(combined, reverse=True):
         row, urls = combined[end]
-        figures = {k: v for k, v in row.items() if k != "tagged_negative"}
+        figures = {k: v for k, v in row.items() if k != "sign_mismatch"}
         record = {"type": "uk_accounts_year", "period_end": end, "figures": figures, "sources": urls}
-        if row.get("tagged_negative"):
-            record["tagged_negative"] = sorted(row["tagged_negative"])
-            record["note"] = ("the filer tagged these figures as negative; UK filers often tag signs wrongly, "
-                              "so check them against the printed accounts (quote-check the figure)")
+        if row.get("sign_mismatch"):
+            record["sign_mismatch"] = sorted(row["sign_mismatch"])
+            record["note"] = ("figures use the sign printed in the accounts; the filer's XBRL sign tag disagrees "
+                              "for these, so a tool reading the tags would show the opposite sign")
         yield record
     ends = sorted(combined)
     for prev, cur in zip(ends, ends[1:]):

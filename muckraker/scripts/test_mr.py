@@ -387,15 +387,41 @@ class CompaniesHouseLateFilings(unittest.TestCase):
             if path in api:
                 return json.dumps(api[path])
             raise mr.FetchError(f"HTTP 404 for {url}")
+        api["/company/01234567/persons-with-significant-control-statements"]["items"].append(
+            dict(api["/company/01234567/persons-with-significant-control-statements"]["items"][0]))  # duplicate
+        api["/company/01234567/filing-history"]["items"].append(  # details change dated on the appointment day
+            {"type": "CH01", "date": "2026-06-01", "action_date": "2026-01-02", "transaction_id": "t4",
+             "description": "change-person-director"})
+        api["/company/01234567/filing-history"]["total_count"] = 4
         out = list(mr.ch_report("01234567", mr.CompaniesHouse(None, fetcher=fake),
                                 today=dt.date(2026, 11, 22), list_filings=2))
+        self.assertEqual(sum(1 for r in out if r["type"] == "ch_psc_statement"), 1)
+        gazette = next(r for r in out if r.get("flag") == "gazette notice")
+        self.assertEqual(gazette["quote"], "01 Oct 2026 GAZ1")
+        self.assertTrue(gazette["url"].endswith("/filing-history?page=1"))
         flags = [r["flag"] for r in out if r["type"] == "ch_flag"]
         self.assertEqual(flags, ["accounts overdue", "gazette notice", "late filing"])
         officer = next(r for r in out if r["type"] == "ch_officer")
         self.assertNotIn("date_of_birth", officer)  # people only in their company roles
         self.assertNotIn("address", officer)
-        self.assertEqual(sum(1 for r in out if r["type"] == "ch_filing"), 2)  # listed, though all 3 were checked
-        self.assertEqual(out[-1]["filings_read"], 3)
+        self.assertEqual(sum(1 for r in out if r["type"] == "ch_filing"), 2)  # listed, though all 4 were checked
+        self.assertEqual(out[-1]["filings_read"], 4)
+
+    def test_late_accounts_note_possible_extension(self):
+        api = {
+            "/company/07654321": {"company_name": "B LTD", "type": "ltd", "accounts": {}, "confirmation_statement": {}},
+            "/company/07654321/filing-history": {"total_count": 2, "items": [
+                {"type": "AA", "date": "2024-12-20", "transaction_id": "a", "description_values": {"made_up_date": "2023-12-31"}},
+                {"type": "AA01", "date": "2024-03-01", "transaction_id": "b", "description": "change-account-reference-date"}]},
+        }
+
+        def fake(url, accept=None):
+            path = url[len(mr.CH_API):].split("?")[0]
+            if path in api:
+                return json.dumps(api[path])
+            raise mr.FetchError(f"HTTP 404 for {url}")
+        flag = next(r for r in mr.ch_report("07654321", mr.CompaniesHouse(None, fetcher=fake)) if r.get("flag") == "late accounts")
+        self.assertIn("2024-03-01", flag["possible_extension"])
 
 
 class UkAccounts(unittest.TestCase):
@@ -405,12 +431,25 @@ class UkAccounts(unittest.TestCase):
         self.assertEqual(y25["turnover"], 10578415)  # not the US segment's 999
         self.assertEqual(y25["employees"], 53)  # after a self-closing text fact
         self.assertEqual(y25["cash"], 1435903)
-        self.assertEqual(y25["operating_cash_flow"], -613886)
-        self.assertEqual(y25["tagged_negative"], ["operating_cash_flow"])
-        self.assertEqual(figures["2024-12-31"]["employees"], 63)
+        # printed 613,886 but tagged sign="-": the printed sign wins and the mismatch is reported
+        self.assertEqual(y25["operating_cash_flow"], 613886)
+        self.assertEqual(y25["sign_mismatch"], ["operating_cash_flow"])
+        self.assertEqual(y25["director_remuneration"], 0)  # a dash for zero is not a mismatch
+        y24 = figures["2024-12-31"]
+        self.assertEqual(y24["operating_cash_flow"], -92485)  # printed in brackets, tagged positive
+        self.assertEqual(y24["sign_mismatch"], ["operating_cash_flow"])
+        self.assertEqual(y24["employees"], 63)
         self.assertEqual(texts["going_concern_basis"], "true")
         self.assertEqual(texts["auditor"], "Zome (Statutory Auditor)")
         self.assertNotIn("audited", texts)  # the self-closing fact has no value
+
+    def test_notes_sentences(self):
+        notes = mr.extract_notes(fixture("uk_accounts.xhtml"))
+        parent = " ".join(notes["parent_and_control"])
+        self.assertIn("Mitnick Corporate Holdco, Inc", parent)
+        self.assertIn("Mitnick Parent LP", parent)
+        self.assertIn("confirmed its support", notes["going_concern"][0])
+        self.assertIn("no subsequent events", " ".join(notes["events_after_year_end"]))
 
     def test_older_accounts_fill_gaps_newer_ones_lack(self):
         newer = '<xbrli:context id="a"><xbrli:period><xbrli:instant>2023-12-31</xbrli:instant></xbrli:period></xbrli:context>' \

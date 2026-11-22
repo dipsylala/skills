@@ -72,7 +72,7 @@ Agents keep key values out of their reports and write `[REDACTED]` for any crede
 
 With Python, the coordinator also replaces up to three agents and most of its own checking with script calls. On Veracode:
 
-- **UK Companies House** (needs `COMPANIES_HOUSE_API_KEY`): `ch` returned Veracode Ltd's register record in about a second, with 29 filings made after their statutory deadline worked out from the register's own dates, against about 94k tokens for an agent. `uk-accounts` read four sets of iXBRL accounts into a five-year table in under 3 seconds, which the Financials agent then uses instead of parsing the accounts itself.
+- **UK Companies House** (needs `COMPANIES_HOUSE_API_KEY`): `ch` returned Veracode Ltd's register record in about a second, with 28 filings made after their statutory deadline worked out from the register's own dates, against about 92k tokens for an agent. `uk-accounts` read four sets of iXBRL accounts into a five-year table, with the accounts' notes on the parent chain and going concern, in under 3 seconds. When those UK accounts are the only filed accounts, as for Veracode, the coordinator writes the financials report from them too, instead of sending a roughly 110k-token agent.
 
 - **Lender and fund marks:** `marks` took about 30 seconds and returned about 10k tokens of output, against 144k tokens for an agent using the script and about 167k for one working by hand.
 - **GLEIF ownership:** `gleif` takes a few seconds, against about 100k tokens for an agent.
