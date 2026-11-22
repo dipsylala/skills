@@ -921,6 +921,8 @@ def gleif_entity(record):
         "registration_authority": ((e.get("registeredAt") or {}).get("id")),
         "entity_status": e.get("status"),
         "lei_status": reg.get("status"),
+        "category": e.get("category"),
+        "legal_form_other": (e.get("legalForm") or {}).get("other"),
         "initial_registration": reg.get("initialRegistrationDate"),
         "last_update": reg.get("lastUpdateDate"),
         "next_renewal": reg.get("nextRenewalDate"),
@@ -960,7 +962,8 @@ def gleif_search(name, limit, fetcher=None, registered_as=None):
             continue
         kept += 1
         yield {"type": "gleif_candidate", **{k: ent[k] for k in (
-            "lei", "legal_name", "jurisdiction", "registered_as", "entity_status", "lei_status", "legal_address", "url")}}
+            "lei", "legal_name", "category", "jurisdiction", "registered_as", "entity_status", "lei_status",
+            "legal_address", "url")}}
     if not kept:  # no LEI is itself a result; say so rather than print nothing
         note = ("no LEI record has this registration number; try the name" if registered_as else
                 "no LEI record matches this name; try another spelling or a parent's name")
@@ -995,6 +998,16 @@ def gleif_report(lei, max_children=200, fetcher=None):
         return
     entity = gleif_entity(data["data"])
     yield {"type": "gleif_entity", **entity}
+    if entity["category"] == "FUND":
+        links = {}
+        for rel in ("umbrella-fund", "fund-manager"):
+            rec = gleif_json(f"/lei-records/{lei}/{rel}", fetcher)
+            if rec and rec.get("data"):
+                links[rel.replace("-", "_")] = gleif_entity(rec["data"])["legal_name"]
+        yield {"type": "gleif_fund", "lei": lei, "legal_name": entity["legal_name"],
+               "legal_form_other": entity["legal_form_other"], **links,
+               "note": "this LEI is a fund vehicle, often an investor's fund named after a holding, not the operating "
+                       "company; do not use it as the company's LEI"}
     if entity["lei_status"] in ("LAPSED", "RETIRED", "ANNULLED"):
         yield {"type": "gleif_lapsed", "lei": lei, "lei_status": entity["lei_status"],
                "last_update": entity["last_update"], "legal_name": entity["legal_name"],
@@ -1451,6 +1464,16 @@ def psc_parent_mismatch(number, ch, parent_sentences):
     web = f"{CH_WEB}/company/{number}/persons-with-significant-control"
     statements = (ch.get(f"/company/{number}/persons-with-significant-control-statements") or {}).get("items", [])
     current = [x for x in statements if x.get("statement") in NO_PSC_STATEMENTS and not x.get("ceased_on")]
+    pscs = (ch.get(f"/company/{number}/persons-with-significant-control?items_per_page=100") or {}).get("items", [])
+    corporate = [x for x in pscs if re.search(r"corporate-entity|legal-person", x.get("kind") or "")]
+    if not current and corporate and not any(not x.get("ceased_on") for x in corporate):
+        ceased = max(corporate, key=lambda x: x.get("ceased_on") or "")
+        yield {"type": "uk_psc_mismatch", "severity": "minor", "statement": "no current corporate PSC",
+               "last_corporate_psc": ceased.get("name"), "notified_on": ceased.get("notified_on"),
+               "ceased_on": ceased.get("ceased_on"), "accounts_say": parent_sentences[0], "url": web,
+               "note": "the accounts name a parent, but the register shows every corporate PSC as ceased; a parent "
+                       "company holding over 25% is normally a current registrable PSC. Register housekeeping unless "
+                       "the parent is hidden elsewhere"}
     if current:
         yield {"type": "uk_psc_mismatch", "severity": "minor", "statement": current[0]["statement"].replace("-", " "),
                "notified_on": current[0].get("notified_on"), "accounts_say": parent_sentences[0], "url": web,
@@ -2473,6 +2496,154 @@ def fr_report(query, fetcher=None, today=None):
            "counts": counts, "truncated": len(notices) >= MAX_BODACC_NOTICES}
 
 
+# ----------------------------------------------------------- Luxembourg ----
+
+CDB_DATASET = "https://data.public.lu/api/1/datasets/donnees-comptes-annuels/"
+LU_DUE_MONTHS = 7  # accounts approved within 6 months of the year end, then filed within a month
+LU_FIELDS = [  # field, label prefix (lower case, spaces collapsed); the first match in a declaration wins
+    ("total_assets", "total du bilan (actif)"),
+    ("equity", "capitaux propres"),
+    ("cash", "avoirs en banques"),
+    ("debts", "dettes"),
+    ("convertible_loans", "emprunts convertibles"),
+    ("bank_debt", "dettes envers des établissements de crédit"),
+    ("owed_to_affiliates", "dettes envers des entreprises liées"),
+    ("net_result", "résultat de l'exercice"),
+    ("turnover", "chiffre d'affaires net"),
+    ("staff_costs", "frais de personnel"),
+]
+LU_EXACT = {"equity", "debts", "net_result"}  # these labels must match whole, not as a prefix
+
+
+def cdb_quarters(get, quarters):
+    """The newest `quarters` quarterly deposit files of the Centrale des Bilans open data."""
+    resources = json.loads(get(CDB_DATASET)).get("resources") or []
+    files = []
+    for r in resources:
+        m = re.match(r"deposit-(\d{4})q([1-4])\.xml$", r.get("title") or "")
+        if m:
+            files.append((int(m.group(1)), int(m.group(2)), r["url"], r.get("filesize")))
+    return [(f"{y}q{q}", url, size) for y, q, url, size in sorted(files, reverse=True)[:quarters]]
+
+
+def cdb_stream_blocks(url, rcs, chunk=1 << 20):
+    """Stream a quarterly file and return the <Declarer> blocks for one RCS number, decoded."""
+    needle = f"<RcsNumber>{rcs}</RcsNumber>".encode()
+    request = urllib.request.Request(url, headers={"User-Agent": "muckraker"})
+    found, buf = [], b""
+    with urllib.request.urlopen(request, timeout=60) as r:
+        while True:
+            data = r.read(chunk)
+            if not data:
+                break
+            buf += data
+            while True:
+                end = buf.find(b"</Declarer>")
+                if end < 0:
+                    break
+                block, buf = buf[:end + 11], buf[end + 11:]
+                if needle in block:
+                    found.append(block[block.rfind(b"<Declarer>"):].decode("iso8859_15", errors="replace"))
+            if len(buf) > 64 << 20:
+                raise FetchError(f"no </Declarer> in 64 MB of {url}")
+    return found
+
+
+def lu_declarations(block):
+    """One record per <Declaration> in a Declarer block: period, deposit date and figures."""
+    out = []
+    name = re.search(r"<LegalUnitName>([^<]*)</LegalUnitName>", block)
+    for d in re.finditer(r"<Declaration\b([^>]*)>(.*?)</Declaration>", block, re.S):
+        attrs, body = d.group(1), d.group(2)
+        tag = lambda t: (re.search(rf"<{t}>([^<]*)</{t}>", body) or [None, None])[1]
+        figures, labels = {}, {}
+        for m in re.finditer(r"<Label>([^<]*)</Label>\s*<Data>([^<]*)</Data>", body):
+            label = re.sub(r"\s+", " ", html.unescape(m.group(1))).strip()
+            low = label.lower()
+            for field, prefix in LU_FIELDS:
+                if field in figures:
+                    continue
+                if (low == prefix) if field in LU_EXACT else low.startswith(prefix):
+                    try:
+                        figures[field] = float(m.group(2))
+                    except ValueError:
+                        continue
+                    labels[field] = f"{label} {m.group(2)}"
+        out.append({"name": html.unescape(name.group(1)) if name else None,
+                    "form": (re.search(r'type="([^"]+)"', attrs) or [None, None])[1],
+                    "start": tag("StartDate"), "end": tag("EndDate"), "deposited": (tag("RCSDepositDate") or "")[:10] or None,
+                    "doc": tag("ID_Doc"), "currency": tag("Currency"), "figures": figures, "labels": labels})
+    return out
+
+
+def lu_report(rcs, quarters=12, workers=4, save=None, fetcher=None, streamer=None, today=None):
+    """Luxembourg company accounts from the Centrale des Bilans open data: each
+    filing's deposit date against the deadline, each year's main figures, and flags
+    for late filing and negative equity."""
+    import concurrent.futures
+    get = fetcher or (lambda u: fetch(u, None))
+    stream = streamer or cdb_stream_blocks
+    today = today or dt.date.today()
+    rcs = re.sub(r"\s", "", rcs).upper()
+    files = cdb_quarters(get, quarters)
+    hits, saved = [], []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(stream, url, rcs): (q, url) for q, url, _ in files}
+        for fut in concurrent.futures.as_completed(futures):
+            q, url = futures[fut]
+            try:
+                blocks = fut.result()
+            except (FetchError, OSError, http.client.HTTPException) as e:
+                yield {"type": "lu_quarter_unreadable", "quarter": q, "error": str(e), "url": url}
+                continue
+            for b in blocks:
+                saved.append(f"<!-- {url} -->\n{b}")
+                hits += [dict(d, quarter=q, url=url) for d in lu_declarations(b)]
+    if save and saved:
+        with open(save, "w", encoding="utf-8") as f:
+            f.write("<CdbExtract>\n" + "\n".join(saved) + "\n</CdbExtract>\n")
+    years = {}
+    for d in sorted(hits, key=lambda d: (d["end"] or "", d["deposited"] or "")):
+        years.setdefault(d["end"], []).append(d)
+    flags = 0
+    for end, decls in sorted(years.items()):
+        end_date = _date(end)
+        first = min((d["deposited"] for d in decls if d["deposited"]), default=None)
+        due = _add_months(end_date, LU_DUE_MONTHS) if end_date else None
+        late = (_date(first) - due).days if first and due else None
+        yield {"type": "lu_accounts_filed", "rcs": rcs, "name": decls[-1]["name"], "year_end": end,
+               "forms": sorted({d["form"] for d in decls if d["form"]}), "deposited": first,
+               "due": due and due.isoformat(), "days_late": max(late, 0) if late is not None else None,
+               "filings": len({d["doc"] for d in decls}), "url": decls[0]["url"]}
+        if late and late > 0:
+            flags += 1
+            yield {"type": "lu_flag", "flag": "late accounts", "severity": "major", "year_end": end,
+                   "deposited": first, "due": due.isoformat(), "days_late": late,
+                   "recent": bool(end_date and (today - end_date).days <= 3 * 366),
+                   "rule": "accounts are due within 7 months of the year end (approval within 6 months, filing "
+                           "within 1 month after)", "url": decls[0]["url"]}
+        figures, labels = {}, {}
+        for d in decls:  # the latest filing for the year wins
+            figures.update(d["figures"])
+            labels.update(d["labels"])
+        yield {"type": "lu_accounts_year", "year_end": end, "currency": decls[-1]["currency"], **figures,
+               "quotes": labels, "url": decls[-1]["url"]}
+    latest = max(years) if years else None
+    if latest:
+        equity = next((d["figures"].get("equity") for d in reversed(years[latest]) if "equity" in d["figures"]), None)
+        if equity is not None and equity < 0:
+            flags += 1
+            yield {"type": "lu_flag", "flag": "negative equity", "severity": "major", "year_end": latest,
+                   "equity": equity, "quote": next(d["labels"]["equity"] for d in reversed(years[latest]) if "equity" in d["labels"]),
+                   "rule": "equity below zero at the latest year end; when losses exceed half the capital, "
+                           "Luxembourg law requires the shareholders to decide on dissolution (art. 480-2 / 1100-2)",
+                   "url": years[latest][-1]["url"]}
+    yield {"type": "lu_summary", "rcs": rcs, "years": len(years), "flags": flags,
+           "quarters_searched": [q for q, _, _ in files], "saved_extract": save if save and saved else None,
+           "note": "a filing appears in the quarter it was deposited, so years filed before the oldest quarter "
+                   "searched are missing; raise --quarters to look further back"}
+
+
 # -------------------------------------------------------------- Ireland ----
 
 CRO_API = "https://opendata.cro.ie/api/3/action/"
@@ -2636,7 +2807,12 @@ def searchable_text(body):
 
 def quote_check(url, quote, user_agent, context_chars):
     try:
-        page = searchable_text(fetch(url, user_agent)).lower()
+        if url.startswith(("http://", "https://")):
+            body = fetch(url, user_agent)
+        else:  # a saved extract, such as mr.py lu --save
+            with open(url, encoding="utf-8", errors="replace") as f:
+                body = f.read()
+        page = searchable_text(body).lower()
     except FetchError as e:
         emit({"type": "quote_check", "url": url, "quote": quote, "found": None, "unreachable": str(e),
               "note": "the page could not be fetched; check the quote in a browser"})
@@ -2717,7 +2893,8 @@ def verify_reports(paths, user_agent, fetcher=None):
     once; a flag passes when its quote is found on any URL it cites."""
     fetcher = fetcher or (lambda u: fetch(u, user_agent))
     pages = {}
-    totals = {"confirmed": 0, "not_found": 0, "unreachable": 0, "no_text_layer": 0, "no_quote": 0, "no_url": 0}
+    totals = {"confirmed": 0, "not_found": 0, "unreachable": 0, "too_large": 0, "no_text_layer": 0, "no_quote": 0,
+              "no_url": 0}
 
     def page_text(url):
         if url not in pages:
@@ -2768,6 +2945,12 @@ def verify_reports(paths, user_agent, fetcher=None):
                     record.update(result="no_text_layer", pdfs=pdfs,
                                   note="the cited page is a PDF with no text to search (often a scan); read it yourself")
                     totals["no_text_layer"] += 1
+                elif errors and all("larger than" in e for e in errors):
+                    record.update(result="too_large", errors=errors,
+                                  note="the cited file is over the size limit (bulk open data, such as Luxembourg's "
+                                       "Centrale des Bilans files); check the quote against the run folder's extract "
+                                       "with mr.py quote-check <extract file> \"<quote>\"")
+                    totals["too_large"] += 1
                 elif errors and len(errors) == len(flag["urls"]):
                     no_contact = all("needs --user-agent" in e for e in errors)
                     record.update(result="unreachable", errors=errors,
@@ -2879,6 +3062,11 @@ def main(argv=None):
     s = sub.add_parser("fr", help="France: register profile, officers, and BODACC notices with missing-accounts flags")
     s.add_argument("siren_or_name", help="a 9-digit SIREN, or a name to list candidates")
 
+    s = sub.add_parser("lu", help="Luxembourg: filed accounts from the Centrale des Bilans open data, with late-filing flags")
+    s.add_argument("rcs", help="the RCS number, such as B165616")
+    s.add_argument("--quarters", type=int, default=12, help="newest quarterly deposit files to search (each 70-820 MB)")
+    s.add_argument("--save", metavar="FILE", help="write the company's matching records to this file, for quote-check")
+
     s = sub.add_parser("ie", help="Ireland: CRO open data profile and annual-return filings with late-filing flags")
     s.add_argument("cro_or_name", help="a CRO company number, or a name to list candidates")
 
@@ -2897,7 +3085,7 @@ def main(argv=None):
     s.add_argument("targets", nargs="+", help="report files, or a run folder (every .md except dossier.md)")
 
     s = sub.add_parser("quote-check", help="confirm a quote appears on a page, ignoring markup")
-    s.add_argument("url")
+    s.add_argument("url", help="a page URL, or a local file such as an mr.py lu --save extract")
     s.add_argument("quote")
     s.add_argument("--context", type=int, default=200)
 
@@ -2959,6 +3147,9 @@ def main(argv=None):
                 emit(r)
         elif a.cmd == "jobs":
             for r in jobs_report(a.target, a.history):
+                emit(r)
+        elif a.cmd == "lu":
+            for r in lu_report(a.rcs, a.quarters, save=a.save):
                 emit(r)
         elif a.cmd == "ie":
             for r in ie_report(a.cro_or_name):
