@@ -503,6 +503,16 @@ class PageImages(unittest.TestCase):
             self.assertEqual(len(list(mr.page_images(pdf, tmp, mr.parse_pages("2")))), 2)
         self.assertEqual(mr.parse_pages("1-3, 7"), {1, 2, 3, 7})
 
+    def test_oversized_image_is_refused(self):
+        # A few bytes of "V0" codes claiming 100000 x 100000 pixels must not build a 1.25 GB bitmap.
+        with self.assertRaises(ValueError):
+            mr.png_1bit(mr.g4_rows(g4("1" * 64), 100000, 100000), 100000, 100000)
+        pdf = (b"1 0 obj\n<< /Subtype /Image /Width 100000 /Height 100000 /Length 8 /Filter /CCITTFaxDecode "
+               b"/DecodeParms << /K -1 >> >>\nstream\n" + g4("1" * 64) + b"\nendstream\nendobj\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            out = list(mr.page_images(pdf, tmp))
+        self.assertEqual([r["type"] for r in out], ["error", "uk_accounts_pages"])
+
 
 class UkAccounts(unittest.TestCase):
     def test_entity_totals_texts_and_signs(self):

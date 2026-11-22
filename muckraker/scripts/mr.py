@@ -1448,9 +1448,19 @@ def g4_rows(data, width, height):
         ref = cur + [width] * 3
 
 
+# Limits on a fetched PDF's images, whose sizes the PDF itself declares: a scanned A4 page
+# at 300 dpi is about 2500 x 3500 pixels, a 1 MB bitmap, from a ~100 KB fax stream.
+MAX_PAGE_SIDE = 20000  # pixels; A0 at 600 dpi
+MAX_PAGE_BITMAP = 64 * 1024 * 1024  # bytes of decoded 1-bit bitmap per page
+MAX_PAGE_STREAM = 16 * 1024 * 1024  # bytes of encoded image data per page
+MAX_PAGES = 1000
+
+
 def png_1bit(changes_by_row, width, height, invert=False):
     """A black-and-white PNG from g4_rows output."""
     nbytes = (width + 7) // 8
+    if not (0 < width <= MAX_PAGE_SIDE and 0 < height <= MAX_PAGE_SIDE) or (nbytes + 1) * height > MAX_PAGE_BITMAP:
+        raise ValueError(f"image of {width} x {height} pixels is larger than a scanned page")
     full = (1 << nbytes * 8) - 1
     raw = bytearray()
     for changes in changes_by_row:
@@ -1502,6 +1512,10 @@ def page_images(pdf, out_dir, pages=None):
     count = written = 0
     for d, data in pdf_images(pdf):
         count += 1
+        if count > MAX_PAGES:
+            yield {"type": "error", "error": f"more than {MAX_PAGES} images; the rest were not read"}
+            count -= 1
+            break
         if pages and count not in pages:
             continue
         filters = re.search(rb"/Filter\s*(\[[^\]]*\]|/\w+)", d)
@@ -1513,6 +1527,8 @@ def page_images(pdf, out_dir, pages=None):
             if filters == ["DCTDecode"]:
                 ext, body = "jpg", data
             elif filters == ["CCITTFaxDecode"] and width and height:
+                if len(data) > MAX_PAGE_STREAM:
+                    raise ValueError(f"image data of {len(data)} bytes is larger than a scanned page")
                 k = re.search(rb"/K\s+(-?\d+)", d)
                 if not k or int(k.group(1)) >= 0:
                     raise ValueError("CCITT Group 3 images are not supported, only Group 4 (/K -1)")
