@@ -773,6 +773,84 @@ class RunSevenFixes(unittest.TestCase):
         doc = "<p>At the year end, £3,240,355 (2024 - £2,572,241) was owed to the Company by Veracode Inc.</p>"
         self.assertIn("3,240,355", mr.extract_notes(doc)["group_balances"][0])
 
+
+class SnykRunTwoFixes(unittest.TestCase):
+    def test_scale_halves_page_and_keeps_thin_strokes(self):
+        # 4x2 page: one black pixel at (1, 1) survives a 2x shrink as pixel (0, 0)
+        png = mr.png_1bit([[], [1, 2]], 4, 2, scale=2)
+        w, h = mr.struct.unpack(">II", png[16:24])
+        self.assertEqual((w, h), (2, 1))
+        rows = mr.zlib.decompress(png[png.index(b"IDAT") + 4:png.index(b"IEND") - 8])
+        self.assertEqual(rows, b"\x00\x7f")  # filter byte, then 0 (black) and 1 (white) in the top two bits
+
+    def test_scanned_accounts_record_and_dates(self):
+        filings = {"items": [
+            {"type": "AAMD", "date": "2022-02-04", "transaction_id": "t0", "links": {"document_metadata": "m0"},
+             "description_values": {"made_up_date": "2020-12-31"}},
+            {"type": "AA", "date": "2022-01-10", "transaction_id": "t1", "links": {"document_metadata": "m1"},
+             "description_values": {"made_up_date": "2020-12-31"}},
+            {"type": "AA", "date": "2019-09-30", "transaction_id": "t2", "links": {"document_metadata": "m2"},
+             "description_values": {"made_up_date": "2018-12-31"}}]}
+
+        class FakeCH:
+            def get(self, path):
+                return filings
+
+            def metadata(self, url):
+                return {"pages": 63, "resources": {"application/pdf": {}}} if url != "m2" \
+                    else {"resources": {"application/xhtml+xml": {}}}
+
+            def document(self, url, accept):
+                return fixture("uk_accounts.xhtml")
+        out = list(mr.uk_accounts("09677925", FakeCH()))
+        scans = [r for r in out if r["type"] == "uk_accounts_scanned"]
+        self.assertEqual([r["pages"] for r in scans], [63, 63])
+        self.assertIn("uk-pages", scans[0]["note"])
+        latest = next(r for r in out if r["type"] == "uk_accounts_latest_scanned")
+        self.assertEqual(latest["scanned_made_up_dates"], ["2020-12-31"])
+
+    def test_gleif_drops_loose_matches(self):
+        def rec(lei, name):
+            return {"id": lei, "attributes": {"lei": lei, "entity": {"legalName": {"name": name}, "jurisdiction": "US",
+                                                                       "legalAddress": {}, "status": "ACTIVE"},
+                                              "registration": {"status": "ISSUED"}}}
+        data = {"data": [rec("A" * 20, "SNYK LIMITED"), rec("B" * 20, "PotNetwork Holdings, Inc."),
+                         rec("C" * 20, "Rafferty Subaru Inc")]}
+        out = list(mr.gleif_search("Snyk, Inc.", 10, fetcher=lambda path: json.dumps(data)))
+        self.assertEqual([r["legal_name"] for r in out], ["SNYK LIMITED"])
+        none = list(mr.gleif_search("Snyk Switzerland AG", 10, fetcher=lambda path: json.dumps({"data": data["data"][1:]})))
+        self.assertEqual(none[0]["type"], "gleif_no_match")
+        self.assertIn("2 loose matches", none[0]["note"])
+
+    def test_profile_charges_mismatch(self):
+        profile = {"company_name": "X LTD", "company_number": "09677925", "type": "ltd", "has_charges": False,
+                   "links": {}}
+        charges = {"items": [{"status": "outstanding", "persons_entitled": [{"name": "J.P. Morgan"}]}]}
+
+        class FakeCH:
+            def get(self, path):
+                return profile if path == "/company/09677925" else charges if "/charges" in path else None
+        out = list(mr.ch_report("09677925", FakeCH(), today=mr.dt.date(2026, 11, 22)))
+        mismatch = [r for r in out if r["type"] == "ch_profile_mismatch"]
+        self.assertEqual([(r["field"], r["register_count"]) for r in mismatch], [("has_charges", 1)])
+
+    def test_run_folder_skips_files_without_source_line(self):
+        with tempfile.TemporaryDirectory() as d:
+            for name, text in (("press.md", "SOURCE: Press\nSTATUS: FOUND\n"), ("entity.md", "# Entity\n"),
+                               ("dossier.md", "SOURCE: x\n")):
+                with open(os.path.join(d, name), "w", encoding="utf-8") as f:
+                    f.write(text)
+            self.assertEqual([os.path.basename(x) for x in mr.report_paths([d])], ["press.md"])
+
+    def test_mark_change_says_how_lines_were_paired(self):
+        def line(as_of, shares, value):
+            return {"filer": "T", "cik": "1", "fund": "F", "as_of": as_of, "name": "SNYK", "balance": shares,
+                    "url": as_of, "value_per_share": value}
+        [c] = mr.fund_mark_changes([line("2025-06-30", 10.0, 5.0), line("2026-06-30", 10.0, 2.0)])
+        self.assertEqual(c["paired_by"], "share_count")
+        [c] = mr.fund_mark_changes([line("2025-06-30", 10.0, 5.0), line("2026-06-30", 12.0, 2.0)])
+        self.assertEqual(c["paired_by"], "only_line")
+
 class Fetch(unittest.TestCase):
     def test_gzip_body_round_trips(self):
         body = b"<html>schedule</html>" * 100
