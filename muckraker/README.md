@@ -120,7 +120,7 @@ S&P Global Ratings' public search only loads in a real browser. If the agent can
 - National registers have direct entries for France, Luxembourg, Germany, the Netherlands, Ireland, Norway, Denmark, and Canada. For other countries the agent finds the register through Wikipedia's [list of official business registers](https://en.wikipedia.org/wiki/List_of_official_business_registers) and works out what it shows on each run, which is slower and less reliable. Add a row to `references/sources/national-registers.md` for any country you research often.
 - Lenders and funds that don't file with the SEC are invisible, so debt totals from valuation marks are a floor.
 - A private company's group accounts are often unpublished. The financial table then covers only subsidiaries that file accounts, such as a UK subsidiary.
-- UK accounts are read from their iXBRL version where one exists. Older scanned accounts with no text layer are listed as `needs OCR` unless the agent has an OCR tool.
+- UK accounts are read from their iXBRL version where one exists. Scanned accounts with no text layer are read as page images through `mr.py uk-pages`, which costs more tokens; other countries' scans are listed as `needs OCR` unless the agent has an OCR tool.
 - Each run sends one agent per source per company (up to thirteen per company), so research on several companies uses a lot of tokens.
 
 ## Privacy

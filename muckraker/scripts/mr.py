@@ -687,17 +687,18 @@ def fund_mark_changes(holdings):
         first, last = min(dates), max(dates)
         old, new = dates[first], dates[last]
         if kind == "shares":
-            pairs = [(o, n) for n in new for o in old if o["balance"] == n["balance"]]
+            pairs = [(o, n, "share_count") for n in new for o in old if o["balance"] == n["balance"]]
         else:
-            pairs = [(o, n) for n in new for o in old
+            pairs = [(o, n, "cusip" if o.get("cusip") else "title") for n in new for o in old
                      if (o.get("cusip") and o.get("cusip") == n.get("cusip"))
                      or (not o.get("cusip") and o.get("title") and o.get("title") == n.get("title"))]
             if len(pairs) != len(new):  # titles that repeat across lines cannot tell them apart
                 pairs = []
         if not pairs and len(old) == 1 and len(new) == 1:
-            pairs = [(old[0], new[0])]
-        for o, n in pairs:
+            pairs = [(old[0], new[0], "only_line")]
+        for o, n, paired_by in pairs:
             record = {"type": "fund_mark_change", "filer": n["filer"], "fund": n["fund"], "name": n["name"],
+                      "paired_by": paired_by,
                       "from_as_of": first, "to_as_of": last, "from_url": o["url"], "to_url": n["url"]}
             if kind == "shares":
                 change = round(100 * (n["value_per_share"] / o["value_per_share"] - 1), 1) if o["value_per_share"] else None
@@ -918,17 +919,37 @@ def gleif_entity(record):
     }
 
 
+LEGAL_FORM_WORDS = {
+    "inc", "incorporated", "ltd", "limited", "llc", "llp", "lp", "plc", "corp", "corporation", "company", "co",
+    "holdings", "holding", "group", "the", "and", "of", "sa", "ag", "gmbh", "bv", "nv", "sarl", "sas", "srl",
+    "spa", "ab", "as", "asa", "oy", "kft", "sro", "pty", "pte", "kk", "se", "aps", "l", "p",
+}
+
+
+def distinctive_words(name):
+    return {w for w in re.findall(r"\w+", name.lower()) if w not in LEGAL_FORM_WORDS and len(w) > 1}
+
+
 def gleif_search(name, limit, fetcher=None):
     q = urllib.parse.urlencode({"filter[fulltext]": name, "page[size]": str(limit)})
     data = gleif_json(f"/lei-records?{q}", fetcher) or {"data": []}
     records = data.get("data", [])
+    # full-text search ranks loose matches too ("Snyk, Inc." returns car dealers);
+    # keep candidates whose name or other names share a word with the query beyond its legal form
+    wanted, kept, dropped = distinctive_words(name), 0, 0
     for rec in records:
         ent = gleif_entity(rec)
+        if wanted and not wanted & distinctive_words(" ".join([ent["legal_name"] or "", *ent["other_names"]])):
+            dropped += 1
+            continue
+        kept += 1
         yield {"type": "gleif_candidate", **{k: ent[k] for k in (
             "lei", "legal_name", "jurisdiction", "registered_as", "entity_status", "lei_status", "legal_address", "url")}}
-    if not records:  # no LEI is itself a result; say so rather than print nothing
-        yield {"type": "gleif_no_match", "query": name, "url": f"{GLEIF}/lei-records?{q}",
-               "note": "no LEI record matches this name; try another spelling or a parent's name"}
+    if not kept:  # no LEI is itself a result; say so rather than print nothing
+        note = "no LEI record matches this name; try another spelling or a parent's name"
+        if dropped:
+            note += f" ({dropped} loose matches sharing none of the name's words were left out)"
+        yield {"type": "gleif_no_match", "query": name, "url": f"{GLEIF}/lei-records?{q}", "note": note}
 
 
 def gleif_exception(lei, level, fetcher=None):
@@ -1167,6 +1188,11 @@ def ch_report(number, ch, max_filings=200, today=None, list_filings=25):
     if not charges:
         yield {"type": "ch_charges", "count": 0, "url": f"{web}/charges",
                "note": "the charges register was read and lists no charges"}
+    elif p.get("has_charges") is False:
+        yield {"type": "ch_profile_mismatch", "field": "has_charges", "profile": False, "register_count": len(charges),
+               "url": f"{web}/charges",
+               "note": "the company profile says there are no charges, but the charges register lists these; "
+                       "the register is right, so a tool that trusts the profile would miss them"}
     for c in charges:
         yield {"type": "ch_charge", "status": c.get("status"), "created_on": c.get("created_on"),
                "delivered_on": c.get("delivered_on"), "satisfied_on": c.get("satisfied_on"),
@@ -1383,12 +1409,12 @@ def uk_accounts(number, ch, sets=3):
         try:
             meta = ch.metadata(meta_url)
             if "application/xhtml+xml" not in (meta.get("resources") or {}):
-                yield {"type": "uk_accounts_needs_ocr", **base,
+                yield {"type": "uk_accounts_scanned", **base, "pages": meta.get("pages"),
                        "url": f"{web}/filing-history/{f.get('transaction_id')}/document?format=pdf",
-                       "note": "filed as a PDF only, often a scanned image; figures may still appear as prior-year "
-                               "comparatives in the next accounts. To read a scan, run mr.py uk-pages <url> <folder> "
-                               "and open the page images it writes"}
-                if not used:
+                       "note": "filed as a PDF only, usually a scan with no text layer. Read it: run mr.py uk-pages "
+                               "<url> <folder> and open the page images it writes, starting with the contents page. "
+                               "Its figures may also appear as prior-year comparatives in the next accounts"}
+                if not used and base["made_up_date"] not in scanned_newer:  # an amendment repeats the date
                     scanned_newer.append(base["made_up_date"])
                 continue
             doc = ch.document(meta_url, "application/xhtml+xml")
@@ -1578,20 +1604,44 @@ MAX_PAGE_STREAM = 16 * 1024 * 1024  # bytes of encoded image data per page
 MAX_PAGES = 1000
 
 
-def png_1bit(changes_by_row, width, height, invert=False):
-    """A black-and-white PNG from g4_rows output."""
+def _shrink_row(black, bits, scale, out_bits):
+    """A row bitmap (pixel 0 in the top bit of `bits`) shrunk `scale` times: an
+    output pixel is black when any of the `scale` input pixels it covers is."""
+    spread = black
+    for i in range(1, scale):
+        spread |= black << i
+    spread &= (1 << bits) - 1
+    kept = format(spread, f"0{bits}b")[::scale]
+    return int(kept.ljust(out_bits, "0")[:out_bits], 2)
+
+
+def png_1bit(changes_by_row, width, height, invert=False, scale=1):
+    """A black-and-white PNG from g4_rows output, optionally `scale` times smaller."""
     nbytes = (width + 7) // 8
     if not (0 < width <= MAX_PAGE_SIDE and 0 < height <= MAX_PAGE_SIDE) or (nbytes + 1) * height > MAX_PAGE_BITMAP:
         raise ValueError(f"image of {width} x {height} pixels is larger than a scanned page")
-    full = (1 << nbytes * 8) - 1
-    raw = bytearray()
+    out_w, out_h = -(-width // scale), -(-height // scale)
+    out_bytes = (out_w + 7) // 8
+    full = (1 << out_bytes * 8) - 1
+    raw, block, rows_in_block = bytearray(), 0, 0
+
+    def add(black):
+        if scale > 1:
+            black = _shrink_row(black, nbytes * 8, scale, out_bytes * 8)
+        raw.extend(b"\x00" + (black if invert else full ^ black).to_bytes(out_bytes, "big"))  # PNG: 1 is white
     for changes in changes_by_row:
         black = 0
         for i in range(0, len(changes), 2):
             start, end = changes[i], changes[i + 1] if i + 1 < len(changes) else width
             if end > start:
                 black |= ((1 << (end - start)) - 1) << (nbytes * 8 - end)
-        raw += b"\x00" + (black if invert else full ^ black).to_bytes(nbytes, "big")  # PNG: 1 is white
+        block, rows_in_block = block | black, rows_in_block + 1
+        if rows_in_block == scale:
+            add(block)
+            block, rows_in_block = 0, 0
+    if rows_in_block:
+        add(block)
+    width, height = out_w, out_h
 
     def chunk(tag, body):
         return struct.pack(">I", len(body)) + tag + body + struct.pack(">I", zlib.crc32(tag + body))
@@ -1628,8 +1678,9 @@ def parse_pages(spec):
     return pages
 
 
-def page_images(pdf, out_dir, pages=None):
-    """Write each page image in a scanned PDF to out_dir as PNG (fax images) or JPEG."""
+def page_images(pdf, out_dir, pages=None, scale=1):
+    """Write each page image in a scanned PDF to out_dir as PNG (fax images) or JPEG.
+    `scale` shrinks fax images that many times (JPEGs are saved as filed)."""
     os.makedirs(out_dir, exist_ok=True)
     count = written = 0
     for d, data in pdf_images(pdf):
@@ -1644,7 +1695,7 @@ def page_images(pdf, out_dir, pages=None):
         filters = [f.decode() for f in re.findall(rb"/(\w+)", filters.group(1))] if filters else []
         size = re.search(rb"/Width\s+(\d+)", d), re.search(rb"/Height\s+(\d+)", d)
         width, height = (int(m.group(1)) for m in size) if all(size) else (None, None)
-        base = {"image": count, "width": width, "height": height}
+        base = {"image": count, "width": width, "height": height}  # as filed, before --scale
         try:
             if filters == ["DCTDecode"]:
                 ext, body = "jpg", data
@@ -1656,7 +1707,7 @@ def page_images(pdf, out_dir, pages=None):
                     raise ValueError("CCITT Group 3 images are not supported, only Group 4 (/K -1)")
                 invert = (re.search(rb"/BlackIs1\s+true", d) is not None) != \
                     (re.search(rb"/Decode\s*\[\s*1(?:\.0*)?\s+0(?:\.0*)?\s*\]", d) is not None)
-                ext, body = "png", png_1bit(g4_rows(data, width, height), width, height, invert)
+                ext, body = "png", png_1bit(g4_rows(data, width, height), width, height, invert, scale)
             else:
                 yield {"type": "uk_accounts_page_unsupported", **base, "filters": filters}
                 continue
@@ -1861,12 +1912,19 @@ def pathlib_name(path):
     return os.path.basename(path)
 
 
+def is_source_report(path):
+    """A source report starts with its SOURCE: line (entity.md and notes do not)."""
+    with open(path, encoding="utf-8", errors="replace") as f:
+        head = f.read(2000)
+    return re.search(r"^\W*SOURCE:", head, re.M) is not None
+
+
 def report_paths(targets):
     out = []
     for t in targets:
         if os.path.isdir(t):
             out += sorted(os.path.join(t, n) for n in os.listdir(t)
-                          if n.endswith(".md") and n != "dossier.md")
+                          if n.endswith(".md") and n != "dossier.md" and is_source_report(os.path.join(t, n)))
         else:
             out.append(t)
     return out
@@ -1929,9 +1987,12 @@ def main(argv=None):
     s.add_argument("--sets", type=int, default=3, help="accounts filings to read (each covers two years)")
 
     s = sub.add_parser("uk-pages", help="save a scanned accounts PDF's pages as images an agent can read")
-    s.add_argument("pdf", help="the uk_accounts_needs_ocr record's url, or a local PDF file")
+    s.add_argument("pdf", help="the uk_accounts_scanned record's url, or a local PDF file")
     s.add_argument("out_dir")
     s.add_argument("--pages", help="pages to save, such as 1-5,33 (default: all)")
+    s.add_argument("--scale", type=int, choices=(1, 2, 3, 4), default=2,
+                   help="shrink fax-image pages this many times; the default 2 halves each side of a 300 dpi "
+                        "scan and stays legible, 1 keeps full size for small print")
 
     s = sub.add_parser("verify-report", help="check every red flag's quote in source reports against its cited pages")
     s.add_argument("targets", nargs="+", help="report files, or a run folder (every .md except dossier.md)")
@@ -1988,7 +2049,7 @@ def main(argv=None):
             else:
                 with open(a.pdf, "rb") as f:
                     pdf = f.read()
-            for r in page_images(pdf, a.out_dir, parse_pages(a.pages) if a.pages else None):
+            for r in page_images(pdf, a.out_dir, parse_pages(a.pages) if a.pages else None, a.scale):
                 emit(r)
         elif a.cmd == "verify-report":
             for r in verify_reports(report_paths(a.targets), a.user_agent):
