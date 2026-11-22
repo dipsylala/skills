@@ -25,5 +25,6 @@ Read the company's own financial statements and turn them into a multi-year tabl
    - principal risks the directors name;
    - related-party transactions and amounts owed to or by the parent.
 4. **Changes between years:** a change of auditor, of year end, or of accounts type (full to abridged, for example), and any restated prior-year figures.
+5. **Group companies:** the subsidiaries and participations the accounts list, each with its country, registered number where given, and share held. Record them under Facts: the coordinator adds those outside the US and UK to the national registers search.
 
 Report red flags here as established findings, since they come from the company's own filed accounts: a qualified or adverse opinion, material uncertainty on going concern, a covenant breach, debt due within 18 months without agreed refinancing, a runway (as check 2 defines it) under two years, or a large impairment.
