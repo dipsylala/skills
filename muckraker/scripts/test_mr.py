@@ -6,6 +6,7 @@ import io
 import json
 import os
 import pathlib
+import re
 import struct
 import sys
 import tempfile
@@ -1166,6 +1167,119 @@ class IrelandRunFixes(unittest.TestCase):
         ceased = fake_ch({"/company/1/persons-with-significant-control-statements": {"items": [
             {"statement": "no-individual-or-entity-with-signficant-control", "ceased_on": "2025-06-01"}]}})
         self.assertEqual(list(mr.psc_parent_mismatch("1", ceased, ["parent"])), [])
+
+
+def tiny_xlsx(rows):
+    """An .xlsx with one sheet of inline-number and shared-string cells."""
+    import zipfile
+    strings, sheet = [], []
+    for r, row in enumerate(rows, 1):
+        cells = []
+        for c, value in zip("ABCDEFGH", row):
+            if isinstance(value, int):
+                cells.append(f'<c r="{c}{r}"><v>{value}</v></c>')
+            else:
+                strings.append(value)
+                cells.append(f'<c r="{c}{r}" t="s"><v>{len(strings) - 1}</v></c>')
+        sheet.append(f'<row r="{r}">{"".join(cells)}</row>')
+    ns = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("xl/sharedStrings.xml", f"<sst {ns}>" + "".join(f"<si><t>{x}</t></si>" for x in strings) + "</sst>")
+        z.writestr("xl/worksheets/sheet1.xml", f"<worksheet {ns}><sheetData>{''.join(sheet)}</sheetData></worksheet>")
+    return buf.getvalue()
+
+
+class OfficersLayoffsHiring(unittest.TestCase):
+    def officers_api(self, appointments, disqualified=()):
+        return {
+            "/company/01234567/officers": {"items": [
+                {"name": "DOE, Jane", "officer_role": "director", "date_of_birth": {"month": 6, "year": 1980},
+                 "links": {"officer": {"appointments": "/officers/abc/appointments"}}},
+                {"name": "ACME SECRETARIES LTD", "officer_role": "corporate-secretary",
+                 "links": {"officer": {"appointments": "/officers/sec/appointments"}}}]},
+            "/officers/abc/appointments": {"total_results": len(appointments), "items": appointments},
+            "/company/09999999": {"has_insolvency_history": True},
+            "/company/09999999/insolvency": {"cases": [{"type": "compulsory-liquidation"}]},
+            "/company/02222222/insolvency": {"cases": [{"type": "creditors-voluntary-liquidation"}]},
+            "/company/04444444": {"has_insolvency_history": True},
+            "/company/04444444/insolvency": {"cases": [{"type": "members-voluntary-liquidation"}]},
+            "/search/disqualified-officers": {"items": list(disqualified)},
+        }
+
+    @staticmethod
+    def appt(number, status):
+        return {"appointed_to": {"company_number": number, "company_name": f"CO {number}", "company_status": status},
+                "officer_role": "director", "appointed_on": "2015-01-01"}
+
+    def test_phoenix_pattern_and_privacy(self):
+        api = self.officers_api([self.appt("01234567", "active"), self.appt("02222222", "liquidation"),
+                                 self.appt("09999999", "dissolved"), self.appt("03333333", "active"),
+                                 self.appt("04444444", "dissolved")])  # a solvent members' liquidation
+        out = list(mr.ch_officers("01234567", fake_ch(api)))
+        bad = [r["company_number"] for r in out if r["type"] == "ch_officer_insolvent_company"]
+        self.assertEqual(bad, ["02222222", "09999999"])  # the dissolved one had an insolvency
+        flag = next(r for r in out if r["type"] == "ch_flag")
+        self.assertEqual((flag["flag"], flag["severity"]), ("director of insolvent companies", "major"))
+        self.assertEqual(out[-1]["directors"], 1)  # the corporate secretary is skipped
+        self.assertNotIn("date_of_birth", json.dumps(out))
+
+    def test_one_insolvency_is_minor_and_disqualification_needs_birth_month(self):
+        same = {"title": "Jane DOE", "date_of_birth": "1980-06-03T00:00:00", "description": "Born on 3 June 1980 - Disqualified",
+                "links": {"self": "/disqualified-officers/natural/x"}}
+        other = dict(same, date_of_birth="1975-02-01T00:00:00")
+        api = self.officers_api([self.appt("02222222", "administration")], [other, same])
+        flags = [r for r in mr.ch_officers("01234567", fake_ch(api)) if r["type"] == "ch_flag"]
+        self.assertEqual([(f["flag"], f["severity"]) for f in flags],
+                         [("director of an insolvent company", "minor"), ("disqualified director", "major")])
+
+    def test_warn_california_and_texas(self):
+        xlsx = tiny_xlsx([["WARN REPORT"],
+                          ["County/Parish", "Notice\nDate", "Processed\nDate", "Effective \nDate", "Company",
+                           "Layoff/\nClosure", "No. Of\nEmployees", "Address"],
+                          ["San Mateo County", 46199, 46204, 46232, "Acme Robotics, Inc.", "Layoff Permanent", "103", "1 Way"],
+                          ["Los Angeles County", 46203, 46204, 46266, "Acme Bakery", "Closure Permanent", "2", "2 St"]])
+        tx = [{"job_site_name": "ACME ROBOTICS INC", "notice_date": "2026-06-23T00:00:00.000",
+               "layoff_date": "2026-08-21T00:00:00.000", "total_layoff_number": "40", "city_name": "Austin"}]
+        out = list(mr.warn_report("Acme Robotics Inc", lambda u: xlsx if u == mr.CA_WARN else json.dumps(tx).encode()))
+        notices = [(r["state"], r["company"], r["notice_date"], r["employees"]) for r in out if r["type"] == "warn_notice"]
+        self.assertEqual(notices, [("CA", "Acme Robotics, Inc.", "2026-06-26", 103), ("TX", "ACME ROBOTICS INC", "2026-06-23", 40)])
+        self.assertEqual(len(out[-1]["states_searched"]), 2)
+
+    def test_job_board_found_on_page_and_counted(self):
+        page = '<script src="https://boards.greenhouse.io/embed/job_board/js?for=acme"></script>'
+        api = {"departments": [{"name": "Engineering", "jobs": [{"title": "SRE", "location": {"name": "Dublin"}}] * 2},
+                               {"name": "Sales", "jobs": [{"title": "AE", "location": {"name": "Boston"}}]}]}
+
+        def get(url):
+            return json.dumps(api) if "boards-api.greenhouse.io/v1/boards/acme" in url else page
+        [r] = list(mr.jobs_report("https://acme.example/careers", fetcher=get))
+        self.assertEqual((r["board"], r["open_roles"]), ("acme", 3))
+        self.assertEqual(r["by_department"], {"Engineering": 2, "Sales": 1})
+
+    def test_board_guessed_from_domain(self):
+        def get(url):
+            if "api.ashbyhq.com/posting-api/job-board/acme" in url:
+                return json.dumps({"jobs": [{"title": "PM", "department": "Product", "location": "Paris"}]})
+            if "greenhouse" in url:
+                raise mr.FetchError("HTTP 404")
+            return "<html>jobs load here</html>"
+        out = list(mr.jobs_report("https://www.acme.com/careers", fetcher=get))
+        self.assertEqual([r["type"] for r in out], ["jobs_board_guessed", "jobs_openings"])
+
+    def test_job_history_counts_archived_links(self):
+        cdx = [["urlkey", "timestamp", "original"], ["k", "20250101000000", "https://job-boards.greenhouse.io/acme"],
+               ["k", "20250201000000", "https://job-boards.greenhouse.io/acme"]]
+        snaps = {"20250101000000": '<a href="/acme/jobs/1">a</a><a href="/acme/jobs/2">b</a><a href="/acme/jobs/2">b</a>',
+                 "20250201000000": '<a href="/acme/jobs/3">c</a><a href="/other/jobs/9">x</a>'}
+
+        def get(url):
+            if "/cdx/" in url:
+                return json.dumps(cdx)
+            return snaps[re.search(r"/web/(\d+)id_/", url).group(1)]
+        out = list(mr.job_history("greenhouse", "acme", get, pause=0))
+        self.assertEqual([(r["date"], r["open_roles"]) for r in out], [("2025-01-01", 2), ("2025-02-01", 1)])
+        self.assertEqual(next(mr.job_history("ashby", "acme", get))["type"], "jobs_history_unavailable")
 
 class Fetch(unittest.TestCase):
     def test_gzip_body_round_trips(self):
