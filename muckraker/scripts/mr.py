@@ -978,7 +978,7 @@ def late_filing(item, company_type):
         limit, rule = 28, "PSC changes: 14 days to update the register, then 14 days to file"
     elif form == "CS01" and action:
         limit, rule = 14, "confirmation statements must be filed within 14 days of the made-up date"
-    elif form.startswith("AA") and values.get("made_up_date"):
+    elif form == "AA" and values.get("made_up_date"):  # not AAMD: amended accounts have no deadline of their own
         months = 6 if company_type == "plc" else 9
         due = _add_months(_date(values["made_up_date"]), months)
         if filed > due:

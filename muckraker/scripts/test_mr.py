@@ -401,6 +401,8 @@ class CompaniesHouseLateFilings(unittest.TestCase):
         self.assertEqual(mr.late_filing(aa, "plc")["due"], "2024-06-30")
         early = {"type": "AA", "date": "2024-09-15", "description_values": {"made_up_date": "2023-12-31"}}
         self.assertIsNone(mr.late_filing(early, "ltd"))
+        amended = {"type": "AAMD", "date": "2022-02-04", "description_values": {"made_up_date": "2020-12-31"}}
+        self.assertIsNone(mr.late_filing(amended, "ltd"))
 
     def test_report_from_api(self):
         api = {
