@@ -942,6 +942,81 @@ class AikidoRunFixes(unittest.TestCase):
                 f.write(json.dumps(search) + chr(10))
             self.assertEqual(mr.covering_alias("Aikido Security Corp", mr.load_searched(path)), "Aikido")
 
+def bodacc_notice(family, date, **fields):
+    return {"id": "X" + date, "dateparution": date, "familleavis": family,
+            **{k: json.dumps(v) if isinstance(v, dict) else v for k, v in fields.items()}}
+
+
+def capital_person(amount, administration=None):
+    p = {"personne": {"capital": {"montantCapital": amount, "devise": "EUR"}}}
+    if administration:
+        p["personne"]["administration"] = administration
+    return p
+
+
+class FranceRunFixes(unittest.TestCase):
+    def fr(self, notices, finances=None, today=dt.date(2026, 11, 22)):
+        company = {"siren": "123456789", "nom_complet": "ACME", "etat_administratif": "A",
+                   "date_creation": "2017-11-20", "finances": finances,
+                   "dirigeants": [{"nom": "DUPONT", "prenoms": "JEAN", "qualite": "Président de SAS"}]}
+
+        def fetcher(url):
+            if url.startswith(mr.FR_SEARCH):
+                return json.dumps({"results": [company]})
+            return json.dumps({"total_count": len(notices), "results": notices})
+        return list(mr.fr_report("123456789", fetcher, today))
+
+    def test_missing_accounts_years_are_flagged(self):
+        dpc = {"dateCloture": "2019-12-31", "typeDepot": "Comptes annuels et rapports",
+               "descriptif": "déclaration de confidentialité ... article L. 232-25."}
+        out = self.fr([bodacc_notice("dpc", "2020-10-01", depot=dpc)])
+        filed = next(r for r in out if r["type"] == "fr_accounts_filed")
+        self.assertTrue(filed["confidential"])
+        gaps = [r["year_end"] for r in out if r["type"] == "fr_flag"]
+        self.assertEqual(gaps, ["2020-12-31", "2021-12-31", "2022-12-31", "2023-12-31", "2024-12-31", "2025-12-31"])
+
+    def test_year_not_yet_due_is_not_flagged(self):
+        dpc = {"dateCloture": "2024-12-31", "typeDepot": "Comptes annuels"}
+        out = self.fr([bodacc_notice("dpc", "2025-07-01", depot=dpc)], today=dt.date(2026, 8, 1))
+        self.assertFalse([r for r in out if r["type"] == "fr_flag"])
+
+    def test_unpublished_finances_said_explicitly(self):
+        out = self.fr([])
+        fin = next(r for r in out if r["type"] == "fr_finances")
+        self.assertFalse(fin["published"])
+        self.assertIn("L. 232-25", fin["note"])
+        self.assertEqual(next(r for r in out if r["type"] == "fr_officer")["name"], "JEAN DUPONT")
+
+    def test_capital_and_officer_changes(self):
+        out = self.fr([
+            bodacc_notice("modification", "2022-04-28", modificationsgenerales={"descriptif": "modification survenue sur le capital (augmentation)"},
+                          listepersonnes=capital_person("2523.61")),
+            bodacc_notice("modification", "2023-03-30", modificationsgenerales={"descriptif": "modification survenue sur le capital (diminution)"},
+                          listepersonnes=capital_person("2389.51")),
+            # filed the same day, still showing the old capital
+            bodacc_notice("modification", "2023-03-30", modificationsgenerales={"descriptif": "modification survenue sur l'administration"},
+                          listepersonnes=capital_person("2523.61", "Directeur général partant : Thomas")),
+            bodacc_notice("modification", "2024-04-14", modificationsgenerales={"descriptif": "modification survenue sur le capital (augmentation)"},
+                          listepersonnes=capital_person("2391.39")),
+        ])
+        caps = [(r["direction"], r["previous_capital_eur"], r["capital_eur"]) for r in out if r["type"] == "fr_capital"]
+        self.assertEqual(caps, [("increase", None, 2523.61), ("reduction", 2523.61, 2389.51), ("increase", 2389.51, 2391.39)])
+        self.assertEqual(next(r for r in out if r["type"] == "fr_officer_change")["quote"], "Directeur général partant : Thomas")
+
+    def test_insolvency_notice(self):
+        j = {"nature": "Jugement d'ouverture de liquidation judiciaire", "date": "2026-11-05", "complementJugement": "..."}
+        out = self.fr([bodacc_notice("collective", "2026-11-20", jugement=j, tribunal="Greffe de Sedan")])
+        r = next(r for r in out if r["type"] == "fr_insolvency")
+        self.assertEqual((r["nature"], r["judgment_date"]), (j["nature"], "2026-11-05"))
+
+    def test_quote_check_matches_escaped_json(self):
+        inner = json.dumps({"personne": {"administration": "Directeur général partant : Thomas"}})
+        body = json.dumps({"results": [{"listepersonnes": inner}]})  # ensure_ascii: \\u00e9 twice over
+        self.assertIn("\\\\u00e9", body)
+        page = mr.searchable_text(body).lower()
+        self.assertGreaterEqual(mr.find_quote(page, "Directeur général partant : Thomas")[0], 0)
+
+
 class Fetch(unittest.TestCase):
     def test_gzip_body_round_trips(self):
         body = b"<html>schedule</html>" * 100
