@@ -1695,7 +1695,7 @@ def page_images(pdf, out_dir, pages=None, scale=1):
         filters = [f.decode() for f in re.findall(rb"/(\w+)", filters.group(1))] if filters else []
         size = re.search(rb"/Width\s+(\d+)", d), re.search(rb"/Height\s+(\d+)", d)
         width, height = (int(m.group(1)) for m in size) if all(size) else (None, None)
-        base = {"image": count, "width": width, "height": height}  # as filed, before --scale
+        base = {"image": count, "width": width, "height": height}  # as filed
         try:
             if filters == ["DCTDecode"]:
                 ext, body = "jpg", data
@@ -1708,6 +1708,7 @@ def page_images(pdf, out_dir, pages=None, scale=1):
                 invert = (re.search(rb"/BlackIs1\s+true", d) is not None) != \
                     (re.search(rb"/Decode\s*\[\s*1(?:\.0*)?\s+0(?:\.0*)?\s*\]", d) is not None)
                 ext, body = "png", png_1bit(g4_rows(data, width, height), width, height, invert, scale)
+                base.update(width=-(-width // scale), height=-(-height // scale))  # as saved
             else:
                 yield {"type": "uk_accounts_page_unsupported", **base, "filters": filters}
                 continue
