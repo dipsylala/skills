@@ -7,6 +7,7 @@ import json
 import os
 import pathlib
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
@@ -339,6 +340,23 @@ class MarksOutput(unittest.TestCase):
         self.assertTrue(any(r["type"] == "table_row" for r in first))
         self.assertFalse(any(r["type"] == "table_row" for r in second))
         self.assertEqual(next(r for r in second if r["type"] == "already_seen")["skipped"], 1)
+
+
+    def test_skip_seen_skips_covered_aliases(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "marks.jsonl")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(json.dumps({"type": "marks_search", "aliases": ["Veracode", "Mitnick"]}) + chr(10))
+            out, saved = [], mr.emit
+            mr.emit = out.append
+            try:
+                left = mr.skip_covered(["Mitnick Corp. Purchaser, Inc.", "Mitnickson Holdings"],
+                                       mr.load_searched(path))
+            finally:
+                mr.emit = saved
+        self.assertEqual(left, ["Mitnickson Holdings"])
+        self.assertEqual([(r["alias"], r["covered_by"]) for r in out],
+                         [("Mitnick Corp. Purchaser, Inc.", "Mitnick")])
 
 
 class GleifNoMatch(unittest.TestCase):
