@@ -1397,7 +1397,14 @@ def uk_accounts(number, ch, sets=3):
     number = number.strip().upper()
     web = f"{CH_WEB}/company/{number}"
     page = ch.get(f"/company/{number}/filing-history?category=accounts&items_per_page=50") or {}
-    filings = [f for f in page.get("items") or [] if (f.get("type") or "").startswith("AA")]
+    # the accounts category also holds forms that are not accounts, such as AA01 (change of accounting
+    # reference date) and AA03 (auditor removal); keep accounts (AA), amended accounts and old dormant accounts
+    filings = [f for f in page.get("items") or [] if f.get("type") in ("AA", "AAMD", "AA02")]
+    if not filings:
+        yield {"type": "uk_accounts_none", "url": f"{web}/filing-history?category=accounts",
+               "note": "no accounts filed yet; a newly incorporated company's first accounts fall due "
+                       "21 months after incorporation"}
+        return
     combined, used, used_filings, scanned_newer = {}, 0, [], []
     for f in filings:
         if used >= sets:
