@@ -270,7 +270,10 @@ JV_NOTE = "held through a joint venture of the filer; it may duplicate the filer
 def holding_notes(text, fair_value=None):
     notes = []
     if fair_value is not None and fair_value < 0:
-        notes.append("negative fair value: usually an unfunded commitment; no mark computed")
+        notes.append("negative fair value: the filer nets the funded amount's value against a discount on "
+                     "the unfunded commitment, so no mark computed; with the unfunded amount from the "
+                     "filer's unfunded-commitments table, implied mark = 100 x (fair value + unfunded) "
+                     "/ (principal + unfunded)")
     elif _REVOLVER_RE.search(text):
         notes.append(REVOLVER_NOTE)
     if _JV_RE.search(text):
