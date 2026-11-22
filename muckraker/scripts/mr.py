@@ -18,6 +18,7 @@ import html
 import json
 import os
 import re
+import struct
 import sys
 import time
 import urllib.error
@@ -69,7 +70,12 @@ def read_body(stream, gzipped, limit=MAX_BODY):
 
 
 def fetch(url, user_agent, retries=2, auth=None, accept=None):
-    """Return the decoded body of `url`. `auth` is sent as an Authorization header
+    """Return the decoded body of `url`."""
+    return fetch_bytes(url, user_agent, retries, auth, accept).decode("utf-8", errors="replace")
+
+
+def fetch_bytes(url, user_agent, retries=2, auth=None, accept=None):
+    """Return the raw body of `url`. `auth` is sent as an Authorization header
     on this request only, never on a redirect (Companies House documents redirect
     to signed storage URLs that reject it)."""
     global _last_sec_request
@@ -90,8 +96,7 @@ def fetch(url, user_agent, retries=2, auth=None, accept=None):
             request.add_unredirected_header("Authorization", auth)
         try:
             with urllib.request.urlopen(request, timeout=60) as r:
-                body = read_body(r, r.headers.get("Content-Encoding") == "gzip")
-                return body.decode("utf-8", errors="replace")
+                return read_body(r, r.headers.get("Content-Encoding") == "gzip")
         except urllib.error.HTTPError as e:
             if e.code in (429, 500, 502, 503) and attempt < retries:
                 time.sleep(2 * (attempt + 1))
@@ -1283,7 +1288,9 @@ def uk_accounts(number, ch, sets=3):
             if "application/xhtml+xml" not in (meta.get("resources") or {}):
                 yield {"type": "uk_accounts_needs_ocr", **base,
                        "url": f"{web}/filing-history/{f.get('transaction_id')}/document?format=pdf",
-                       "note": "filed as a PDF only, often a scanned image; figures may still appear as prior-year comparatives in the next accounts"}
+                       "note": "filed as a PDF only, often a scanned image; figures may still appear as prior-year "
+                               "comparatives in the next accounts. To read a scan, run mr.py uk-pages <url> <folder> "
+                               "and open the page images it writes"}
                 continue
             doc = ch.document(meta_url, "application/xhtml+xml")
         except FetchError as e:
@@ -1364,6 +1371,200 @@ def accounts_changes(used_filings):
         if prev["accounts_type"] and cur["accounts_type"] and prev["accounts_type"] != cur["accounts_type"]:
             yield {"type": "uk_accounts_change", "change": "accounts type", "from": prev["accounts_type"],
                    "to": cur["accounts_type"], "between": [prev["made_up_date"], cur["made_up_date"]], "url": cur["url"]}
+
+
+# ----------------------------------------------------------- page images -----
+# Scanned accounts are PDFs of CCITT Group 4 fax images (or JPEGs). Decoding the fax
+# images to PNG here lets an agent read them without pdftoppm, Pillow or OCR tools.
+
+# T.4 run-length codes in run order: terminating codes for runs 0-63, then make-up codes for 64, 128, ... 2560.
+_WHITE_TERM = """00110101 000111 0111 1000 1011 1100 1110 1111 10011 10100 00111 01000 001000 000011 110100 110101
+    101010 101011 0100111 0001100 0001000 0010111 0000011 0000100 0101000 0101011 0010011 0100100 0011000 00000010
+    00000011 00011010 00011011 00010010 00010011 00010100 00010101 00010110 00010111 00101000 00101001 00101010
+    00101011 00101100 00101101 00000100 00000101 00001010 00001011 01010010 01010011 01010100 01010101 00100100
+    00100101 01011000 01011001 01011010 01011011 01001010 01001011 00110010 00110011 00110100"""
+_WHITE_MAKEUP = """11011 10010 010111 0110111 00110110 00110111 01100100 01100101 01101000 01100111 011001100 011001101
+    011010010 011010011 011010100 011010101 011010110 011010111 011011000 011011001 011011010 011011011 010011000
+    010011001 010011010 011000 010011011"""
+_BLACK_TERM = """0000110111 010 11 10 011 0011 0010 00011 000101 000100 0000100 0000101 0000111 00000100 00000111
+    000011000 0000010111 0000011000 0000001000 00001100111 00001101000 00001101100 00000110111 00000101000
+    00000010111 00000011000 000011001010 000011001011 000011001100 000011001101 000001101000 000001101001
+    000001101010 000001101011 000011010010 000011010011 000011010100 000011010101 000011010110 000011010111
+    000001101100 000001101101 000011011010 000011011011 000001010100 000001010101 000001010110 000001010111
+    000001100100 000001100101 000001010010 000001010011 000000100100 000000110111 000000111000 000000100111
+    000000101000 000001011000 000001011001 000000101011 000000101100 000001011010 000001100110 000001100111"""
+_BLACK_MAKEUP = """0000001111 000011001000 000011001001 000001011011 000000110011 000000110100 000000110101
+    0000001101100 0000001101101 0000001001010 0000001001011 0000001001100 0000001001101 0000001110010
+    0000001110011 0000001110100 0000001110101 0000001110110 0000001110111 0000001010010 0000001010011
+    0000001010100 0000001010101 0000001011010 0000001011011 0000001100100 0000001100101"""
+_SHARED_MAKEUP = """00000001000 00000001100 00000001101 000000010010 000000010011 000000010100 000000010101
+    000000010110 000000010111 000000011100 000000011101 000000011110 000000011111"""
+
+
+def _run_codes(term, makeup):
+    codes = {c: run for run, c in enumerate(term.split())}
+    codes.update({c: 64 * (i + 1) for i, c in enumerate((makeup + " " + _SHARED_MAKEUP).split())})
+    return codes
+
+
+_RUNS = (_run_codes(_WHITE_TERM, _WHITE_MAKEUP), _run_codes(_BLACK_TERM, _BLACK_MAKEUP))  # indexed by colour
+# T.6 2D modes: a vertical offset (a1 = b1 + offset), "pass", "horizontal" or "end" (EOFB).
+_MODES = {"1": 0, "011": 1, "010": -1, "000011": 2, "000010": -2, "0000011": 3, "0000010": -3,
+          "0001": "pass", "001": "horizontal", "000000000001": "end"}
+
+
+def _read_code(bits, p, table, longest):
+    for n in range(1, longest + 1):
+        value = table.get(bits[p:p + n])
+        if value is not None:
+            return value, p + n
+    raise ValueError(f"bad CCITT code at bit {p}")
+
+
+def _read_run(bits, p, colour):
+    total = 0
+    while True:
+        run, p = _read_code(bits, p, _RUNS[colour], 13)
+        total += run
+        if run < 64:
+            return total, p
+
+
+def g4_rows(data, width, height):
+    """Decode CCITT Group 4 (T.6) data: for each row, the positions where the colour
+    changes, starting white (so black runs are [c0, c1), [c2, c3), ...)."""
+    bits = bin(int.from_bytes(b"\x01" + data, "big"))[3:]
+    p, ref = 0, [width] * 3
+    for _ in range(height):
+        cur, a0, colour, k = [], -1, 0, 0
+        while a0 < width:
+            while k > 0 and ref[k - 1] > a0:
+                k -= 1
+            while ref[k] <= a0 or k % 2 != colour:  # b1: next change on the row above to the opposite colour
+                k += 1
+            b1, b2 = ref[k], ref[k + 1]
+            mode, p = _read_code(bits, p, _MODES, 12)
+            if mode == "end":
+                raise ValueError("data ends before the last row")
+            if mode == "pass":
+                a0 = b2
+            elif mode == "horizontal":
+                a0 = max(a0, 0)
+                r1, p = _read_run(bits, p, colour)
+                r2, p = _read_run(bits, p, 1 - colour)
+                a1 = min(a0 + r1, width)
+                a0 = min(a1 + r2, width)
+                cur += [a1, a0]
+            else:
+                a0 = b1 + mode
+                if not 0 <= a0 <= width:
+                    raise ValueError(f"vertical code points outside the row ({a0})")
+                cur.append(a0)
+                colour = 1 - colour
+        yield cur
+        ref = cur + [width] * 3
+
+
+# Limits on a fetched PDF's images, whose sizes the PDF itself declares: a scanned A4 page
+# at 300 dpi is about 2500 x 3500 pixels, a 1 MB bitmap, from a ~100 KB fax stream.
+MAX_PAGE_SIDE = 20000  # pixels; A0 at 600 dpi
+MAX_PAGE_BITMAP = 64 * 1024 * 1024  # bytes of decoded 1-bit bitmap per page
+MAX_PAGE_STREAM = 16 * 1024 * 1024  # bytes of encoded image data per page
+MAX_PAGES = 1000
+
+
+def png_1bit(changes_by_row, width, height, invert=False):
+    """A black-and-white PNG from g4_rows output."""
+    nbytes = (width + 7) // 8
+    if not (0 < width <= MAX_PAGE_SIDE and 0 < height <= MAX_PAGE_SIDE) or (nbytes + 1) * height > MAX_PAGE_BITMAP:
+        raise ValueError(f"image of {width} x {height} pixels is larger than a scanned page")
+    full = (1 << nbytes * 8) - 1
+    raw = bytearray()
+    for changes in changes_by_row:
+        black = 0
+        for i in range(0, len(changes), 2):
+            start, end = changes[i], changes[i + 1] if i + 1 < len(changes) else width
+            if end > start:
+                black |= ((1 << (end - start)) - 1) << (nbytes * 8 - end)
+        raw += b"\x00" + (black if invert else full ^ black).to_bytes(nbytes, "big")  # PNG: 1 is white
+
+    def chunk(tag, body):
+        return struct.pack(">I", len(body)) + tag + body + struct.pack(">I", zlib.crc32(tag + body))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 1, 0, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(bytes(raw), 6)) + chunk(b"IEND", b""))
+
+
+_PDF_STREAM_RE = re.compile(rb"\d+\s+\d+\s+obj((?:(?!endobj).)*?)\bstream\r?\n", re.S)
+
+
+def pdf_images(pdf):
+    """(dictionary, data) for each image in a PDF, in file order, which in scanned
+    filings is page order."""
+    for m in _PDF_STREAM_RE.finditer(pdf):
+        d = m.group(1)
+        if not re.search(rb"/Subtype\s*/Image\b", d):
+            continue
+        length, size = re.search(rb"/Length\s+(\d+)(?:\s+(\d+)\s+R)?", d), None
+        if length and length.group(2):  # an indirect length: "8 0 R" points at "8 0 obj 12345 endobj"
+            target = re.search(rb"\b%s\s+%s\s+obj\s*(\d+)\s*endobj" % (length.group(1), length.group(2)), pdf)
+            size = int(target.group(1)) if target else None
+        elif length:
+            size = int(length.group(1))
+        start = m.end()
+        yield d, pdf[start:start + size] if size else pdf[start:pdf.find(b"endstream", start)].rstrip(b"\r\n")
+
+
+def parse_pages(spec):
+    """'1-3,7' -> {1, 2, 3, 7}"""
+    pages = set()
+    for part in filter(None, (x.strip() for x in spec.split(","))):
+        lo, _, hi = part.partition("-")
+        pages.update(range(int(lo), int(hi or lo) + 1))
+    return pages
+
+
+def page_images(pdf, out_dir, pages=None):
+    """Write each page image in a scanned PDF to out_dir as PNG (fax images) or JPEG."""
+    os.makedirs(out_dir, exist_ok=True)
+    count = written = 0
+    for d, data in pdf_images(pdf):
+        count += 1
+        if count > MAX_PAGES:
+            yield {"type": "error", "error": f"more than {MAX_PAGES} images; the rest were not read"}
+            count -= 1
+            break
+        if pages and count not in pages:
+            continue
+        filters = re.search(rb"/Filter\s*(\[[^\]]*\]|/\w+)", d)
+        filters = [f.decode() for f in re.findall(rb"/(\w+)", filters.group(1))] if filters else []
+        size = re.search(rb"/Width\s+(\d+)", d), re.search(rb"/Height\s+(\d+)", d)
+        width, height = (int(m.group(1)) for m in size) if all(size) else (None, None)
+        base = {"image": count, "width": width, "height": height}
+        try:
+            if filters == ["DCTDecode"]:
+                ext, body = "jpg", data
+            elif filters == ["CCITTFaxDecode"] and width and height:
+                if len(data) > MAX_PAGE_STREAM:
+                    raise ValueError(f"image data of {len(data)} bytes is larger than a scanned page")
+                k = re.search(rb"/K\s+(-?\d+)", d)
+                if not k or int(k.group(1)) >= 0:
+                    raise ValueError("CCITT Group 3 images are not supported, only Group 4 (/K -1)")
+                invert = (re.search(rb"/BlackIs1\s+true", d) is not None) != \
+                    (re.search(rb"/Decode\s*\[\s*1(?:\.0*)?\s+0(?:\.0*)?\s*\]", d) is not None)
+                ext, body = "png", png_1bit(g4_rows(data, width, height), width, height, invert)
+            else:
+                yield {"type": "uk_accounts_page_unsupported", **base, "filters": filters}
+                continue
+        except ValueError as e:
+            yield {"type": "error", **base, "error": f"image {count}: {e}"}
+            continue
+        path = os.path.join(out_dir, f"page-{count:03d}.{ext}")
+        with open(path, "wb") as f:
+            f.write(body)
+        written += 1
+        yield {"type": "uk_accounts_page", **base, "path": path}
+    yield {"type": "uk_accounts_pages", "images": count, "written": written, "out_dir": out_dir,
+           "note": "image n is page n in a scanned filing; open the pages you need with your file reader"}
 
 
 # --------------------------------------------------------------- quote -----
@@ -1619,6 +1820,11 @@ def main(argv=None):
     s.add_argument("company_number")
     s.add_argument("--sets", type=int, default=3, help="accounts filings to read (each covers two years)")
 
+    s = sub.add_parser("uk-pages", help="save a scanned accounts PDF's pages as images an agent can read")
+    s.add_argument("pdf", help="the uk_accounts_needs_ocr record's url, or a local PDF file")
+    s.add_argument("out_dir")
+    s.add_argument("--pages", help="pages to save, such as 1-5,33 (default: all)")
+
     s = sub.add_parser("verify-report", help="check every red flag's quote in source reports against its cited pages")
     s.add_argument("targets", nargs="+", help="report files, or a run folder (every .md except dossier.md)")
 
@@ -1667,6 +1873,14 @@ def main(argv=None):
             results = ch_report(a.company_number, ch, a.max_filings, list_filings=a.list_filings) if a.cmd == "ch" \
                 else uk_accounts(a.company_number, ch, a.sets)
             for r in results:
+                emit(r)
+        elif a.cmd == "uk-pages":
+            if a.pdf.startswith(("http://", "https://")):
+                pdf = fetch_bytes(a.pdf, None)
+            else:
+                with open(a.pdf, "rb") as f:
+                    pdf = f.read()
+            for r in page_images(pdf, a.out_dir, parse_pages(a.pages) if a.pages else None):
                 emit(r)
         elif a.cmd == "verify-report":
             for r in verify_reports(report_paths(a.targets), a.user_agent):

@@ -9,6 +9,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+import zlib
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import mr  # noqa: E402
@@ -488,6 +489,55 @@ class CompaniesHouseLateFilings(unittest.TestCase):
         self.assertIn("on application", mr.covid_extension(dt.date(2021, 9, 30)))
         self.assertIsNone(mr.covid_extension(dt.date(2022, 9, 30)))
         self.assertIsNone(mr.covid_extension(dt.date(2019, 9, 30)))
+
+
+def g4(bits):
+    """Bytes from a string of CCITT bits, padded to whole bytes."""
+    bits += "0" * (-len(bits) % 8)
+    return int(bits, 2).to_bytes(len(bits) // 8, "big")
+
+
+# 8 pixels wide: row 1 is horizontal mode (white 2, black 3) then V0; row 2 copies it with V0 x3;
+# row 3 is pass mode then V0, so all white; then EOFB.
+G4_SAMPLE = g4("001" + "0111" + "10" + "1" + "111" + "0001" + "1" + "000000000001" * 2)
+
+
+class PageImages(unittest.TestCase):
+    def test_g4_decode(self):
+        self.assertEqual(list(mr.g4_rows(G4_SAMPLE, 8, 3)), [[2, 5, 8], [2, 5, 8], [8]])
+        with self.assertRaises(ValueError):
+            list(mr.g4_rows(G4_SAMPLE, 8, 4))  # EOFB before the fourth row
+
+    def test_png_rows(self):
+        png = mr.png_1bit(mr.g4_rows(G4_SAMPLE, 8, 3), 8, 3)
+        self.assertTrue(png.startswith(b"\x89PNG\r\n\x1a\n"))
+        idat = png[png.index(b"IDAT") + 4:png.index(b"IEND") - 8]
+        self.assertEqual(zlib.decompress(idat), b"\x00\xc7\x00\xc7\x00\xff")  # 1 is white
+
+    def test_scanned_pdf_pages(self):
+        pdf = (b"%PDF-1.1\n4 0 obj\n<< /Type /XObject /Subtype /Image /Width 8 /Height 3 /Length 5 0 R "
+               b"/Filter /CCITTFaxDecode /DecodeParms << /K -1 /Columns 8 /Rows 3 >> >>\nstream\n" + G4_SAMPLE +
+               b"\nendstream\nendobj\n5 0 obj\n%d\nendobj\n6 0 obj\n<< /Subtype /Image /Width 1 /Height 1 "
+               b"/Filter /JPXDecode /Length 1 >>\nstream\nx\nendstream\nendobj\n" % len(G4_SAMPLE))
+        with tempfile.TemporaryDirectory() as tmp:
+            out = list(mr.page_images(pdf, tmp))
+            self.assertEqual([r["type"] for r in out],
+                             ["uk_accounts_page", "uk_accounts_page_unsupported", "uk_accounts_pages"])
+            with open(out[0]["path"], "rb") as f:
+                self.assertTrue(f.read().startswith(b"\x89PNG"))
+            self.assertEqual(out[-1]["images"], 2)
+            self.assertEqual(len(list(mr.page_images(pdf, tmp, mr.parse_pages("2")))), 2)
+        self.assertEqual(mr.parse_pages("1-3, 7"), {1, 2, 3, 7})
+
+    def test_oversized_image_is_refused(self):
+        # A few bytes of "V0" codes claiming 100000 x 100000 pixels must not build a 1.25 GB bitmap.
+        with self.assertRaises(ValueError):
+            mr.png_1bit(mr.g4_rows(g4("1" * 64), 100000, 100000), 100000, 100000)
+        pdf = (b"1 0 obj\n<< /Subtype /Image /Width 100000 /Height 100000 /Length 8 /Filter /CCITTFaxDecode "
+               b"/DecodeParms << /K -1 >> >>\nstream\n" + g4("1" * 64) + b"\nendstream\nendobj\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            out = list(mr.page_images(pdf, tmp))
+        self.assertEqual([r["type"] for r in out], ["error", "uk_accounts_pages"])
 
 
 class UkAccounts(unittest.TestCase):
