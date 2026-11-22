@@ -873,6 +873,57 @@ class SnykRunTwoFixes(unittest.TestCase):
         [c] = mr.fund_mark_changes([line("2025-06-30", 10.0, 5.0), line("2026-06-30", 12.0, 2.0)])
         self.assertEqual(c["paired_by"], "only_line")
 
+
+def tiny_text_pdf():
+    """A one-page PDF like Companies House's electronic forms: a subset font whose
+    two-byte glyph codes only make sense through its ToUnicode map, one glyph per Td."""
+    cmap = (b"begincmap 1 begincodespacerange <0000> <FFFF> endcodespacerange "
+            b"2 beginbfchar <0001> <0053> <0002> <0048> endbfchar "
+            b"1 beginbfrange <0003> <0004> <0030> endbfrange endcmap")
+    content = mr.zlib.compress(b"BT /F1 12 Tf 0 0 Td <0001> Tj 8 0 Td <0002> Tj 8 0 Td [<0003> -500 <0004>] TJ "
+                               b"0 -14 Td <0002> Tj ET")
+    objs = [b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+            b"<< /Type /Font /Subtype /Type0 /ToUnicode 6 0 R >>",
+            b"<< /Length %d /Filter /FlateDecode >>\nstream\n" % len(content) + content + b"\nendstream",
+            b"<< /Length %d >>\nstream\n" % len(cmap) + cmap + b"\nendstream"]
+    return b"%PDF-1.7\n" + b"".join(b"%d 0 obj\n" % (i + 1) + o + b"\nendobj\n" for i, o in enumerate(objs))
+
+
+class AikidoRunFixes(unittest.TestCase):
+    def test_pdf_text_through_tounicode(self):
+        blocks = mr.pdf_text(tiny_text_pdf())
+        self.assertEqual(blocks, ["SH0 1\nH"])
+
+    def test_pdf_text_records_and_scan(self):
+        [r] = mr.pdf_text_records(tiny_text_pdf(), "f.pdf")
+        self.assertEqual(r["type"], "pdf_text")
+        [r] = mr.pdf_text_records(b"%PDF-1.4\n1 0 obj << /Type /Page >> endobj", "scan.pdf")
+        self.assertEqual(r["type"], "pdf_no_text")
+
+    def test_uk_pages_points_to_pdf_text(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = list(mr.page_images(tiny_text_pdf(), d))
+        self.assertIn("pdf-text", out[-1]["note"])
+
+    def test_skip_seen_covers_only_from_searched_aliases(self):
+        # round 1 skipped "Aikido Security" (covered by "Aikido"), so round 2 must name "Aikido"
+        out, saved = [], (mr.edgar_search, mr.emit)
+        mr.edgar_search = lambda *a: ([], {"type": "search_summary", "truncated": False})
+        mr.emit = out.append
+        try:
+            mr.marks(["Aikido Security", "Aikido"], "ua", "2025-08-01", 2, 20)
+        finally:
+            mr.edgar_search, mr.emit = saved
+        search = next(r for r in out if r["type"] == "marks_search")
+        self.assertEqual(search["searched"], ["Aikido"])
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "marks.jsonl")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(json.dumps(search) + chr(10))
+            self.assertEqual(mr.covering_alias("Aikido Security Corp", mr.load_searched(path)), "Aikido")
+
 class Fetch(unittest.TestCase):
     def test_gzip_body_round_trips(self):
         body = b"<html>schedule</html>" * 100

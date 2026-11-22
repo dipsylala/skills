@@ -745,8 +745,8 @@ def load_searched(path):
                     r = json.loads(line)
                 except ValueError:
                     continue
-                if r.get("type") == "marks_search":
-                    searched += r.get("aliases") or []
+                if r.get("type") == "marks_search":  # older files have no "searched" list
+                    searched += r.get("searched", r.get("aliases")) or []
     return searched
 
 
@@ -774,7 +774,6 @@ def skip_covered(aliases, searched):
 
 def marks(aliases, user_agent, since, per_filer, max_filers, verbose=False, seen=None):
     seen = seen or set()
-    emit({"type": "marks_search", "aliases": aliases, "since": since})  # lets --skip-seen skip covered aliases
     hits, complete = [], []  # complete: aliases whose searches returned every hit
     for alias in sorted(aliases, key=len):  # broadest first, so it can cover the longer names
         by = covering_alias(alias, complete)
@@ -796,6 +795,8 @@ def marks(aliases, user_agent, since, per_filer, max_filers, verbose=False, seen
                               "results for it are mostly unrelated and the search was cut short"})
         if whole:
             complete.append(alias)
+    # lets --skip-seen skip covered aliases: only those searched in full can cover another
+    emit({"type": "marks_search", "aliases": aliases, "searched": complete, "since": since})
     # lenders (10-K/10-Q schedules) before funds (N-PORT), most recent first, so
     # --max-filers keeps the loan books and the freshest holders
     latest, lender = {}, set()
@@ -1731,8 +1732,202 @@ def page_images(pdf, out_dir, pages=None, scale=1):
             f.write(body)
         written += 1
         yield {"type": "uk_accounts_page", **base, "path": path}
-    yield {"type": "uk_accounts_pages", "images": count, "written": written, "out_dir": out_dir,
-           "note": "image n is page n in a scanned filing; open the pages you need with your file reader"}
+    note = "image n is page n in a scanned filing; open the pages you need with your file reader"
+    if not written and pdf_text(pdf):
+        note = "no page images to save: this PDF was made by software and has a text layer; read it with mr.py pdf-text"
+    yield {"type": "uk_accounts_pages", "images": count, "written": written, "out_dir": out_dir, "note": note}
+
+
+_PDF_TEXT_TOKEN_RE = re.compile(
+    rb"\((?:\\.|[^\\)])*\)"            # literal string
+    rb"|<[0-9A-Fa-f\s]*>"              # hex string
+    rb"|\[|\]"
+    rb"|/([^\s/\[\]()<>]+)\s+-?\d*\.?\d+\s+Tf\b"   # font selection
+    rb"|(-?\d*\.?\d+)\s+(-?\d*\.?\d+)\s+T[dD]\b"
+    rb"|-?\d*\.?\d+"
+    rb"|T\*|Tj|TJ|'|\"|ET\b|BT\b", re.S)
+_PDF_ESCAPES = {b"n": b"\n", b"r": b"\r", b"t": b"\t", b"b": b"\b", b"f": b"\f",
+                b"(": b"(", b")": b")", b"\\": b"\\"}
+_PDF_OBJ_RE = re.compile(rb"(?<!\d)(\d+)\s+(\d+)\s+obj\b(.*?)\bendobj\b", re.S)
+
+
+def _pdf_literal(raw):
+    out, i = bytearray(), 1
+    while i < len(raw) - 1:
+        c = raw[i:i + 1]
+        if c == b"\\":
+            nxt = raw[i + 1:i + 2]
+            octal = re.match(rb"[0-7]{1,3}", raw[i + 1:i + 4])
+            if octal:
+                out.append(int(octal.group(0), 8) & 0xFF)
+                i += 1 + len(octal.group(0))
+                continue
+            out += _PDF_ESCAPES.get(nxt, b"")
+            i += 2
+            continue
+        out += c
+        i += 1
+    return bytes(out)
+
+
+def _pdf_hex(raw):
+    return bytes.fromhex(re.sub(rb"[^0-9A-Fa-f]", b"", raw[1:-1]).decode().ljust(2, "0"))
+
+
+def _pdf_objects(pdf):
+    """Object number -> (dictionary bytes, decoded stream bytes or None)."""
+    objects = {}
+    for m in _PDF_OBJ_RE.finditer(pdf):
+        body = m.group(3)
+        split = re.search(rb"\bstream\r?\n", body)
+        if not split:
+            objects[int(m.group(1))] = (body, None)
+            continue
+        d, data = body[:split.start()], body[split.end():]
+        data = data[:data.rfind(b"endstream")].rstrip(b"\r\n")
+        if re.search(rb"/Filter\s*/FlateDecode\b", d):
+            z = zlib.decompressobj()
+            try:
+                data = z.decompress(data, MAX_PAGE_BITMAP)
+            except zlib.error:
+                data = None
+            if z.unconsumed_tail:
+                raise ValueError("a stream decompresses to more than a page's worth of data")
+        elif re.search(rb"/Filter", d):
+            data = None
+        objects[int(m.group(1))] = (d, data)
+    return objects
+
+
+def _pdf_resolve(objects, value):
+    """An inline dictionary, or the one an `n 0 R` reference points at."""
+    ref = re.fullmatch(rb"\s*(\d+)\s+\d+\s+R\s*", value or b"")
+    return objects.get(int(ref.group(1)), (b"", None))[0] if ref else (value or b"")
+
+
+def _pdf_dict_entry(d, key):
+    """The value of /key in a dictionary: a reference, or a nested << >> dictionary."""
+    m = re.search(rb"/" + key + rb"\s*(\d+\s+\d+\s+R|<<)", d)
+    if not m:
+        return None
+    if m.group(1) != b"<<":
+        return m.group(1)
+    depth, i = 0, m.start(1)
+    while i < len(d):
+        if d.startswith(b"<<", i):
+            depth, i = depth + 1, i + 2
+        elif d.startswith(b">>", i):
+            depth, i = depth - 1, i + 2
+            if not depth:
+                return d[m.start(1):i]
+        else:
+            i += 1
+    return None
+
+
+def _pdf_cmap(data):
+    """A ToUnicode CMap as (code width in bytes, {code: text})."""
+    out, width = {}, 1
+    space = re.search(rb"begincodespacerange\s*<([0-9A-Fa-f]+)>", data)
+    if space:
+        width = max(1, len(space.group(1)) // 2)
+
+    def text(hexstr):
+        return bytes.fromhex(hexstr.decode()).decode("utf-16-be", errors="replace")
+    for block in re.findall(rb"beginbfchar(.*?)endbfchar", data, re.S):
+        for src, dst in re.findall(rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]*)>", block):
+            out[int(src, 16)] = text(dst)
+    for block in re.findall(rb"beginbfrange(.*?)endbfrange", data, re.S):
+        for lo, hi, dst in re.findall(rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*(<[0-9A-Fa-f]*>|\[[^\]]*\])", block):
+            lo, hi = int(lo, 16), int(hi, 16)
+            if hi - lo > 65535:
+                continue
+            if dst.startswith(b"["):
+                for i, item in enumerate(re.findall(rb"<([0-9A-Fa-f]*)>", dst)):
+                    out[lo + i] = text(item)
+            else:
+                start = bytes.fromhex(dst[1:-1].decode())
+                for i in range(hi - lo + 1):
+                    last = int.from_bytes(start[-2:], "big") + i
+                    out[lo + i] = (start[:-2] + last.to_bytes(2, "big")).decode("utf-16-be", errors="replace")
+    return width, out
+
+
+def _pdf_page_fonts(objects, page_dict, cache):
+    """Font resource name -> (code width, ToUnicode map or None) for one page."""
+    resources = _pdf_resolve(objects, _pdf_dict_entry(page_dict, b"Resources"))
+    fonts = _pdf_resolve(objects, _pdf_dict_entry(resources, b"Font"))
+    out = {}
+    for name, num in re.findall(rb"/([^\s/\[\]()<>]+)\s*(\d+)\s+\d+\s+R", fonts):
+        num = int(num)
+        if num not in cache:
+            font = objects.get(num, (b"", None))[0]
+            tu = re.search(rb"/ToUnicode\s*(\d+)\s+\d+\s+R", font)
+            data = objects.get(int(tu.group(1)), (b"", None))[1] if tu else None
+            two_byte = re.search(rb"/Subtype\s*/Type0\b", font) is not None
+            cache[num] = _pdf_cmap(data) if data else (2 if two_byte else 1, None)
+        out[name] = cache[num]
+    return out
+
+
+def _pdf_decode(raw, font):
+    width, cmap = font or (1, None)
+    if cmap is None:
+        return raw.decode("latin-1") if width == 1 else raw[1::2].decode("latin-1")
+    codes = [int.from_bytes(raw[i:i + width], "big") for i in range(0, len(raw), width)]
+    return "".join(cmap.get(c, "") for c in codes)
+
+
+def pdf_content_text(content, fonts=None):
+    """Text shown by a page content stream: strings drawn with Tj, TJ, ' and ",
+    decoded through each font's ToUnicode map, with line breaks where the text moves down."""
+    fonts, out, in_array, font = fonts or {}, [], False, None
+    for m in _PDF_TEXT_TOKEN_RE.finditer(content):
+        tok = m.group(0)
+        if m.group(1) is not None:  # Tf
+            font = fonts.get(m.group(1))
+        elif m.group(2) is not None:  # Td / TD
+            if float(m.group(3)) != 0:  # a move along the line only places the next glyph; spaces are glyphs
+                out.append("\n")
+        elif tok.startswith(b"("):
+            out.append(_pdf_decode(_pdf_literal(tok), font))
+        elif tok.startswith(b"<"):
+            out.append(_pdf_decode(_pdf_hex(tok), font))
+        elif tok == b"[":
+            in_array = True
+        elif tok == b"]":
+            in_array = False
+        elif in_array and re.fullmatch(rb"-?\d*\.?\d+", tok) and float(tok) < -200:
+            out.append(" ")  # a wide kerning gap inside TJ is a space
+        elif tok in (b"T*", b"'", b'"', b"ET"):
+            out.append("\n")
+    return re.sub(r"[ \t]+", " ", re.sub(r"\n\s*\n+", "\n", "".join(out))).strip()
+
+
+def pdf_text(pdf):
+    """The text layer of a PDF made by software (not a scan), one block per page,
+    in file order."""
+    objects, cache, blocks = _pdf_objects(pdf), {}, []
+    for d, _ in list(objects.values()):
+        if not re.search(rb"/Type\s*/Page\b(?!s)", d):
+            continue
+        fonts = _pdf_page_fonts(objects, d, cache)
+        contents = re.search(rb"/Contents\s*(\[[^\]]*\]|\d+\s+\d+\s+R)", d)
+        refs = re.findall(rb"(\d+)\s+\d+\s+R", contents.group(1)) if contents else []
+        content = b"\n".join(objects.get(int(r), (b"", None))[1] or b"" for r in refs)
+        text = pdf_content_text(content, fonts)
+        if text:
+            blocks.append(text)
+    return blocks
+
+
+def pdf_text_records(pdf, source):
+    blocks = pdf_text(pdf)
+    if blocks:
+        yield {"type": "pdf_text", "source": source, "blocks": len(blocks), "text": "\n\n".join(blocks)}
+    else:
+        yield {"type": "pdf_no_text", "source": source,
+               "note": "no text layer (a scan); save its pages as images with mr.py uk-pages and read those"}
 
 
 # --------------------------------------------------------------- quote -----
@@ -2009,6 +2204,9 @@ def main(argv=None):
                    help="shrink fax-image pages this many times; the default 2 halves each side of a 300 dpi "
                         "scan and stays legible, 1 keeps full size for small print")
 
+    s = sub.add_parser("pdf-text", help="print the text layer of a PDF made by software, such as an electronically filed form")
+    s.add_argument("pdf", help="a PDF url (a Companies House document?format=pdf link works) or a local file")
+
     s = sub.add_parser("verify-report", help="check every red flag's quote in source reports against its cited pages")
     s.add_argument("targets", nargs="+", help="report files, or a run folder (every .md except dossier.md)")
 
@@ -2057,6 +2255,14 @@ def main(argv=None):
             results = ch_report(a.company_number, ch, a.max_filings, list_filings=a.list_filings) if a.cmd == "ch" \
                 else uk_accounts(a.company_number, ch, a.sets)
             for r in results:
+                emit(r)
+        elif a.cmd == "pdf-text":
+            if a.pdf.startswith(("http://", "https://")):
+                pdf = fetch_bytes(a.pdf, None)
+            else:
+                with open(a.pdf, "rb") as f:
+                    pdf = f.read()
+            for r in pdf_text_records(pdf, a.pdf):
                 emit(r)
         elif a.cmd == "uk-pages":
             if a.pdf.startswith(("http://", "https://")):
