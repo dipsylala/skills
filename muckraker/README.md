@@ -42,13 +42,49 @@ The dossier has these sections: Entity, Red flags (each marked as an allegation,
 
 Muckraker works without any setup, but some sources return much more with credentials.
 
-### Companies House API key
+### Credentials
 
-Without a key, the Companies House agent reads the public website. With one, it uses the Companies House API. Register for a free key at the [Companies House developer hub](https://developer.company-information.service.gov.uk/), then set it in your environment:
+Agents read API keys from environment variables. [`.env.example`](.env.example) lists them, each with where to get it. Copy it to `.env` in this folder and fill in the keys you have. Leave the others blank. `.env` is git-ignored, so keep real keys there and never in `.env.example`.
+
+Nothing loads `.env` automatically, so get the keys into the environment Claude Code runs in. Either:
+
+- add them to the `env` block of `~/.claude/settings.json`, which Claude Code passes to every command it runs:
+
+  ```json
+  { "env": { "COMPANIES_HOUSE_API_KEY": "<your key>" } }
+  ```
+
+- or load the file in your shell before starting Claude Code:
+
+  ```bash
+  set -a; source <(grep -E '^[A-Z_]+=.+' muckraker/.env); set +a
+  ```
+
+  ```powershell
+  Get-Content muckraker/.env | Where-Object { $_ -match '^\s*[A-Z_]+=\S' } | ForEach-Object { $k, $v = $_ -split '=', 2; Set-Item "env:$k" $v }
+  ```
+
+Agents keep key values out of their reports and write `[REDACTED]` for any credential they come across.
+
+### Python (for the fetcher script)
+
+`scripts/mr.py` fetches EDGAR filings and XBRL figures, finds how lenders and funds value a company's loans and shares, reads GLEIF ownership chains, and checks red-flag quotes against their sources. It needs Python 3.9 or later and nothing else. Agents use it when it runs and fall back to fetching pages themselves when it doesn't, which is slower and costs far more tokens.
+
+With Python, the coordinator also replaces two agents and most of its own checking with script calls. On Veracode:
+
+- **Lender and fund marks:** `marks` took about 30 seconds and returned about 10k tokens of output, against 144k tokens for an agent using the script and about 167k for one working by hand.
+- **GLEIF ownership:** `gleif` takes a few seconds, against about 100k tokens for an agent.
+- **Red-flag checks:** `verify-report` checked all 16 red flags in a run's 13 reports in about 6 seconds, against about 30 tool calls when the coordinator opened each page itself. Pages that refuse scripts, such as S&P's, still need a browser.
+
+Run its offline tests with:
 
 ```bash
-export COMPANIES_HOUSE_API_KEY=<your key>
+python -m unittest muckraker/scripts/test_mr.py
 ```
+
+### Companies House API key
+
+Without a key, the Companies House agent reads the public website. With one, it uses the Companies House API. To get a free key, follow the [Companies House developer hub](https://developer.company-information.service.gov.uk/): sign in, create an application, and add a REST API key to it. Set it as `COMPANIES_HOUSE_API_KEY` (see [Credentials](#credentials)).
 
 ### CourtListener
 

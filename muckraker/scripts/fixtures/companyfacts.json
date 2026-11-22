@@ -1,0 +1,19 @@
+{
+  "cik": 1318605,
+  "entityName": "Example Corp",
+  "facts": {
+    "us-gaap": {
+      "Revenues": {"units": {"USD": [
+        {"start": "2024-01-01", "end": "2024-12-31", "val": 1000, "accn": "A-2025", "fy": 2024, "fp": "FY", "form": "10-K", "filed": "2025-02-01"},
+        {"start": "2024-10-01", "end": "2024-12-31", "val": 260, "accn": "A-2025", "fy": 2024, "fp": "FY", "form": "10-K", "filed": "2025-02-01"},
+        {"start": "2024-01-01", "end": "2024-12-31", "val": 1010, "accn": "A-2026", "fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-02-01"},
+        {"start": "2025-01-01", "end": "2025-12-31", "val": 1200, "accn": "A-2026", "fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-02-01"},
+        {"start": "2025-01-01", "end": "2025-03-31", "val": 280, "accn": "Q-2025", "fy": 2025, "fp": "Q1", "form": "10-Q", "filed": "2025-05-01"}
+      ]}},
+      "CashAndCashEquivalentsAtCarryingValue": {"units": {"USD": [
+        {"end": "2024-12-31", "val": 50, "accn": "A-2025", "fy": 2024, "fp": "FY", "form": "10-K", "filed": "2025-02-01"},
+        {"end": "2025-12-31", "val": 40, "accn": "A-2026", "fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-02-01"}
+      ]}}
+    }
+  }
+}
