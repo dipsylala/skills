@@ -844,6 +844,22 @@ class SnykRunTwoFixes(unittest.TestCase):
         self.assertEqual(none[0]["type"], "gleif_no_match")
         self.assertIn("2 loose matches", none[0]["note"])
 
+    def test_gleif_search_by_registration_number(self):
+        seen = []
+        rec = {"id": "D" * 20, "attributes": {"lei": "D" * 20, "entity": {
+            "legalName": {"name": "Van Luijt Holding B.V."}, "jurisdiction": "NL", "registeredAs": "60994800",
+            "legalAddress": {}, "status": "ACTIVE"}, "registration": {"status": "ISSUED"}}}
+
+        def fetcher(path):
+            seen.append(path)
+            return json.dumps({"data": [rec]})
+        out = list(mr.gleif_search(None, 10, fetcher=fetcher, registered_as="60994800"))
+        self.assertIn("filter%5Bentity.registeredAs%5D=60994800", seen[0])
+        self.assertEqual(out[0]["registered_as"], "60994800")
+        none = list(mr.gleif_search(None, 10, fetcher=lambda path: json.dumps({"data": []}), registered_as="75231824"))
+        self.assertEqual(none[0]["type"], "gleif_no_match")
+        self.assertEqual(none[0]["query"], "75231824")
+
     def test_profile_charges_mismatch(self):
         profile = {"company_name": "X LTD", "company_number": "09677925", "type": "ltd", "has_charges": False,
                    "links": {}}
