@@ -174,9 +174,15 @@ Each disagreement with both citations.
 Sources that failed, returned nothing, or were paywalled, and what that leaves unknown.
 
 ## Sources
-Every URL cited, grouped by source.
+Every URL cited, grouped under a bold line per source, one `- [Title or site, date](url)` per URL.
 ```
+
+Write every link as standard markdown, so it works in any viewer and when the dossier is shown in the chat:
+
+- **Citations** in the body are inline links with short text, such as `([Companies House filing](https://find-and-update.company-information.service.gov.uk/company/09677925/filing-history))`. Do not use labels such as `[NR1]` or `[cro-co]` that point to the Sources section: without a matching definition line they are plain text, and definition lines do not display.
+- **Sources** lists each URL as a visible inline link, as in the structure above. No bare URLs, no `[label]: url` definition lines, and no links to the report files in place of URLs (the run folder path, given after the dossier, covers those).
+- **Characters:** percent-encode spaces, double quotes, braces, and parentheses in a URL (`%20`, `%22`, `%7B`, `%7D`, `%28`, `%29`), as in `https://www.thegazette.co.uk/insolvency/notice?text=%22Snyk%22`; unencoded, they break the link.
 
 Write one dossier per company and save it as `<run folder>/dossier.md`. Show the dossier in the chat, and give the run folder's path so the user can read it and the full source reports.
 
-Done when every claim in the dossier has a citation, from an agent's report or from a page you opened yourself in this step, every chosen source appears under its findings or under Gaps, and the dossier is saved and shown.
+Done when every claim in the dossier has a citation, from an agent's report or from a page you opened yourself in this step, every chosen source appears under its findings or under Gaps, every link is an inline markdown link as above, and the dossier is saved and shown.
