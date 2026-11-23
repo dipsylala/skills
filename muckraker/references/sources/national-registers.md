@@ -6,6 +6,8 @@ Read the register's own page or API response, not an aggregator. Where a registe
 
 When your prompt gives `fr-<SIREN>.jsonl` files, the coordinator has already read the French register and BODACC with `mr.py fr`: take France's facts from those records, citing their URLs, and do not query those APIs again. Each `fr_flag` (a financial year with no accounts-filing notice) is a red flag when its year ended within the last three years, quoting the latest `fr_accounts_filed` record's year end as the evidence and citing the `fr_flag` URL; list older ones under Facts.
 
+When your prompt gives `no-<organisasjonsnummer>.jsonl` files, the coordinator has already read Brønnøysund with `mr.py no`: take Norway's profile, officers, accounts figures, filing dates, capital changes, and announcements from those records, citing their URLs, and do not query those APIs or the announcement pages again. Spend your searches on the shareholder, which no open source gives: a `no_agreement` counterparty, the parent named in the filed accounts' notes (each `no_accounts_year` has its PDF link), or a copy of the shareholder register.
+
 ## Countries
 
 | Country | Profile and officers | Accounts | Insolvency and notices |

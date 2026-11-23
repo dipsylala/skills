@@ -129,7 +129,7 @@ Each country below was tested by a full run on a VC-backed company registered th
 | Netherlands | Weaviate | Agent: KvK in a browser. Not scripted: the KvK API is paid |
 | Ireland | Tines | `mr.py ie` (CRO open data) |
 | Luxembourg | Tadaweb | `mr.py lu` (Centrale des Bilans open data) |
-| Norway | Sanity | Agent: Brønnøysund open APIs and announcements, `uk-pages` for the scanned accounts. Candidate for an `mr.py no` |
+| Norway | Sanity | `mr.py no` (Brønnøysund open APIs and announcements); `uk-pages` for the scanned accounts |
 
 ### TODO: countries to test
 

@@ -1542,5 +1542,166 @@ class DecodeBody(unittest.TestCase):
         self.assertEqual(mr.decode_body(b"charset=nonsense \xe5"), "charset=nonsense å")  # unknown charset
 
 
+
+NO_ORG = "918714529"
+NO_NOTICES = "https://w2.brreg.no/kunngjoring"
+
+
+def no_notice_row(date, kind, kid):
+    return (f"<tr><td>{date}</td><td>&nbsp;</td><td><a href=\"hent_en.jsp?kid={kid}&amp;sokeverdi={NO_ORG}&amp;spraak=nb\">"
+            f"{kind}</a></td></tr>")
+
+
+def no_notice_page(body, register="Foretaksregisteret", date="01.01.2024"):
+    # the real pages put a style block and the search form before the notice
+    return (f"<html><head><style>.altova{{filter: x}}</style></head><body><p>Kunngj&oslash;ring for:</p>"
+            f"<p><strong>Organisasjonsnummer</strong> <strong>918 714 529</strong> (SANITY AS)</p>"
+            f"<h3>Notice</h3>{body}<br><span>{register} {date}</span><p>Kontakt oss</p></body></html>")
+
+
+def no_accounts_notice(received, start, end):
+    return no_notice_page(f"Regnskapsregisteret har den {received} mottatt komplett &aring;rsregnskap for "
+                          f"regnskaps&aring;ret 2024 fra: <table><tr><td>&Aring;rsregnskapet omfatter perioden fra "
+                          f"{start} til {end}.</td></tr></table> Foretaket er i denne perioden ikke registrert som "
+                          "morselskap i konsern.", "Regnskapsregisteret")
+
+
+def no_fetcher(pages):
+    def get(url):
+        if url not in pages:
+            raise mr.FetchError(f"HTTP 404 for {url}")
+        return pages[url]
+    return get
+
+
+def no_pages(equity=1124934.0, konkurs=False, notices=None, extra=None):
+    api = mr.BRREG_API
+    entity = {"organisasjonsnummer": NO_ORG, "navn": "SANITY AS", "organisasjonsform": {"kode": "AS"},
+              "stiftelsesdato": "2017-02-14", "registreringsdatoEnhetsregisteret": "2017-03-16",
+              "forretningsadresse": {"adresse": ["Trondheimsveien 2K"], "postnummer": "0560", "poststed": "OSLO"},
+              "kapital": {"belop": 1000000.0, "antallAksjer": 1, "innfortDato": "2025-07-15"},
+              "konkurs": konkurs, "underAvvikling": False, "underTvangsavviklingEllerTvangsopplosning": False}
+    if konkurs:
+        entity["konkursdato"] = "2025-09-12"
+    roles = {"rollegrupper": [{"sistEndret": "2023-03-30", "roller": [
+        {"type": {"beskrivelse": "Styrets leder"}, "person": {"navn": {"fornavn": "Magnus", "mellomnavn": "Kongsli",
+                                                                        "etternavn": "Hillestad"},
+                                                         "fodselsdato": "1981-04-15"}, "fratraadt": False},
+        {"type": {"beskrivelse": "Revisor"}, "enhet": {"organisasjonsnummer": "935416779", "navn": ["CEDRA NORGE AS"]}}]}]}
+    accounts = [{"regnskapsperiode": {"fraDato": "2023-02-01", "tilDato": "2024-01-31"}, "valuta": "NOK",
+                 "revisjon": {"ikkeRevidertAarsregnskap": False, "fravalgRevisjon": False},
+                 "egenkapitalGjeld": {"egenkapital": {"sumEgenkapital": equity},
+                                      "gjeldOversikt": {"sumGjeld": 154503912.0, "langsiktigGjeld": {"sumLangsiktigGjeld": 117807682.0}}},
+                 "eiendeler": {"sumBankinnskuddOgKontanter": 29268173.0, "sumEiendeler": 155628846.0},
+                 "resultatregnskapResultat": {"aarsresultat": -16696663.0, "driftsresultat": {
+                     "driftsresultat": -20699999.0, "driftsinntekter": {"sumDriftsinntekter": 56297466.0}},
+                     "finansresultat": {"finanskostnad": {"rentekostnadSammeKonsern": 2600574.0}}}}]
+    rows = notices if notices is not None else [
+        ("23.09.2024", "Godkjente årsregnskap", "1"),
+        ("16.08.2024", "Nedsettelse av kapital", "2"),
+        ("29.04.2024", "Meldepliktig avtale", "3"),
+        ("", "Vedtektsdato", "4"),
+        ("03.03.2018", "Styre", "5")]
+    pages = {
+        f"{api}/enheter/{NO_ORG}": json.dumps(entity),
+        f"{api}/enheter/{NO_ORG}/roller": json.dumps(roles),
+        f"{api}/underenheter?overordnetEnhet={NO_ORG}": json.dumps({"_embedded": {"underenheter": [
+            {"organisasjonsnummer": "818817452", "navn": "SANITY AS", "antallAnsatte": 39}]}}),
+        f"{mr.BRREG_ACCOUNTS}/{NO_ORG}": json.dumps(accounts),
+        f"{NO_NOTICES}/hent_nr.jsp?orgnr={NO_ORG}": "<table>" + "".join(no_notice_row(*r) for r in rows) + "</table>",
+        f"{NO_NOTICES}/hent_en.jsp?kid=1&sokeverdi={NO_ORG}&spraak=nb": no_accounts_notice("23.09.2024", "01.02.2023", "31.01.2024"),
+        f"{NO_NOTICES}/hent_en.jsp?kid=2&sokeverdi={NO_ORG}&spraak=nb": no_notice_page(
+            "Kreditorvarsel Kapitalnedsettelse I generalforsamling 05.06.2024 ble aksjekapitalen besluttet nedsatt fra "
+            "NOK 40.169.417,50 til NOK 1.000.000,00. Nedsettelsesbel&oslash;pet skal anvendes til: Avsetning til fond."),
+        f"{NO_NOTICES}/hent_en.jsp?kid=3&sokeverdi={NO_ORG}&spraak=nb": no_notice_page(
+            "Foretaksregisteret har mottatt redegj&oslash;relse datert 24.01.2024 for inng&aring;else av avtale etter "
+            "aksjeloven &sect; 3-8 mellom selskapet og Sanity, Inc. N&aelig;rmere opplysninger finnes i dokumentet."),
+    }
+    pages.update(extra or {})
+    return pages
+
+
+class Norway(unittest.TestCase):
+    TODAY = dt.date(2026, 11, 23)
+
+    def run_no(self, pages, query=NO_ORG, today=None):
+        return list(mr.no_report(query, fetcher=no_fetcher(pages), today=today or self.TODAY))
+
+    def test_profile_officers_accounts_and_notices(self):
+        out = self.run_no(no_pages())
+        company = next(r for r in out if r["type"] == "no_company")
+        self.assertEqual((company["name"], company["shares"], company["bankrupt"]), ("SANITY AS", 1, False))
+        self.assertTrue(any(r["type"] == "no_note" and "single shareholder" in r["note"] for r in out))
+        officers = {r["name"]: r for r in out if r["type"] == "no_officer"}
+        self.assertEqual(officers["Magnus Kongsli Hillestad"]["role"], "Styrets leder")
+        self.assertEqual(officers["Magnus Kongsli Hillestad"]["born"], "1981-04")  # month and year only
+        self.assertEqual((officers["CEDRA NORGE AS"]["orgnr"], officers["CEDRA NORGE AS"]["born"]), ("935416779", None))
+        [year] = [r for r in out if r["type"] == "no_accounts_year"]
+        self.assertEqual((year["revenue"], year["equity"], year["group_interest"]), (56297466.0, 1124934.0, 2600574.0))
+        self.assertTrue(year["pdf"].endswith(f"/aarsregnskap/kopi/{NO_ORG}/2024"))
+        [reduction] = [r for r in out if r["type"] == "no_capital"]
+        self.assertEqual((reduction["change"], reduction["from"], reduction["to"]), ("reduction", 40169417.5, 1000000.0))
+        [agreement] = [r for r in out if r["type"] == "no_agreement"]
+        self.assertEqual(agreement["counterparty"], "Sanity, Inc")
+        # a row with no date shares the row above's; an old board notice is listed, not opened
+        notices = {r["notice"]: r for r in out if r["type"] == "no_notice"}
+        self.assertEqual(notices["Vedtektsdato"]["date"], "2024-04-29")
+        self.assertNotIn("text", notices["Styre"])
+        self.assertEqual(out[-1]["type"], "no_summary")
+
+    def test_late_accounts(self):
+        out = self.run_no(no_pages())
+        [filed] = [r for r in out if r["type"] == "no_accounts_filed"]
+        self.assertEqual((filed["received"], filed["due"], filed["days_late"]), ("2024-09-23", "2024-08-31", 23))
+        [late] = [r for r in out if r.get("flag") == "late accounts"]
+        self.assertEqual((late["severity"], late["recent"]), ("major", True))
+        self.assertEqual(late["quote"], "Regnskapsregisteret har den 23.09.2024 mottatt komplett")
+        # the same filing seen four years on is old: minor, for Facts
+        old = self.run_no(no_pages(), today=dt.date(2028, 6, 1))
+        self.assertEqual(next(r for r in old if r.get("flag") == "late accounts")["severity"], "minor")
+        self.assertEqual(mr._add_months_end(dt.date(2025, 12, 31), 7), dt.date(2026, 7, 31))
+        self.assertEqual(mr._add_months_end(dt.date(2024, 1, 31), 7), dt.date(2024, 8, 31))
+        # Brreg sometimes lists one filing under two notices: report and flag it once
+        twice = no_pages(notices=[("23.09.2024", "Godkjente årsregnskap", "1"), ("", "Godkjente årsregnskap", "1b")],
+                         extra={f"{NO_NOTICES}/hent_en.jsp?kid=1b&sokeverdi={NO_ORG}&spraak=nb":
+                                no_accounts_notice("23.09.2024", "01.02.2023", "31.01.2024")})
+        out = self.run_no(twice)
+        self.assertEqual(len([r for r in out if r["type"] == "no_accounts_filed"]), 1)
+        self.assertEqual(len([r for r in out if r.get("flag") == "late accounts"]), 1)
+
+    def test_missing_accounts_and_negative_equity(self):
+        # latest filed year ends 31.01.2024; the next (to 31.01.2025) was due 31.08.2025 and is absent
+        out = self.run_no(no_pages(equity=-5.0))
+        flags = {r["flag"]: r for r in out if r["type"] == "no_flag"}
+        self.assertEqual(flags["negative equity"]["equity"], -5.0)
+        self.assertEqual((flags["accounts not filed"]["period_end"], flags["accounts not filed"]["due"]),
+                         ("2025-01-31", "2025-08-31"))
+        on_time = self.run_no(no_pages(), today=dt.date(2025, 8, 1))
+        self.assertFalse(any(r.get("flag") == "accounts not filed" for r in on_time))
+
+    def test_bankruptcy(self):
+        konkurs = no_notice_page("Konkurs - &aring;pning Ved VESTFOLD TINGRETT er det &aring;pnet konkurs i boet til: "
+                                 "SANITY AS", "Konkursregisteret", "12.09.2025")
+        pages = no_pages(konkurs=True, notices=[("12.09.2025", "Konkursåpning", "9")],
+                         extra={f"{NO_NOTICES}/hent_en.jsp?kid=9&sokeverdi={NO_ORG}&spraak=nb": konkurs})
+        out = self.run_no(pages)
+        flags = [r for r in out if r["type"] == "no_flag"]
+        self.assertEqual(flags[0]["flag"], "bankruptcy proceedings opened (konkurs)")
+        self.assertEqual(flags[0]["since"], "2025-09-12")
+        notice = next(r for r in flags if r["flag"] == "announcement: Konkursåpning")
+        self.assertEqual(notice["severity"], "major")
+        self.assertTrue(notice["quote"].startswith("Notice Konkurs - åpning Ved VESTFOLD TINGRETT"))
+        self.assertNotIn("filter", notice["quote"])  # the style block is not text
+        self.assertFalse(any(r.get("flag") == "accounts not filed" for r in out))  # a bankrupt company files none
+
+    def test_name_search_and_missing_unit(self):
+        url = f"{mr.BRREG_API}/enheter?navn=sanity&size=20"
+        out = self.run_no({url: json.dumps({"_embedded": {"enheter": [
+            {"organisasjonsnummer": NO_ORG, "navn": "SANITY AS", "organisasjonsform": {"kode": "AS"}}]}})}, query="sanity")
+        self.assertEqual([(r["type"], r.get("orgnr")) for r in out], [("no_candidate", NO_ORG), ("no_note", None)])
+        gone = self.run_no({}, query="918 714 529")
+        self.assertEqual([r["type"] for r in gone], ["no_note"])
+
+
 if __name__ == "__main__":
     unittest.main()
