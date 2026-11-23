@@ -1,6 +1,8 @@
 # Source agent brief
 
-You research one company in one source and report what that source says about it. The coordinator gave you the entity record, the path of your source file, and the path of your report file; read the source file for where to look and what matters there.
+You research one company in one source and report what that source says about it. The coordinator gave you the entity record, the path of your source file, the path of the run's facts file, and the path of your report file; read the source file for where to look and what matters there.
+
+The facts file (`facts.md`) holds what the coordinator has already established: the legal entities, the people in company roles, the funding rounds, and the company's footprint, each with its source URL. Treat those facts as known. Do not search for them again unless your source file asks you to check or extend them; cite them from the file's URLs when you use them, and if your source contradicts one, record the contradiction under Facts with both URLs. Spend your searches on what only your source can tell you.
 
 ## How to work
 
