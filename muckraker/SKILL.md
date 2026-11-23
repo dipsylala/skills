@@ -70,8 +70,9 @@ Agents in earlier runs spent much of their budget finding the same basics: four 
 - **People in company roles:** the CEO, CFO, chair, and founders, with their titles as the company's own page gives them.
 - **Funding:** each round found so far, with date, stage, amount, and lead investors.
 - **Footprint:** website, careers page, headquarters and other offices, and the headcount the company claims.
+- **Known events:** layoffs, executive departures and appointments, acquisitions, and the company's headline revenue or ARR claim from the last three years that step 1 or the scripts already turned up, each with its date and the article or filing that reports it. Leave this empty rather than search for it: it stops agents chasing the same story, and the Press agent still looks for events missing from it.
 
-Mark anything unconfirmed as such. Agents treat these facts as known: they cite them from the file's URLs when they use them, check and extend them only where their own source file asks for that (the Startup agent still owns funding, and the Company profile agent leadership), and record any contradiction they find under Facts with both URLs. Only you write the file.
+Mark anything unconfirmed as such. Agents treat these facts as known: they cite them from the file's URLs when they use them, check and extend them only where their own source file asks for that (the Startup agent still owns funding, the Company profile agent leadership, and the Press agent events), and record any contradiction they find under Facts with both URLs. Only you write the file.
 
 ### UK Companies House, run by you
 
