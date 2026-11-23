@@ -72,7 +72,28 @@ def read_body(stream, gzipped, limit=MAX_BODY):
 
 def fetch(url, user_agent, retries=2, auth=None, accept=None):
     """Return the decoded body of `url`."""
-    return fetch_bytes(url, user_agent, retries, auth, accept).decode("utf-8", errors="replace")
+    return decode_body(fetch_bytes(url, user_agent, retries, auth, accept))
+
+
+_CHARSET_RE = re.compile(rb"""charset\s*=\s*["']?([A-Za-z0-9_.:-]+)""", re.I)
+
+
+def decode_body(raw):
+    """UTF-8 when the body is valid UTF-8; otherwise the charset the page declares
+    in its first 4 KB (a Latin-1 register page such as w2.brreg.no), else cp1252.
+    Decoding a Latin-1 page as UTF-8 turns every å or ø into U+FFFD, so quotes
+    with those letters are never found."""
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    m = _CHARSET_RE.search(raw[:4096])
+    if m:
+        try:
+            return raw.decode(m.group(1).decode("ascii"), errors="replace")
+        except LookupError:
+            pass
+    return raw.decode("cp1252", errors="replace")
 
 
 def fetch_bytes(url, user_agent, retries=2, auth=None, accept=None):
@@ -232,6 +253,16 @@ def search_url(query, forms, start, end, offset=0):
     if offset:
         params["from"] = str(offset)
     return "https://efts.sec.gov/LATEST/search-index?" + urllib.parse.urlencode(params)
+
+
+def search_web_url(query, forms, start):
+    """The EDGAR full-text search page for the same query, for a reader to open."""
+    params = {"q": f'"{query}"'}
+    if forms:
+        params["forms"] = ",".join(forms)
+    if start:
+        params.update({"dateRange": "custom", "startdt": start, "enddt": dt.date.today().isoformat()})
+    return "https://www.sec.gov/edgar/search/#/" + urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
 
 
 def parse_search_hits(data):
@@ -819,7 +850,8 @@ def marks(aliases, user_agent, since, per_filer, max_filers, verbose=False, seen
             continue
         hits += found
     # lets --skip-seen skip covered aliases: only those searched in full can cover another
-    emit({"type": "marks_search", "aliases": aliases, "searched": complete, "since": since})
+    search_urls = [search_web_url(a, forms, since) for a in by_alias for forms in (["10-K", "10-Q"], ["NPORT-P"])]
+    emit({"type": "marks_search", "aliases": aliases, "searched": complete, "since": since, "urls": search_urls})
     # lenders (10-K/10-Q schedules) before funds (N-PORT), most recent first, so
     # --max-filers keeps the loan books and the freshest holders
     latest, lender = {}, set()
@@ -888,8 +920,9 @@ def marks(aliases, user_agent, since, per_filer, max_filers, verbose=False, seen
         emit(change)
     if not holders:  # say so, so an empty result is not mistaken for a failure
         emit({"type": "no_holdings_found", "aliases": aliases, "searched_since": since,
-              "filings_matched": len(hits),
-              "note": "no lender schedule or fund holding names these borrowers; nothing failed"})
+              "filings_matched": len(hits), "urls": search_urls,
+              "note": "no lender schedule or fund holding names these borrowers; nothing failed. Cite the "
+                      "full-text searches in urls"})
     if skipped:
         emit({"type": "already_seen", "skipped": skipped,
               "note": "records already in the --skip-seen file were left out, so appending does not double-count"})
@@ -1475,9 +1508,14 @@ NO_PSC_STATEMENTS = ("no-individual-or-entity-with-signficant-control",  # sic: 
                      "no-individual-or-entity-with-significant-control")
 
 
+_PARENT_NAMED_RE = re.compile(r"parent (?:undertaking|company|entity) is|controlled by|owned by|subsidiary of", re.I)
+
+
 def psc_parent_mismatch(number, ch, parent_sentences):
     """A minor flag when the PSC register says no one has significant control
     but the accounts name a parent, which should then be a registrable entity."""
+    # quote the sentence that names the parent, not a related-party exemption that only mentions one
+    parent_sentences = sorted(parent_sentences, key=lambda s: not _PARENT_NAMED_RE.search(s))
     web = f"{CH_WEB}/company/{number}/persons-with-significant-control"
     statements = (ch.get(f"/company/{number}/persons-with-significant-control-statements") or {}).get("items", [])
     current = [x for x in statements if x.get("statement") in NO_PSC_STATEMENTS and not x.get("ceased_on")]
@@ -1750,6 +1788,34 @@ def _shrink_row(black, bits, scale, out_bits):
 def png_1bit(changes_by_row, width, height, invert=False, scale=1):
     """A black-and-white PNG from g4_rows output, optionally `scale` times smaller."""
     nbytes = (width + 7) // 8
+
+    def rows():
+        for changes in changes_by_row:
+            black = 0
+            for i in range(0, len(changes), 2):
+                start, end = changes[i], changes[i + 1] if i + 1 < len(changes) else width
+                if end > start:
+                    black |= ((1 << (end - start)) - 1) << (nbytes * 8 - end)
+            yield black
+    return png_black_rows(rows(), width, height, invert, scale)
+
+
+def flate_1bit_rows(data, width, height, invert=False):
+    """Black-pixel rows of an uncompressed 1-bit DeviceGray bitmap (a FlateDecode
+    scan, as in Brønnøysund's accounts copies): 0 is black unless `invert`."""
+    nbytes = (width + 7) // 8
+    if len(data) < nbytes * height:
+        raise ValueError(f"image data of {len(data)} bytes is shorter than {width} x {height} pixels")
+    full = (1 << nbytes * 8) - 1
+    for y in range(height):
+        row = int.from_bytes(data[y * nbytes:(y + 1) * nbytes], "big")
+        yield row if invert else full ^ row
+
+
+def png_black_rows(black_rows, width, height, invert=False, scale=1):
+    """A black-and-white PNG from rows of black-pixel bits (most significant bit
+    first), optionally `scale` times smaller."""
+    nbytes = (width + 7) // 8
     if not (0 < width <= MAX_PAGE_SIDE and 0 < height <= MAX_PAGE_SIDE) or (nbytes + 1) * height > MAX_PAGE_BITMAP:
         raise ValueError(f"image of {width} x {height} pixels is larger than a scanned page")
     out_w, out_h = -(-width // scale), -(-height // scale)
@@ -1761,12 +1827,7 @@ def png_1bit(changes_by_row, width, height, invert=False, scale=1):
         if scale > 1:
             black = _shrink_row(black, nbytes * 8, scale, out_bytes * 8)
         raw.extend(b"\x00" + (black if invert else full ^ black).to_bytes(out_bytes, "big"))  # PNG: 1 is white
-    for changes in changes_by_row:
-        black = 0
-        for i in range(0, len(changes), 2):
-            start, end = changes[i], changes[i + 1] if i + 1 < len(changes) else width
-            if end > start:
-                black |= ((1 << (end - start)) - 1) << (nbytes * 8 - end)
+    for black in black_rows:
         block, rows_in_block = block | black, rows_in_block + 1
         if rows_in_block == scale:
             add(block)
@@ -1840,6 +1901,19 @@ def page_images(pdf, out_dir, pages=None, scale=1):
                 invert = (re.search(rb"/BlackIs1\s+true", d) is not None) != \
                     (re.search(rb"/Decode\s*\[\s*1(?:\.0*)?\s+0(?:\.0*)?\s*\]", d) is not None)
                 ext, body = "png", png_1bit(g4_rows(data, width, height), width, height, invert, scale)
+                base.update(width=-(-width // scale), height=-(-height // scale))  # as saved
+            elif (filters == ["FlateDecode"] and width and height and re.search(rb"/BitsPerComponent\s+1(?!\d)", d)
+                  and not re.search(rb"/DecodeParms", d)):
+                z = zlib.decompressobj()
+                try:
+                    raw = z.decompress(data, MAX_PAGE_BITMAP + 1)
+                except zlib.error as e:
+                    raise ValueError(f"image data does not decompress: {e}") from e
+                if len(raw) > MAX_PAGE_BITMAP or z.unconsumed_tail:
+                    raise ValueError("image data is larger than a scanned page")
+                invert = re.search(rb"/Decode\s*\[\s*1(?:\.0*)?\s+0(?:\.0*)?\s*\]", d) is not None
+                ext = "png"
+                body = png_black_rows(flate_1bit_rows(raw, width, height, invert), width, height, False, scale)
                 base.update(width=-(-width // scale), height=-(-height // scale))  # as saved
             else:
                 yield {"type": "uk_accounts_page_unsupported", **base, "filters": filters}

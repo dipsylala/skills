@@ -337,6 +337,19 @@ class FundTrend(unittest.TestCase):
 
 
 class MarksOutput(unittest.TestCase):
+    def test_no_holdings_found_cites_the_searches(self):
+        out, saved = [], (mr.edgar_search, mr.emit)
+        mr.edgar_search = lambda *a: ([], {"type": "search_summary", "truncated": False, "total": 0})
+        mr.emit = out.append
+        try:
+            mr.marks(["Sanity"], "ua", "2025-08-25", 2, 20)
+        finally:
+            mr.edgar_search, mr.emit = saved
+        none = next(r for r in out if r["type"] == "no_holdings_found")
+        self.assertEqual(len(none["urls"]), 2)  # lender forms and fund forms
+        self.assertTrue(none["urls"][0].startswith("https://www.sec.gov/edgar/search/#/q=%22Sanity%22"))
+        self.assertIn("forms=10-K%2C10-Q", none["urls"][0])
+
     def test_trend_notes_only_for_holders(self):
         hits = [{"type": "search_hit", "filer": f, "cik": c, "form": "10-Q", "filed": "2026-08-07",
                  "period_ending": "2026-06-30", "accession": c, "url": f"https://www.sec.gov/{c}/doc.htm"}
@@ -593,6 +606,23 @@ class PageImages(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             out = list(mr.page_images(pdf, tmp))
         self.assertEqual([r["type"] for r in out], ["error", "uk_accounts_pages"])
+
+    def test_flate_1bit_pages(self):
+        # Brønnøysund's accounts copies: 1-bit DeviceGray bitmaps under FlateDecode, 0 is black
+        bitmap = bytes([0b00111000, 0xFF, 0b11000111])  # 8 x 3: one black run per row except the middle
+        data = zlib.compress(bitmap)
+        pdf = (b"%%PDF-1.4\n1 0 obj\n<< /Type /XObject /Subtype /Image /Filter /FlateDecode /BitsPerComponent 1 "
+               b"/Width 8 /Height 3 /ColorSpace /DeviceGray /Length %d >>\nstream\n" % len(data) + data
+               + b"\nendstream\nendobj\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            [page, summary] = list(mr.page_images(pdf, tmp))
+            self.assertEqual((page["type"], summary["written"]), ("uk_accounts_page", 1))
+            with open(page["path"], "rb") as f:
+                png = f.read()
+        idat = png[png.index(b"IDAT") + 4:png.index(b"IEND") - 8]
+        self.assertEqual(zlib.decompress(idat), b"\x00" + bitmap[:1] + b"\x00\xff\x00" + bitmap[2:])  # PNG: 1 is white
+        with self.assertRaises(ValueError):  # data shorter than the claimed size
+            list(mr.flate_1bit_rows(b"\x00", 8, 3))
 
 
 class UkAccounts(unittest.TestCase):
@@ -1355,6 +1385,16 @@ class LuxembourgRunFixes(unittest.TestCase):
             {"name": "Parent Ltd", "kind": "corporate-entity-person-with-significant-control"}]}})
         self.assertEqual(list(mr.psc_parent_mismatch("1", current, ["parent"])), [])
 
+    def test_psc_mismatch_quotes_the_sentence_naming_the_parent(self):
+        ch = fake_ch({"/company/13812276/persons-with-significant-control-statements": {"items": [
+            {"statement": "no-individual-or-entity-with-signficant-control", "notified_on": "2021-12-21"}]}})
+        sentences = ["Related party transactions The company has taken advantage of the exemption available under "
+                     "paragraph 33.1A of FRS 102 for transactions with the ultimate parent company.",
+                     "Controlling party The immediate parent undertaking is Sanity Inc, a company incorporate in "
+                     "United States of America."]
+        [r] = mr.psc_parent_mismatch("13812276", ch, sentences)
+        self.assertIn("immediate parent undertaking is Sanity Inc", r["accounts_say"])
+
     def test_too_large_page_and_local_quote_check(self):
         with tempfile.TemporaryDirectory() as d:
             report = os.path.join(d, "financials.md")
@@ -1486,6 +1526,20 @@ class Fetch(unittest.TestCase):
                 f.write("SOURCE: SEC\n## Red flags\n1. **X** https://www.sec.gov/a QUOTE: \"one two three four five\"\n")
             out = list(mr.verify_reports([path], None, fetcher=fetcher))
         self.assertIn("--user-agent", out[0]["note"])
+
+
+class DecodeBody(unittest.TestCase):
+    def test_latin1_page_keeps_norwegian_letters(self):
+        # w2.brreg.no serves windows-1252; decoding it as UTF-8 lost every å, so quotes with it never matched
+        raw = '<meta charset="windows-1252"><p>mottatt komplett\xa0årsregnskap</p>'.encode("cp1252")
+        self.assertIn("komplett\xa0årsregnskap", mr.decode_body(raw))
+        self.assertGreaterEqual(mr.find_quote(mr.searchable_text(mr.decode_body(raw)).lower(),
+                                              "mottatt komplett årsregnskap")[0], 0)
+
+    def test_utf8_and_undeclared_bodies(self):
+        self.assertEqual(mr.decode_body("årsregnskap".encode("utf-8")), "årsregnskap")
+        self.assertEqual(mr.decode_body("årsregnskap".encode("cp1252")), "årsregnskap")  # no charset: cp1252
+        self.assertEqual(mr.decode_body(b"charset=nonsense \xe5"), "charset=nonsense å")  # unknown charset
 
 
 if __name__ == "__main__":
