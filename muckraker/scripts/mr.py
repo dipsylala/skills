@@ -2964,8 +2964,11 @@ def no_report(query, fetcher=None, today=None):
         for r in group.get("roller") or []:
             person, unit = (r.get("person") or {}).get("navn") or {}, r.get("enhet") or {}
             name = " ".join(x for x in (person.get("fornavn"), person.get("mellomnavn"), person.get("etternavn")) if x)
+            # month and year only: enough to tell a director from a namesake on a sanctions list
+            born = ((r.get("person") or {}).get("fodselsdato") or "")[:7] or None
             yield {"type": "no_officer", "role": (r.get("type") or {}).get("beskrivelse"),
-                   "name": name or " ".join(unit.get("navn") or []) or None, "orgnr": unit.get("organisasjonsnummer"),
+                   "name": name or " ".join(unit.get("navn") or []) or None, "born": born,
+                   "orgnr": unit.get("organisasjonsnummer"),
                    "resigned": r.get("fratraadt"), "group_changed": group.get("sistEndret"), "url": roles_url}
 
     accounts_url = f"{BRREG_ACCOUNTS}/{orgnr}"

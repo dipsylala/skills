@@ -1585,7 +1585,8 @@ def no_pages(equity=1124934.0, konkurs=False, notices=None, extra=None):
         entity["konkursdato"] = "2025-09-12"
     roles = {"rollegrupper": [{"sistEndret": "2023-03-30", "roller": [
         {"type": {"beskrivelse": "Styrets leder"}, "person": {"navn": {"fornavn": "Magnus", "mellomnavn": "Kongsli",
-                                                                        "etternavn": "Hillestad"}}, "fratraadt": False},
+                                                                        "etternavn": "Hillestad"},
+                                                         "fodselsdato": "1981-04-15"}, "fratraadt": False},
         {"type": {"beskrivelse": "Revisor"}, "enhet": {"organisasjonsnummer": "935416779", "navn": ["CEDRA NORGE AS"]}}]}]}
     accounts = [{"regnskapsperiode": {"fraDato": "2023-02-01", "tilDato": "2024-01-31"}, "valuta": "NOK",
                  "revisjon": {"ikkeRevidertAarsregnskap": False, "fravalgRevisjon": False},
@@ -1633,7 +1634,8 @@ class Norway(unittest.TestCase):
         self.assertTrue(any(r["type"] == "no_note" and "single shareholder" in r["note"] for r in out))
         officers = {r["name"]: r for r in out if r["type"] == "no_officer"}
         self.assertEqual(officers["Magnus Kongsli Hillestad"]["role"], "Styrets leder")
-        self.assertEqual(officers["CEDRA NORGE AS"]["orgnr"], "935416779")
+        self.assertEqual(officers["Magnus Kongsli Hillestad"]["born"], "1981-04")  # month and year only
+        self.assertEqual((officers["CEDRA NORGE AS"]["orgnr"], officers["CEDRA NORGE AS"]["born"]), ("935416779", None))
         [year] = [r for r in out if r["type"] == "no_accounts_year"]
         self.assertEqual((year["revenue"], year["equity"], year["group_interest"]), (56297466.0, 1124934.0, 2600574.0))
         self.assertTrue(year["pdf"].endswith(f"/aarsregnskap/kopi/{NO_ORG}/2024"))
