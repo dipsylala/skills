@@ -722,6 +722,8 @@ def fund_mark_changes(holdings):
 
 
 GENERIC_ALIAS_HITS = 2000  # a borrower name matching more filings than this is probably a common word
+OUTLIER_ALIAS_HITS = 500  # with another alias in the run: more hits than this, and
+OUTLIER_RATIO = 10        # this many times the most specific alias, is a common word
 
 
 def record_key(r):
@@ -780,27 +782,42 @@ def skip_covered(aliases, searched):
 
 def marks(aliases, user_agent, since, per_filer, max_filers, verbose=False, seen=None):
     seen = seen or set()
-    hits, complete = [], []  # complete: aliases whose searches returned every hit
+    complete, by_alias = [], {}  # complete: aliases whose searches returned every hit
     for alias in sorted(aliases, key=len):  # broadest first, so it can cover the longer names
         by = covering_alias(alias, complete)
         if by:
             emit({"type": "already_searched", "alias": alias, "covered_by": by,
                   "note": f'a shorter alias in this run, "{by}", already matched every filing naming this alias'})
             continue
-        whole = True
+        whole, found_all, total = True, [], 0
         # separate searches, so a flood of fund filings cannot push lenders past the cap
         for forms in (["10-K", "10-Q"], ["NPORT-P"]):
             found, summary = edgar_search(alias, forms, since, None, user_agent, SEARCH_CAP)
             whole = whole and not summary["truncated"]
-            hits += found
+            found_all += found
+            total += summary.get("total", 0) or 0
             if summary["truncated"] or verbose:
                 emit(summary)
             if summary.get("total", 0) > GENERIC_ALIAS_HITS:
                 emit({"type": "generic_alias", "alias": alias, "forms": forms, "total": summary.get("total"),
                       "note": "this name matches thousands of filings, so it is probably a common word; "
                               "results for it are mostly unrelated and the search was cut short"})
+        by_alias[alias] = (found_all, total)
         if whole:
             complete.append(alias)
+    hits = []
+    for alias, (found, total) in by_alias.items():
+        others = [t for a, (_, t) in by_alias.items() if a != alias and t]
+        if others and total > OUTLIER_ALIAS_HITS and total > OUTLIER_RATIO * min(others):
+            # an acquired product's name ("Fugue") can be an ordinary word in thousands of fund filings
+            emit({"type": "generic_alias", "alias": alias, "total": total, "dropped": True,
+                  "note": f"this name matched {total} filings, over {OUTLIER_RATIO} times the most specific "
+                          "alias, so it is probably a common word; its filings were not read. Search it by "
+                          "hand with the company name if it matters"})
+            if alias in complete:
+                complete.remove(alias)
+            continue
+        hits += found
     # lets --skip-seen skip covered aliases: only those searched in full can cover another
     emit({"type": "marks_search", "aliases": aliases, "searched": complete, "since": since})
     # lenders (10-K/10-Q schedules) before funds (N-PORT), most recent first, so

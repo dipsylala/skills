@@ -1375,6 +1375,42 @@ class LuxembourgRunFixes(unittest.TestCase):
                 mr.emit = saved
             self.assertTrue(out[0]["found"])
 
+
+class SnykAfterRunFixes(unittest.TestCase):
+    def test_common_word_alias_is_dropped(self):
+        # "Fugue" (an acquired product) matched 1,274 unrelated fund filings; "Snyk" about 40
+        hit = lambda cik: {"cik": cik, "form": "NPORT-P", "filed": "2026-06-30", "filer": "F", "accession": cik,
+                           "url": f"https://www.sec.gov/{cik}.xml", "period_ending": "2026-06-30"}
+        totals = {"Snyk": 40, "Fugue": 1274}
+
+        def search(alias, forms, *a):
+            n = totals[alias] if forms == ["NPORT-P"] else 0
+            found = [hit(f"{alias}{i}") for i in range(min(n, 3))]
+            return found, {"type": "search_summary", "total": n, "truncated": False}
+        fetched, out, saved = [], [], (mr.edgar_search, mr.emit, mr.fetch)
+        mr.edgar_search, mr.emit = search, out.append
+        mr.fetch = lambda url, ua: fetched.append(url) or "<edgarSubmission/>"
+        try:
+            mr.marks(["Snyk", "Fugue"], "ua", "2025-08-01", 2, 20)
+        finally:
+            mr.edgar_search, mr.emit, mr.fetch = saved
+        dropped = [r for r in out if r["type"] == "generic_alias" and r.get("dropped")]
+        self.assertEqual([r["alias"] for r in dropped], ["Fugue"])
+        self.assertEqual(next(r for r in out if r["type"] == "marks_search")["searched"], ["Snyk"])
+        self.assertFalse([u for u in fetched if "Fugue" in u])
+        self.assertTrue([u for u in fetched if "Snyk" in u])
+
+    def test_single_alias_is_never_dropped(self):
+        def search(alias, forms, *a):
+            return [], {"type": "search_summary", "total": 900, "truncated": False}
+        out, saved = [], (mr.edgar_search, mr.emit)
+        mr.edgar_search, mr.emit = search, out.append
+        try:
+            mr.marks(["SpaceX"], "ua", "2025-08-01", 2, 20)
+        finally:
+            mr.edgar_search, mr.emit = saved
+        self.assertFalse([r for r in out if r.get("dropped")])
+
 class Fetch(unittest.TestCase):
     def test_gzip_body_round_trips(self):
         body = b"<html>schedule</html>" * 100
