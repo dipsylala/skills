@@ -70,9 +70,9 @@ Agents keep key values out of their reports and write `[REDACTED]` for any crede
 
 `scripts/mr.py` fetches EDGAR filings and XBRL figures, finds how lenders and funds value a company's loans and shares, reads GLEIF ownership chains, searches and reads UK Companies House records and accounts (scanned ones as page images, electronic forms as text), the French register with its BODACC notices, the Irish register's open data, Luxembourg's filed accounts from the Centrale des Bilans open data, checks UK directors' other companies for insolvencies and disqualifications, finds US WARN layoff notices (California and Texas), counts a company's open roles and their trend, and checks red-flag quotes against their sources. It needs Python 3.9 or later and nothing else. Agents use it when it runs and fall back to fetching pages themselves when it doesn't, which is slower and costs far more tokens.
 
-With Python, the coordinator also replaces up to three agents and most of its own checking with script calls. On Veracode:
+With Python, the coordinator also replaces up to three agents and most of its own checking with script calls. On a US company with a UK subsidiary:
 
-- **UK Companies House** (needs `COMPANIES_HOUSE_API_KEY`): `ch` returned Veracode Ltd's register record in about a second, with 28 filings made after their statutory deadline worked out from the register's own dates, against about 92k tokens for an agent. `uk-accounts` read four sets of iXBRL accounts into a five-year table, with the accounts' notes on the parent chain and going concern, in under 3 seconds. When those UK accounts are the only filed accounts, as for Veracode, the coordinator writes the financials report from them too, instead of sending a roughly 110k-token agent.
+- **UK Companies House** (needs `COMPANIES_HOUSE_API_KEY`): `ch` returned the UK subsidiary's register record in about a second, with 28 filings made after their statutory deadline worked out from the register's own dates, against about 92k tokens for an agent. `uk-accounts` read four sets of iXBRL accounts into a five-year table, with the accounts' notes on the parent chain and going concern, in under 3 seconds. When those UK accounts are the only filed accounts, as they were there, the coordinator writes the financials report from them too, instead of sending a roughly 110k-token agent.
 
 - **Lender and fund marks:** `marks` took about 30 seconds and returned about 10k tokens of output, against 144k tokens for an agent using the script and about 167k for one working by hand.
 - **GLEIF ownership:** `gleif` takes a few seconds, against about 100k tokens for an agent.
@@ -121,8 +121,8 @@ Each country below was tested by a full run on a VC-backed company registered th
 
 | Country | Tested on | Register access |
 | --- | --- | --- |
-| United States | Snyk, Veracode | `mr.py edgar-*` and `marks` (SEC); state registers by agent |
-| United Kingdom | Snyk Ltd, Veracode Ltd | `mr.py ch`, `ch-officers`, `uk-accounts`, `uk-pages` (Companies House API) |
+| United States | Two US companies | `mr.py edgar-*` and `marks` (SEC); state registers by agent |
+| United Kingdom | Their UK subsidiaries | `mr.py ch`, `ch-officers`, `uk-accounts`, `uk-pages` (Companies House API) |
 | Belgium | Aikido | Agent: KBO, NBB accounts API, Belgian Official Gazette |
 | France | GitGuardian | `mr.py fr` (company search API, BODACC) |
 | Germany | n8n | Agent: Handelsregister, Unternehmensregister. Not scripted: CAPTCHA and rate limits |
