@@ -115,6 +115,34 @@ Without a key, the sanctions agent reads the OpenSanctions website search and th
 
 S&P Global Ratings' public search only loads in a real browser. If the agent can't open it, the coordinator opens it in its own browser tool. If neither has one, the S&P ratings go under Gaps.
 
+## Country coverage
+
+Each country below was tested by a full run on a VC-backed company registered there, and that run's fixes were merged.
+
+| Country | Tested on | Register access |
+| --- | --- | --- |
+| United States | Snyk, Veracode | `mr.py edgar-*` and `marks` (SEC); state registers by agent |
+| United Kingdom | Snyk Ltd, Veracode Ltd | `mr.py ch`, `ch-officers`, `uk-accounts`, `uk-pages` (Companies House API) |
+| Belgium | Aikido | Agent: KBO, NBB accounts API, Belgian Official Gazette |
+| France | GitGuardian | `mr.py fr` (company search API, BODACC) |
+| Germany | n8n | Agent: Handelsregister, Unternehmensregister. Not scripted: CAPTCHA and rate limits |
+| Netherlands | Weaviate | Agent: KvK in a browser. Not scripted: the KvK API is paid |
+| Ireland | Tines | `mr.py ie` (CRO open data) |
+| Luxembourg | Tadaweb | `mr.py lu` (Centrale des Bilans open data) |
+
+### TODO: countries to test
+
+Run Muckraker on a VC-backed company registered in the country. Note which routes worked, which agents duplicated each other, and what a deterministic `mr.py` command could do from an open API, then fix what the run shows.
+
+- [ ] **Switzerland:** has a row (Zefix, UID register, SOGC) from the Aikido run's subsidiary, but has never been the main target. Zefix answers fetch tools with 403.
+- [ ] **Norway:** has a row. The Brønnøysund register has an open API covering officers, accounts and bankruptcies, so it is a candidate for an `mr.py no`.
+- [ ] **Denmark:** has a row. Check what the CVR register gives without a login.
+- [ ] **Canada:** has a row. Check federal corporations data against provincial registers.
+- [ ] **Finland:** no row yet. The PRH open data API looks scriptable.
+- [ ] **Sweden:** no row yet. Bolagsverket's free data is limited, so check what is open.
+- [ ] **Israel:** no row yet. It has many VC-backed tech companies, often with a US parent.
+- [ ] **Spain and Italy:** no rows yet. Check the free parts of the registers (Registro Mercantil, Registro Imprese) and their gazettes (BORME).
+
 ## Limits
 
 - LinkedIn and most of S&P Global sit behind logins or paywalls, so Muckraker reports only what is public and lists the rest under Gaps.
