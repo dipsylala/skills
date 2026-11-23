@@ -129,13 +129,13 @@ Each country below was tested by a full run on a VC-backed company registered th
 | Netherlands | Weaviate | Agent: KvK in a browser. Not scripted: the KvK API is paid |
 | Ireland | Tines | `mr.py ie` (CRO open data) |
 | Luxembourg | Tadaweb | `mr.py lu` (Centrale des Bilans open data) |
+| Norway | Sanity | Agent: Brønnøysund open APIs and announcements, `uk-pages` for the scanned accounts. Candidate for an `mr.py no` |
 
 ### TODO: countries to test
 
 Run Muckraker on a VC-backed company registered in the country. Note which routes worked, which agents duplicated each other, and what a deterministic `mr.py` command could do from an open API, then fix what the run shows.
 
 - [ ] **Switzerland:** has a row (Zefix, UID register, SOGC) from the Aikido run's subsidiary, but has never been the main target. Zefix answers fetch tools with 403.
-- [ ] **Norway:** has a row. The Brønnøysund register has an open API covering officers, accounts and bankruptcies, so it is a candidate for an `mr.py no`.
 - [ ] **Denmark:** has a row. Check what the CVR register gives without a login.
 - [ ] **Canada:** has a row. Check federal corporations data against provincial registers.
 - [ ] **Finland:** no row yet. The PRH open data API looks scriptable.
