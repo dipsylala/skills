@@ -29,12 +29,12 @@ It is manual-only. The agent never starts it on its own.
 | US state registry | Status (including suspensions), formation, registered agent, officers or managers, foreign registrations, and UCC liens where free (when the company, its parent, or a subsidiary is registered in a US state). Searches the registers five states publish as open data (Colorado, New York, Texas, Oregon, Connecticut) first, which often name a subsidiary's state of formation when Delaware's or California's search is closed to scripts; uses OpenCorporates with an API token |
 | National registers | Profile, officers, filed accounts, and insolvency notices in France, Luxembourg, Germany, the Netherlands, Belgium, Switzerland, Ireland, Norway, Finland, Denmark, and Canada (when the company, its parent, or a subsidiary is registered there), with North Data and OpenCorporates as fallbacks |
 | GLEIF ownership | The company's Legal Entity Identifier, its parent chain up to the ultimate parent, and its subsidiaries in every country |
-| Sanctions and offshore | Sanctions and politically-exposed-person screening (OpenSanctions, OFAC) and the ICIJ Offshore Leaks database, for the company, its group, and its leaders |
+| Sanctions and offshore | Sanctions and politically-exposed-person screening (OpenSanctions, the US Consolidated Screening List), US export-control, forced-labour, and procurement-exclusion lists (Entity List, UFLPA, Section 1260H, FCC Covered List, SAM.gov exclusions), and the ICIJ Offshore Leaks database, for the company, its group, and its leaders |
 | Startup | Funding rounds from free startup databases and funding news, grants (UKRI, CORDIS, SBIR), crowdfunding, and accelerators (when the company is under seven years old or venture-backed) |
 | S&P Global | Rating actions and tear sheets from S&P Global Ratings' public search |
 | Financials | A multi-year table from filed accounts or SEC data, plus notes on going concern, debt, and events after the year end |
 | Debt and valuation marks | How listed lenders (business development companies) and funds value the company's loans and shares, quarter by quarter |
-| Courts and insolvency | US federal dockets, US federal and state opinions, UK judgments, and UK Gazette insolvency notices |
+| Courts and insolvency | US federal dockets, US federal and state opinions, US regulators' enforcement actions (DOJ, FTC, CFPB, OFAC, FinCEN, BIS, inspectors general, Violation Tracker), UK judgments, and UK Gazette insolvency notices |
 
 The dossier has these sections: Entity, Red flags (each marked as an allegation, a filed claim, or an established finding), Financials, Key facts, Conflicts between sources, Gaps, and Sources. It appears in the chat and is saved as `dossier.md` in the run folder, beside the full source reports.
 
@@ -68,7 +68,7 @@ Agents keep key values out of their reports and write `[REDACTED]` for any crede
 
 ### Python (for the fetcher script)
 
-`scripts/mr.py` fetches EDGAR filings and XBRL figures, finds how lenders and funds value a company's loans and shares, reads GLEIF ownership chains, searches and reads UK Companies House records and accounts (scanned ones as page images, electronic forms as text), the French register with its BODACC notices, the Irish register's open data, the Finnish register's open data (PRH), Danish annual reports from the Business Authority's open index and their XBRL, Luxembourg's filed accounts from the Centrale des Bilans open data, checks UK directors' other companies for insolvencies and disqualifications, searches the US state registers published as open data (Colorado, New York, Texas, Oregon, Connecticut), finds US WARN layoff notices (California and Texas), counts a company's open roles and their trend, and checks red-flag quotes against their sources. It needs Python 3.9 or later and nothing else. Agents use it when it runs and fall back to fetching pages themselves when it doesn't, which is slower and costs far more tokens.
+`scripts/mr.py` fetches EDGAR filings and XBRL figures, finds how lenders and funds value a company's loans and shares, reads GLEIF ownership chains, searches and reads UK Companies House records and accounts (scanned ones as page images, electronic forms as text), the French register with its BODACC notices, the Irish register's open data, the Finnish register's open data (PRH), Danish annual reports from the Business Authority's open index and their XBRL, Luxembourg's filed accounts from the Centrale des Bilans open data, checks UK directors' other companies for insolvencies and disqualifications, searches the US state registers published as open data (Colorado, New York, Texas, Oregon, Connecticut), finds US WARN layoff notices (California and Texas), finds federal contracts, grants, and loans on USAspending.gov, screens names against the US Consolidated Screening List, counts a company's open roles and their trend, and checks red-flag quotes against their sources. It needs Python 3.9 or later and nothing else. Agents use it when it runs and fall back to fetching pages themselves when it doesn't, which is slower and costs far more tokens.
 
 With Python, the coordinator also replaces up to three agents and most of its own checking with script calls. On a US company with a UK subsidiary:
 
@@ -109,7 +109,7 @@ Without a token, the US state registry and national registers agents read OpenCo
 
 ### OpenSanctions API key
 
-Without a key, the sanctions agent reads the OpenSanctions website search and the OFAC list. With a key in `OPENSANCTIONS_API_KEY`, it uses the OpenSanctions API. OpenSanctions data is free for non-commercial use; commercial use needs a licence from [OpenSanctions](https://www.opensanctions.org/licensing/).
+Without a key, the sanctions agent reads the OpenSanctions website search and the US Consolidated Screening List (`mr.py csl`). With a key in `OPENSANCTIONS_API_KEY`, it uses the OpenSanctions API. OpenSanctions data is free for non-commercial use; commercial use needs a licence from [OpenSanctions](https://www.opensanctions.org/licensing/).
 
 ### Browser tool
 
@@ -121,7 +121,7 @@ Each country below was tested by a full run on a VC-backed company registered th
 
 | Country | Tested on | Register access |
 | --- | --- | --- |
-| United States | Two US companies | `mr.py edgar-*` and `marks` (SEC), `us-states` (CO, NY, TX, OR, CT open data); other state registers by agent |
+| United States | Two US companies | `mr.py edgar-*` and `marks` (SEC), `us-states` (CO, NY, TX, OR, CT open data); `usaspending` (federal awards) and `csl` (US screening list); other state registers by agent |
 | United Kingdom | Their UK subsidiaries | `mr.py ch`, `ch-officers`, `uk-accounts`, `uk-pages` (Companies House API) |
 | Belgium | Aikido | Agent: KBO, NBB accounts API, Belgian Official Gazette |
 | France | GitGuardian | `mr.py fr` (company search API, BODACC) |
