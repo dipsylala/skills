@@ -2632,6 +2632,7 @@ def parse_form_d(xml_text):
                        if (el.text or "").strip() == "true"] if offering is not None else [],
         "total_offering": _money(_xt(sales, "totalOfferingAmount")), "total_sold": _money(_xt(sales, "totalAmountSold")),
         "total_remaining": _money(_xt(sales, "totalRemaining")),
+        "sales_clarification": _xt(sales, "clarificationOfResponse"),  # often explains a gap with the announced round
         "investors": _int_or_none(_xt(offering, "investors/totalNumberAlreadyInvested")),
         "related_persons": people,
     }
@@ -2919,9 +2920,10 @@ def job_history(provider, token, get, months=12, pause=1.0):
         time.sleep(pause)
 
 
-def jobs_report(target, history=False, fetcher=None, pause=1.0):
+def jobs_report(target, history=False, fetcher=None, pause=1.0, offices=()):
     """Open roles from the company's job board, by department and location, and
-    optionally a monthly trend from archived copies of the board page."""
+    optionally a monthly trend from archived copies of the board page. `offices`
+    (cities or countries) picks between boards guessed from the domain name."""
     get = fetcher or (lambda u: fetch(u, None))
     m = re.fullmatch(r"(greenhouse|lever|ashby):([A-Za-z0-9_.-]+)", target)
     board = (m.group(1), m.group(2)) if m else find_job_board(target)
@@ -2934,13 +2936,33 @@ def jobs_report(target, history=False, fetcher=None, pause=1.0):
     guessed = False
     if not board:  # many careers pages build the job list in JavaScript; try the domain's name as the board
         label = (urllib.parse.urlparse(target).hostname or "").removeprefix("www.").split(".")[0]
+        words = [o.lower() for o in offices if o.strip()]
+        candidates = []
         for provider in ("greenhouse", "ashby", "lever"):
             try:
-                if label and job_board_openings(provider, label, get)[0]:
-                    board, guessed = (provider, label), True
-                    break
+                found = job_board_openings(provider, label, get)[0] if label else []
             except (FetchError, ValueError):
                 continue
+            if found:  # another company can own the same name on another provider ("lovable" on Greenhouse)
+                places = {}
+                for j in found:
+                    places[j[2] or "unspecified"] = places.get(j[2] or "unspecified", 0) + 1
+                candidates.append({"provider": provider, "board": label, "open_roles": len(found),
+                                   "top_locations": [k for k, _ in sorted(places.items(), key=lambda x: -x[1])[:5]],
+                                   "office_matches": sum(1 for j in found if j[2] and any(w in j[2].lower() for w in words))})
+        if len(candidates) > 1:
+            yield {"type": "jobs_board_candidates", "candidates": candidates, "offices": list(offices),
+                   "note": "several providers have a board with the domain's name; compare their locations with the "
+                           "company's offices"}
+        best = max((c["office_matches"] for c in candidates), default=0)
+        picks = [c for c in candidates if c["office_matches"] == best] if words else candidates
+        if len(picks) == 1:
+            board, guessed = (picks[0]["provider"], label), True
+        elif candidates:
+            yield {"type": "jobs_board_ambiguous", "url": target,
+                   "note": "no single board matches the offices given (--offices); rerun with provider:token "
+                           "for the company's own board"}
+            return
     if not board:
         yield {"type": "jobs_board_unknown", "url": target,
                "note": "no Greenhouse, Lever or Ashby board is linked from this page; pass provider:token if you know it"}
@@ -2954,7 +2976,7 @@ def jobs_report(target, history=False, fetcher=None, pause=1.0):
     if guessed:
         yield {"type": "jobs_board_guessed", "provider": provider, "board": token, "url": url,
                "note": "the careers page links no board, so this one was found by the company's domain name; "
-                       "check that its job pages are the company's before using the counts"}
+                       "check that its locations are the company's offices before using the counts"}
 
     def tally(i):
         counts = {}
@@ -4602,6 +4624,8 @@ def main(argv=None):
     s = sub.add_parser("jobs", help="open roles from the company's job board, optionally with a monthly trend")
     s.add_argument("target", help="the careers page URL, a job-board URL, or provider:token (greenhouse:acme)")
     s.add_argument("--history", action="store_true", help="also count roles in monthly archived copies (slow)")
+    s.add_argument("--offices", nargs="*", default=[], help="the company's office cities or countries, to pick "
+                                                            "between boards guessed from the domain name")
 
     s = sub.add_parser("uk-accounts", help="UK Companies House: multi-year figures from iXBRL accounts")
     s.add_argument("company_number")
@@ -4726,7 +4750,7 @@ def main(argv=None):
             for r in footprint_report(a.domain, a.github, a.founded):
                 emit(r)
         elif a.cmd == "jobs":
-            for r in jobs_report(a.target, a.history):
+            for r in jobs_report(a.target, a.history, offices=a.offices):
                 emit(r)
         elif a.cmd == "lu":
             for r in lu_report(a.rcs, a.quarters, save=a.save):

@@ -1400,7 +1400,7 @@ class OfficersLayoffsHiring(unittest.TestCase):
     <federalExemptionsExclusions><item>06b</item></federalExemptionsExclusions>
     <typeOfFiling><newOrAmendment><isAmendment>true</isAmendment></newOrAmendment><dateOfFirstSale><value>2023-03-01</value></dateOfFirstSale></typeOfFiling>
     <typesOfSecuritiesOffered><isEquityType>true</isEquityType><isOptionToAcquireType>false</isOptionToAcquireType></typesOfSecuritiesOffered>
-    <offeringSalesAmounts><totalOfferingAmount>Indefinite</totalOfferingAmount><totalAmountSold>25000000</totalAmountSold><totalRemaining>Indefinite</totalRemaining></offeringSalesAmounts>
+    <offeringSalesAmounts><totalOfferingAmount>Indefinite</totalOfferingAmount><totalAmountSold>25000000</totalAmountSold><totalRemaining>Indefinite</totalRemaining><clarificationOfResponse>Includes $9.6m of SAFEs converted and cancelled.</clarificationOfResponse></offeringSalesAmounts>
     <investors><hasNonAccreditedInvestors>false</hasNonAccreditedInvestors><totalNumberAlreadyInvested>12</totalNumberAlreadyInvested></investors>
   </offeringData>
 </edgarSubmission>"""
@@ -1429,6 +1429,7 @@ class OfficersLayoffsHiring(unittest.TestCase):
                                                  "clarification": "CEO"}])
         self.assertNotIn("Home Rd", json.dumps(f))
         self.assertEqual((f["total_sold"], f["total_offering"], f["investors"]), (25000000.0, "Indefinite", 12))
+        self.assertEqual(f["sales_clarification"], "Includes $9.6m of SAFEs converted and cancelled.")
         self.assertEqual((f["amendment"], f["first_sale"], f["securities"], f["pooled_fund"]),
                          (True, "2023-03-01", ["Equity"], False))
         issuer = out[-1]["issuers"][0]
@@ -1556,6 +1557,22 @@ class OfficersLayoffsHiring(unittest.TestCase):
             return "<html>jobs load here</html>"
         out = list(mr.jobs_report("https://www.acme.com/careers", fetcher=get))
         self.assertEqual([r["type"] for r in out], ["jobs_board_guessed", "jobs_openings"])
+
+    def test_board_guess_picks_the_board_with_the_offices(self):
+        def get(url):
+            if "boards-api.greenhouse.io/v1/boards/acme" in url:
+                return json.dumps({"departments": [{"name": "Negozi", "jobs": [{"title": "Commessa", "location": {"name": "Milano"}}] * 3}]})
+            if "api.ashbyhq.com/posting-api/job-board/acme" in url:
+                return json.dumps({"jobs": [{"title": "Engineer", "department": "Eng", "location": "Stockholm, Sweden"}] * 2})
+            if "lever" in url:
+                raise mr.FetchError("HTTP 404")
+            return "<html>jobs load here</html>"
+        out = list(mr.jobs_report("https://acme.dev/careers", fetcher=get, offices=["Stockholm", "Boston"]))
+        self.assertEqual([r["type"] for r in out], ["jobs_board_candidates", "jobs_board_guessed", "jobs_openings"])
+        self.assertEqual([(c["provider"], c["office_matches"]) for c in out[0]["candidates"]], [("greenhouse", 0), ("ashby", 2)])
+        self.assertEqual((out[-1]["provider"], out[-1]["open_roles"]), ("ashby", 2))
+        out = list(mr.jobs_report("https://acme.dev/careers", fetcher=get))
+        self.assertEqual([r["type"] for r in out], ["jobs_board_candidates", "jobs_board_ambiguous"])
 
     def test_job_history_counts_archived_links(self):
         cdx = [["urlkey", "timestamp", "original"], ["k", "20250101000000", "https://job-boards.greenhouse.io/acme"],
