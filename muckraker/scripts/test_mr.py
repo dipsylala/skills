@@ -1857,17 +1857,17 @@ class Denmark(unittest.TestCase):
         self.assertEqual(mr.dk_deadline(dt.date(2018, 12, 31))[0], dt.date(2019, 5, 31))
 
     def test_danish_gaap_report_filings_and_flags(self):
-        hits = [self.filing("2023-01-01", "2023-12-31", "2024-07-30", [("AARSRAPPORT", "application/pdf", "u/23.pdf")]),
+        hits = [self.filing("2023-01-01", "2023-12-31", "2024-07-30", [("AARSRAPPORT", "application/pdf", "http://regnskaber.virk.dk/23.pdf")]),
                 self.filing("2025-01-01", "2025-12-31", "2026-03-30",
-                            [("AARSRAPPORT", "application/xml", "u/25.xml"), ("AARSRAPPORT", "application/pdf", "u/25.pdf"),
-                             ("KONCERNREGNSKAB_FOR_OVERLIGGENDE_MODER", "application/xhtml+xml", "u/parent.xhtml")])]
+                            [("AARSRAPPORT", "application/xml", "http://regnskaber.virk.dk/25.xml"), ("AARSRAPPORT", "application/pdf", "http://regnskaber.virk.dk/25.pdf"),
+                             ("KONCERNREGNSKAB_FOR_OVERLIGGENDE_MODER", "application/xhtml+xml", "http://regnskaber.virk.dk/parent.xhtml")])]
 
         def get(url):
             return self.filings(12345678, hits) if "offentliggoerelser" in url else DK_GAAP_XML.encode()
         out = list(mr.dk_report("12345678", fetcher=get, today=dt.date(2026, 11, 24)))
         filed = [r for r in out if r["type"] == "dk_accounts_filed"]
-        self.assertEqual(filed[1]["parent_group_accounts"], "u/parent.xhtml")
-        self.assertEqual(filed[1]["report"], "u/25.pdf")
+        self.assertEqual(filed[1]["parent_group_accounts"], "http://regnskaber.virk.dk/parent.xhtml")
+        self.assertEqual(filed[1]["report"], "http://regnskaber.virk.dk/25.pdf")
         flags = {r["flag"]: r for r in out if r["type"] == "dk_flag"}
         self.assertEqual((flags["late accounts"]["days_late"], flags["late accounts"]["severity"]), (29, "major"))
         self.assertIn("gap between filed periods", flags)  # FY2024 is missing
@@ -1886,9 +1886,9 @@ class Denmark(unittest.TestCase):
 
     def test_ifrs_group_report_merged_with_danish_cover_file(self):
         hits = [self.filing("2025-01-01", "2025-12-31", "2026-03-27",
-                            [("AARSRAPPORT", "application/xml", "u/cover.xml"),
-                             ("AARSRAPPORT", "application/xhtml+xml", "u/group.xhtml"),
-                             ("AARSRAPPORT_ESEF", "application/xml", "u/esef.xml")])]
+                            [("AARSRAPPORT", "application/xml", "http://regnskaber.virk.dk/cover.xml"),
+                             ("AARSRAPPORT", "application/xhtml+xml", "http://regnskaber.virk.dk/group.xhtml"),
+                             ("AARSRAPPORT_ESEF", "application/xml", "http://regnskaber.virk.dk/esef.xml")])]
 
         def get(url):
             if "offentliggoerelser" in url:
@@ -1898,11 +1898,23 @@ class Denmark(unittest.TestCase):
         [year] = [r for r in out if r["type"] == "dk_accounts_year"]
         self.assertEqual((year["scope"], year["currency"], year["revenue"], year["net_profit"], year["equity"],
                           year["employees"], year["url"]),
-                         ("group", "EUR", 129904000.0, -45765000.0, 105139000.0, 856.0, "u/group.xhtml"))
+                         ("group", "EUR", 129904000.0, -45765000.0, 105139000.0, 856.0, "http://regnskaber.virk.dk/group.xhtml"))
         self.assertEqual([r["supervisory_board"] for r in out if r["type"] == "dk_officers"], [[{"name": "Ann Chair"}]])
         [notes] = [r for r in out if r["type"] == "dk_notes"]
         self.assertEqual(notes["parent_and_related_parties"], ["Ultimate ApS", "Top Holding Ultimate ApS"])  # inner fact closes first
         self.assertEqual([r["flag"] for r in out if r["type"] == "dk_flag"], ["accounts not published"])
+
+    def test_document_links_off_the_register_host_are_not_followed(self):
+        hits = [self.filing("2025-01-01", "2025-12-31", "2026-03-30",
+                            [("AARSRAPPORT", "application/xml", "http://attacker.example/25.xml")])]
+        fetched = []
+
+        def get(url):
+            fetched.append(url)
+            return self.filings(12345678, hits) if "offentliggoerelser" in url else DK_GAAP_XML.encode()
+        out = list(mr.dk_report("12345678", fetcher=get, today=dt.date(2026, 5, 1)))
+        self.assertEqual(len(fetched), 1)
+        self.assertIsNone([r for r in out if r["type"] == "dk_accounts_filed"][0]["xbrl"])
 
     def test_name_lists_danish_lei_candidates(self):
         def get(url):

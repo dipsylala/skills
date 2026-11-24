@@ -3499,7 +3499,7 @@ def fi_report(query, fy_end=None, fetcher=None, today=None):
 
 # --------------------------------------------------------------- Denmark ----
 
-DK_FILINGS = "http://distribution.virk.dk/offentliggoerelser/_search"
+DK_FILINGS = "http://distribution.virk.dk/offentliggoerelser/_search"  # http only: port 443 does not answer
 DK_RECENT_YEARS = 3
 DK_LATE_GRACE_DAYS = 7  # publication can trail receipt by a few days; later than this is a major flag
 DK_FIGURES = {  # field: element names in the Danish GAAP (fsa) and IFRS taxonomies, first found wins
@@ -3734,9 +3734,20 @@ def dk_candidates(name, fetcher=None):
            "search": "https://datacvr.virk.dk"}
 
 
+DK_DOC_HOST = "regnskaber.virk.dk"
+
+
 def _dk_doc(docs, kind, mime):
-    return next((d.get("dokumentUrl") for d in docs if d.get("dokumentType") == kind
-                 and (d.get("dokumentMimeType") or "").endswith(mime)), None)
+    """The first document of this type, only when it is on the Business Authority's document
+    host: the index and documents are served over http only (no https on either host), so a
+    link to anywhere else is not followed."""
+    for d in docs:
+        u = d.get("dokumentUrl") or ""
+        p = urllib.parse.urlparse(u)
+        if (d.get("dokumentType") == kind and (d.get("dokumentMimeType") or "").endswith(mime)
+                and p.scheme in ("http", "https") and p.hostname == DK_DOC_HOST):
+            return u
+    return None
 
 
 def dk_report(query, years=3, fetcher=None, today=None):
