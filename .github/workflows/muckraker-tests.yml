@@ -12,14 +12,13 @@ jobs:
   test:
     name: mr.py tests (Python ${{ matrix.python }})
     runs-on: ubuntu-latest
+    # the official Python images, since setup-python has no 3.9 build for current Ubuntu runners
+    container: python:${{ matrix.python }}-slim
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.9", "3.x"]  # mr.py promises 3.9 or later
+        python: ["3.9", "3"]  # mr.py promises 3.9 or later; "3" is the latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python }}
       - name: Run the offline tests
         run: python -m unittest muckraker/scripts/test_mr.py
