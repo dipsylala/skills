@@ -1314,6 +1314,67 @@ class OfficersLayoffsHiring(unittest.TestCase):
         self.assertIn("O%27%27NEIL+LABS%25", urls[0])
         self.assertEqual([s["state"] for s in out[-1]["searched"]], ["CO", "TX", "OR", "CT"])
 
+    def test_usaspending_filters_loose_matches_and_totals_by_uei(self):
+        calls = []
+
+        def post(path, body):
+            calls.append((path, body))
+            if path == "/search/spending_over_time/":
+                return {"results": [{"time_period": {"fiscal_year": "2025"}, "aggregated_amount": 900.0,
+                                     "Contract_Obligations": 800.0, "Grant_Obligations": 100.0, "Loan_Obligations": 0}]}
+            group = body["filters"]["award_type_codes"]
+            if group == ["A", "B", "C", "D"]:
+                return {"results": [
+                    {"Award ID": "W1", "Recipient Name": "ACME ROBOTICS INC", "Recipient UEI": "U1", "Award Amount": 750.0,
+                     "Awarding Agency": "Department of Defense", "generated_internal_id": "CONT_AWD_W1", "recipient_id": "r1-C"},
+                    {"Award ID": "W2", "Recipient Name": "ACMEROBOT HOLDINGS", "Recipient UEI": "U9", "Award Amount": 5.0,
+                     "generated_internal_id": "CONT_AWD_W2"}],
+                    "page_metadata": {"hasNext": True}}
+            if group == ["07", "08"]:
+                return {"results": [{"Award ID": "L1", "Recipient Name": "Acme Robotics, Inc.", "Recipient UEI": None,
+                                     "Loan Value": 150000.0, "Subsidy Cost": 1000.0, "Issued Date": "2020-05-01",
+                                     "Awarding Agency": "Small Business Administration",
+                                     "generated_internal_id": "ASST_NON_L1"}]}
+            if group == ["02", "03", "04", "05"]:
+                raise mr.FetchError("HTTP 503")
+            return {"results": []}
+        out = list(mr.usaspending_report(["Acme Robotics"], poster=post, today=dt.date(2026, 11, 24)))
+        awards = [r for r in out if r["type"] == "usa_award"]
+        self.assertEqual([a["award_id"] for a in awards], ["W1", "L1"])
+        self.assertEqual(awards[0]["url"], "https://www.usaspending.gov/award/CONT_AWD_W1")
+        self.assertEqual((awards[1]["group"], awards[1]["amount"], awards[1]["issued"]), ("loans", 150000.0, "2020-05-01"))
+        self.assertEqual([r["group"] for r in out if r["type"] == "usa_unavailable"], ["grants"])
+        self.assertEqual(calls[-1][1]["filters"]["recipient_search_text"], ["U1"])
+        self.assertEqual(calls[0][1]["filters"]["time_period"][0]["start_date"], "2021-11-25")
+        year = next(r for r in out if r["type"] == "usa_year")
+        self.assertEqual((year["fiscal_year"], year["contract"], year["grant"]), (2025, 800.0, 100.0))
+        summary = out[-1]
+        self.assertEqual(summary["agencies"], [{"agency": "Department of Defense", "share": 1.0}])
+        self.assertEqual(summary["other_recipients"], ["ACMEROBOT HOLDINGS"])
+        self.assertEqual(summary["truncated"], [{"query": "Acme Robotics", "group": "contracts"}])
+        self.assertEqual(summary["recipients"][0]["page"], "https://www.usaspending.gov/recipient/r1-C/latest")
+
+    def test_csl_matches_names_and_aliases(self):
+        rows = [
+            {"source": "Entity List (EL) - Bureau of Industry and Security", "name": "Acme Robotics Co., Ltd.",
+             "type": "Entity", "addresses": "Shenzhen, CN", "alt_names": "", "start_date": "2024-05-01"},
+            {"source": "Specially Designated Nationals (SDN) - Treasury Department", "name": "Volga Trading LLC",
+             "type": "Entity", "alt_names": "ACME ROBOTICS FZE; Volga Trade", "programs": "RUSSIA-EO14024"},
+            {"source": "Specially Designated Nationals (SDN) - Treasury Department", "name": "Acme Shipping",
+             "type": "Entity", "alt_names": ""},
+        ]
+        buf = io.StringIO()
+        import csv
+        w = csv.DictWriter(buf, fieldnames=["source", "name", "type", "programs", "addresses", "alt_names", "start_date"])
+        w.writeheader()
+        w.writerows(rows)
+        out = list(mr.csl_report(["Acme Robotics Inc"], fetcher=lambda u: buf.getvalue().encode()))
+        matches = [r for r in out if r["type"] == "csl_match"]
+        self.assertEqual([m["name"] for m in matches], ["Acme Robotics Co., Ltd.", "Volga Trading LLC"])
+        self.assertEqual((matches[0]["entity_type"], matches[0]["start_date"]), ("Entity", "2024-05-01"))
+        self.assertEqual(matches[1]["alt_names"], ["ACME ROBOTICS FZE", "Volga Trade"])
+        self.assertEqual((out[-1]["entries_searched"], out[-1]["matches"]), (3, 2))
+
     def fi_fetcher(self, notices, situations=(), periods=()):
         company = {"companies": [{"businessId": {"value": "1234567-8", "registrationDate": "2016-11-18"},
                                   "names": [{"name": "Acme Oy", "type": "1"}, {"name": "Acme Ltd", "type": "2"}],

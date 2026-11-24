@@ -2418,6 +2418,157 @@ def us_states_report(names, fetcher=None, limit=50):
                    "inactive or never registered. Other states' registers are web pages: search them by hand"}
 
 
+# ------------------------------------------------------- US federal money ----
+
+USASPENDING = "https://api.usaspending.gov/api/v2"
+USA_EARLIEST = "2007-10-01"  # the award search covers nothing earlier
+_USA_FIELDS = ["Award ID", "Recipient Name", "Recipient UEI", "Awarding Agency", "Awarding Sub Agency", "Description",
+               "generated_internal_id", "recipient_id"]
+_USA_SPENDING = ["Start Date", "End Date", "Award Amount", "Total Outlays"]
+# (group, award type codes, extra fields, sort field); the API takes one group per search
+USA_AWARD_GROUPS = [
+    ("contracts", ["A", "B", "C", "D"], _USA_SPENDING, "Award Amount"),
+    ("grants", ["02", "03", "04", "05"], _USA_SPENDING, "Award Amount"),
+    ("direct payments", ["06", "10"], _USA_SPENDING, "Award Amount"),
+    ("other assistance", ["09", "11"], _USA_SPENDING, "Award Amount"),
+    ("loans", ["07", "08"], ["Loan Value", "Subsidy Cost", "Issued Date"], "Loan Value"),
+]
+
+
+def post_json(url, body, retries=2):
+    """POST `body` as JSON and return the parsed reply, retrying like fetch_bytes."""
+    data = json.dumps(body).encode()
+    for attempt in range(retries + 1):
+        request = urllib.request.Request(url, data=data, headers={
+            "User-Agent": "muckraker", "Content-Type": "application/json", "Accept-Encoding": "gzip"})
+        try:
+            with urllib.request.urlopen(request, timeout=60) as r:
+                return json.loads(read_body(r, r.headers.get("Content-Encoding") == "gzip"))
+        except urllib.error.HTTPError as e:
+            if e.code in (429, 500, 502, 503) and attempt < retries:
+                time.sleep(2 * (attempt + 1))
+                continue
+            raise FetchError(f"HTTP {e.code} for {url}") from e
+        except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException) as e:
+            if attempt < retries:
+                time.sleep(2 * (attempt + 1))
+                continue
+            raise FetchError(f"{type(e).__name__} for {url}") from e
+
+
+def usaspending_report(names, since=None, poster=None, today=None, limit=25):
+    """Federal contracts, grants, loans and other awards to recipients named like the company,
+    from USAspending.gov's open API, with yearly obligations for the recipients found."""
+    post = poster or (lambda path, body: post_json(USASPENDING + path, body))
+    today = today or dt.date.today()
+    since = max(since or (today - dt.timedelta(days=5 * 365)).isoformat(), USA_EARLIEST)
+    period = [{"start_date": since, "end_date": today.isoformat()}]
+    seen, recipients, other_names, truncated, agencies = set(), {}, set(), [], {}
+    for name in names:
+        for group, codes, extra, sort in USA_AWARD_GROUPS:
+            body = {"filters": {"recipient_search_text": [name], "award_type_codes": codes, "time_period": period},
+                    "fields": _USA_FIELDS + extra, "sort": sort, "order": "desc", "limit": limit, "page": 1}
+            try:
+                reply = post("/search/spending_by_award/", body)
+            except (FetchError, ValueError) as e:
+                yield {"type": "usa_unavailable", "query": name, "group": group, "error": str(e)}
+                continue
+            if (reply.get("page_metadata") or {}).get("hasNext"):
+                truncated.append({"query": name, "group": group})
+            for row in reply.get("results") or []:
+                recipient = row.get("Recipient Name") or ""
+                if not any(_name_match(n, recipient) for n in names):
+                    other_names.add(recipient)  # the search also matches inside words ("Pleo" finds PeopleOne)
+                    continue
+                gid = row.get("generated_internal_id")
+                if gid in seen:
+                    continue
+                seen.add(gid)
+                amount = row.get("Loan Value") if group == "loans" else row.get("Award Amount")
+                uei = row.get("Recipient UEI")
+                rec = recipients.setdefault(uei or recipient, {
+                    "name": recipient, "uei": uei, "awards": 0, "amount": 0.0,
+                    **({"page": f"https://www.usaspending.gov/recipient/{row['recipient_id']}/latest"}
+                       if row.get("recipient_id") else {})})
+                rec["awards"] += 1
+                rec["amount"] += amount or 0
+                agency = row.get("Awarding Agency")
+                if agency and group != "loans":
+                    agencies[agency] = agencies.get(agency, 0) + (amount or 0)
+                yield {"type": "usa_award", "group": group, "award_id": row.get("Award ID"), "recipient": recipient,
+                       "uei": uei, "amount": amount,
+                       **({"subsidy_cost": row.get("Subsidy Cost"), "issued": row.get("Issued Date")} if group == "loans"
+                          else {"outlays": row.get("Total Outlays"), "start": row.get("Start Date"),
+                                "end": row.get("End Date")}),
+                       "agency": agency, "sub_agency": row.get("Awarding Sub Agency"),
+                       "description": (row.get("Description") or "")[:300] or None,
+                       "url": f"https://www.usaspending.gov/award/{gid}"}
+    ueis = sorted(r["uei"] for r in recipients.values() if r["uei"])
+    years = []
+    if ueis:
+        try:
+            reply = post("/search/spending_over_time/", {"group": "fiscal_year",
+                                                         "filters": {"recipient_search_text": ueis, "time_period": period}})
+            for y in reply.get("results") or []:
+                row = {"fiscal_year": int(y["time_period"]["fiscal_year"]), "obligations": y.get("aggregated_amount"),
+                       **{k: y.get(f"{k.capitalize()}_Obligations") for k in ("contract", "grant", "loan", "direct", "other")}}
+                years.append(row)
+                yield {"type": "usa_year", "ueis": ueis, **row}
+        except (FetchError, ValueError, KeyError, TypeError) as e:
+            yield {"type": "usa_unavailable", "query": ueis, "group": "yearly totals", "error": str(e)}
+    total = sum(agencies.values())
+    yield {"type": "usa_summary", "query": names, "since": since, "recipients": list(recipients.values()),
+           "agencies": [{"agency": a, "share": round(v / total, 3)} for a, v in
+                        sorted(agencies.items(), key=lambda kv: -kv[1])] if total > 0 else [],
+           **({"truncated": truncated} if truncated else {}),
+           **({"other_recipients": sorted(other_names)[:20]} if other_names else {}),
+           "note": "award amounts are each award's lifetime total and `usa_year` obligations are what agencies committed "
+                   "in each US fiscal year (October to September), not cash paid. Recipients are matched by name: check "
+                   "each UEI's page (address, parent) before counting it as the company. `agencies` shares cover the "
+                   "awards listed here, not loans; a truncated group lists only its largest awards. SBA loans, including "
+                   "PPP and disaster loans, are loans, not income; a forgiven PPP loan is still listed at its value"}
+
+
+# --------------------------------------------------- screening list (CSL) ----
+
+CSL_CSV = "https://data.trade.gov/downloadable_consolidated_screening_list/v1/consolidated.csv"
+
+
+def csl_report(names, fetcher=None):
+    """Entries naming the company in the US Consolidated Screening List (OFAC, BIS, State lists in one file)."""
+    import csv
+    import io
+    get = fetcher or (lambda u: fetch_bytes(u, None))
+    try:
+        text = decode_body(get(CSL_CSV))
+    except FetchError as e:
+        yield {"type": "csl_unavailable", "error": str(e), "url": CSL_CSV}
+        return
+    csv.field_size_limit(max(csv.field_size_limit(), 10 * 1024 * 1024))
+    lists, rows, found = {}, 0, 0
+    for row in csv.DictReader(io.StringIO(text)):
+        rows += 1
+        source = row.get("source") or ""
+        lists[source] = lists.get(source, 0) + 1
+        aliases = [a.strip() for a in (row.get("alt_names") or "").split(";") if a.strip()]
+        hits = [n for n in names if any(_name_match(n, t) for t in [row.get("name") or ""] + aliases)]
+        if not hits:
+            continue
+        found += 1
+        yield {"type": "csl_match", "query": hits, "list": source, "name": row.get("name"),
+               "entity_type": row.get("type") or None,
+               **{k: row.get(k) or None for k in ("programs", "addresses", "start_date", "end_date",
+                                                  "federal_register_notice", "license_requirement", "ids")},
+               "alt_names": aliases or None, "remarks": (row.get("remarks") or "")[:300] or None,
+               "source_list_url": row.get("source_list_url") or None,
+               "source_information_url": row.get("source_information_url") or None, "url": CSL_CSV}
+    yield {"type": "csl_summary", "query": names, "entries_searched": rows, "matches": found,
+           "lists": sorted(lists), "url": CSL_CSV,
+           "note": "a match shares every distinctive word of a name and is not yet the company: compare the address, "
+                   "country, and identifiers with the entity record before reporting it. The file does not include "
+                   "the UFLPA Entity List, the Section 1260H list, the FCC Covered List, or SAM.gov exclusions"}
+
+
 # --------------------------------------------------------------- hiring ----
 
 JOB_BOARDS = [  # provider, pattern for the board token in a careers page or URL
@@ -4151,6 +4302,11 @@ def main(argv=None):
     s = sub.add_parser("us-states", help="US entities in the state registers published as open data (CO, NY, TX, OR, CT)")
     s.add_argument("names", nargs="+", help="name prefixes to search, such as \"Aikido Security\"")
 
+    s = sub.add_parser("usaspending", help="US federal contracts, grants and loans to recipients named like the company")
+    s.add_argument("names", nargs="+", help="legal names and former names")
+    s.add_argument("--since", help="earliest date as YYYY-MM-DD (default five years ago; 2007-10-01 at the earliest)")
+    s = sub.add_parser("csl", help="the US Consolidated Screening List (OFAC, BIS, State Department lists) for these names")
+    s.add_argument("names", nargs="+", help="company, group company, and officer names")
     s = sub.add_parser("jobs", help="open roles from the company's job board, optionally with a monthly trend")
     s.add_argument("target", help="the careers page URL, a job-board URL, or provider:token (greenhouse:acme)")
     s.add_argument("--history", action="store_true", help="also count roles in monthly archived copies (slow)")
@@ -4261,6 +4417,12 @@ def main(argv=None):
                 emit(r)
         elif a.cmd == "us-states":
             for r in us_states_report(a.names):
+                emit(r)
+        elif a.cmd == "usaspending":
+            for r in usaspending_report(a.names, a.since):
+                emit(r)
+        elif a.cmd == "csl":
+            for r in csl_report(a.names):
                 emit(r)
         elif a.cmd == "jobs":
             for r in jobs_report(a.target, a.history):
