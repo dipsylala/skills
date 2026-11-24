@@ -26,7 +26,7 @@ It is manual-only. The agent never starts it on its own.
 | Company profile | Leadership, newsroom, careers, and product footprint (domain age, site history, GitHub activity) from the company's own site, with LinkedIn as a fallback; for US companies, leaders' other board seats (LittleSis) and US import records (ImportYeti) |
 | SEC EDGAR | Filings, Form D private raises, mentions in other companies' filings, and enforcement actions |
 | UK Companies House | Officers, persons with significant control, charges, filing health, insolvency, and for young companies share allotments, implied valuations, shareholder lists, and founders' earlier companies (when the company, its parent, or a subsidiary is UK-registered) |
-| US state registry | Status (including suspensions), formation, registered agent, officers or managers, foreign registrations, and UCC liens where free (when the company, its parent, or a subsidiary is registered in a US state). Finds every state the company is registered in through OpenCorporates first, and falls back to it when a state register sits behind a CAPTCHA |
+| US state registry | Status (including suspensions), formation, registered agent, officers or managers, foreign registrations, and UCC liens where free (when the company, its parent, or a subsidiary is registered in a US state). Searches the registers five states publish as open data (Colorado, New York, Texas, Oregon, Connecticut) first, which often name a subsidiary's state of formation when Delaware's or California's search is closed to scripts; uses OpenCorporates with an API token |
 | National registers | Profile, officers, filed accounts, and insolvency notices in France, Luxembourg, Germany, the Netherlands, Belgium, Switzerland, Ireland, Norway, Denmark, and Canada (when the company, its parent, or a subsidiary is registered there), with North Data and OpenCorporates as fallbacks |
 | GLEIF ownership | The company's Legal Entity Identifier, its parent chain up to the ultimate parent, and its subsidiaries in every country |
 | Sanctions and offshore | Sanctions and politically-exposed-person screening (OpenSanctions, OFAC) and the ICIJ Offshore Leaks database, for the company, its group, and its leaders |
@@ -68,7 +68,7 @@ Agents keep key values out of their reports and write `[REDACTED]` for any crede
 
 ### Python (for the fetcher script)
 
-`scripts/mr.py` fetches EDGAR filings and XBRL figures, finds how lenders and funds value a company's loans and shares, reads GLEIF ownership chains, searches and reads UK Companies House records and accounts (scanned ones as page images, electronic forms as text), the French register with its BODACC notices, the Irish register's open data, Luxembourg's filed accounts from the Centrale des Bilans open data, checks UK directors' other companies for insolvencies and disqualifications, finds US WARN layoff notices (California and Texas), counts a company's open roles and their trend, and checks red-flag quotes against their sources. It needs Python 3.9 or later and nothing else. Agents use it when it runs and fall back to fetching pages themselves when it doesn't, which is slower and costs far more tokens.
+`scripts/mr.py` fetches EDGAR filings and XBRL figures, finds how lenders and funds value a company's loans and shares, reads GLEIF ownership chains, searches and reads UK Companies House records and accounts (scanned ones as page images, electronic forms as text), the French register with its BODACC notices, the Irish register's open data, Luxembourg's filed accounts from the Centrale des Bilans open data, checks UK directors' other companies for insolvencies and disqualifications, searches the US state registers published as open data (Colorado, New York, Texas, Oregon, Connecticut), finds US WARN layoff notices (California and Texas), counts a company's open roles and their trend, and checks red-flag quotes against their sources. It needs Python 3.9 or later and nothing else. Agents use it when it runs and fall back to fetching pages themselves when it doesn't, which is slower and costs far more tokens.
 
 With Python, the coordinator also replaces up to three agents and most of its own checking with script calls. On a US company with a UK subsidiary:
 
@@ -105,7 +105,7 @@ The courts agent tries these in order:
 
 ### OpenCorporates API token
 
-Without a token, the US state registry and national registers agents read OpenCorporates' public pages, which hide officers, dates, and filings behind a login. With a token in `OPENCORPORATES_API_TOKEN`, they use its API for those details and search officers across companies. OpenCorporates data is open under a share-alike licence with attribution; heavier or commercial use needs a paid plan ([licence](https://opencorporates.com/legal/licence), [API accounts](https://opencorporates.com/api_accounts/new)).
+Without a token, the US state registry and national registers agents read OpenCorporates' public pages, which hide officers, dates, and filings behind a login and often answer 403; the US state registry agent then relies on the states' open data (`mr.py us-states`). With a token in `OPENCORPORATES_API_TOKEN`, they use its API for those details and search officers across companies. OpenCorporates data is open under a share-alike licence with attribution; heavier or commercial use needs a paid plan ([licence](https://opencorporates.com/legal/licence), [API accounts](https://opencorporates.com/api_accounts/new)).
 
 ### OpenSanctions API key
 
@@ -121,7 +121,7 @@ Each country below was tested by a full run on a VC-backed company registered th
 
 | Country | Tested on | Register access |
 | --- | --- | --- |
-| United States | Two US companies | `mr.py edgar-*` and `marks` (SEC); state registers by agent |
+| United States | Two US companies | `mr.py edgar-*` and `marks` (SEC), `us-states` (CO, NY, TX, OR, CT open data); other state registers by agent |
 | United Kingdom | Their UK subsidiaries | `mr.py ch`, `ch-officers`, `uk-accounts`, `uk-pages` (Companies House API) |
 | Belgium | Aikido | Agent: KBO, NBB accounts API, Belgian Official Gazette |
 | France | GitGuardian | `mr.py fr` (company search API, BODACC) |

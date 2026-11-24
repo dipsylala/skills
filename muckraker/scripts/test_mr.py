@@ -1276,6 +1276,35 @@ class OfficersLayoffsHiring(unittest.TestCase):
         self.assertEqual(notices, [("CA", "Acme Robotics, Inc.", "2026-06-26", 103), ("TX", "ACME ROBOTICS INC", "2026-06-23", 40)])
         self.assertEqual(len(out[-1]["states_searched"]), 2)
 
+    def test_us_states_open_registers(self):
+        rows = {
+            "colorado": [{"entityid": "2021", "entityname": "Acme Robotics, Inc.", "entitystatus": "Delinquent",
+                          "jurisdictonofformation": "DE", "entityformdate": "2021-09-15T00:00:00.000"}],
+            "texas": [{"taxpayer_name": "ACME ROBOTICS INC", "taxpayer_number": "32", "right_to_transact_business_code": "U"}],
+            "oregon": [{"registry_number": "187", "business_name": "ACME ROBOTICS INC", "jurisdiction": "DE",
+                        "associated_name_type": "PRINCIPAL PLACE OF BUSINESS", "city": "BOSTON", "state": "MA"},
+                       {"registry_number": "187", "business_name": "ACME ROBOTICS INC",
+                        "associated_name_type": "REGISTERED AGENT", "entity_of_record_name": "CSC"}],
+            "ct": [],
+        }
+        urls = []
+
+        def get(url):
+            urls.append(url)
+            if "data.ny.gov" in url:
+                raise mr.FetchError("HTTP 503")
+            return json.dumps(next(v for k, v in rows.items() if k in url)).encode()
+        out = list(mr.us_states_report(["Acme Robotics", "O'Neil Labs"], fetcher=get))
+        ents = {r["state"]: r for r in out if r["type"] == "us_state_entity"}
+        self.assertEqual(ents["CO"]["status"], "Delinquent")
+        self.assertEqual(ents["CO"]["formed_in"], "DE")
+        self.assertEqual(ents["TX"]["status"], "right to transact business code 'U'")
+        self.assertEqual((ents["OR"]["address"], ents["OR"]["agent"]), ("BOSTON, MA", "CSC"))
+        self.assertEqual(sum(r["type"] == "us_state_entity" and r["state"] == "OR" for r in out), 1)
+        self.assertEqual([r["state"] for r in out if r["type"] == "us_state_unavailable"], ["NY"])
+        self.assertIn("O%27%27NEIL+LABS%25", urls[0])
+        self.assertEqual([s["state"] for s in out[-1]["searched"]], ["CO", "TX", "OR", "CT"])
+
     def test_job_board_found_on_page_and_counted(self):
         page = '<script src="https://boards.greenhouse.io/embed/job_board/js?for=acme"></script>'
         api = {"departments": [{"name": "Engineering", "jobs": [{"title": "SRE", "location": {"name": "Dublin"}}] * 2},
