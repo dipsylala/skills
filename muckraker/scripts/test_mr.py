@@ -1704,18 +1704,68 @@ class SnykAfterRunFixes(unittest.TestCase):
             n = totals[alias] if forms == ["NPORT-P"] else 0
             found = [hit(f"{alias}{i}") for i in range(min(n, 3))]
             return found, {"type": "search_summary", "total": n, "truncated": False}
-        fetched, out, saved = [], [], (mr.edgar_search, mr.emit, mr.fetch)
+        fetched, out, saved = [], [], (mr.edgar_search, mr.emit, mr.fetch_nport_holdings)
         mr.edgar_search, mr.emit = search, out.append
-        mr.fetch = lambda url, ua: fetched.append(url) or "<edgarSubmission/>"
+        mr.fetch_nport_holdings = lambda url, ua, aliases: fetched.append(url) or []
         try:
             mr.marks(["Snyk", "Fugue"], "ua", "2025-08-01", 2, 20)
         finally:
-            mr.edgar_search, mr.emit, mr.fetch = saved
+            mr.edgar_search, mr.emit, mr.fetch_nport_holdings = saved
         dropped = [r for r in out if r["type"] == "generic_alias" and r.get("dropped")]
         self.assertEqual([r["alias"] for r in dropped], ["Fugue"])
         self.assertEqual(next(r for r in out if r["type"] == "marks_search")["searched"], ["Snyk"])
         self.assertFalse([u for u in fetched if "Fugue" in u])
         self.assertTrue([u for u in fetched if "Snyk" in u])
+
+    def test_alias_skips_loan_codes_and_longer_words(self):
+        self.assertTrue(mr.alias_in("Pleo", "Pleo Technologies A/S Term Loan"))
+        self.assertTrue(mr.alias_in("Acme", "ACME-HOLDINGS LLC First Lien"))
+        self.assertFalse(mr.alias_in("Pleo", "Affirm loan PLEO-MZHJ"))
+        self.assertFalse(mr.alias_in("Pleo", "PLEO-7K2Q consumer receivable"))
+        self.assertFalse(mr.alias_in("Pleo", "Pleorama Inc"))
+        self.assertTrue(mr.alias_in("Falcon Purchaser", "FALCON PURCHASER-XYZ"))  # long aliases keep codes
+        doc = ("<edgarSubmission><formData><genInfo><regName>Trust</regName><repPdDate>2026-06-30</repPdDate></genInfo>"
+               "<invstOrSecs><invstOrSec><name>PLEO-MZHJ</name><title>Affirm loan</title><balance>12</balance></invstOrSec>"
+               "<invstOrSec><name>Pleo Technologies A/S</name><title>Term loan</title><balance>1000</balance>"
+               "<valUSD>950</valUSD><units>PA</units></invstOrSec></invstOrSecs></formData></edgarSubmission>")
+        rows = mr.parse_nport_holdings(doc, ["Pleo"])
+        self.assertEqual([(r["name"], r["mark"], r["fund"]) for r in rows], [("Pleo Technologies A/S", 95.0, "Trust")])
+
+    def test_nport_streamed_in_pieces(self):
+        doc = ("<edgarSubmission xmlns='http://www.sec.gov/edgar/nport'><formData><genInfo><seriesName>Fund A</seriesName>"
+               "<repPdDate>2026-06-30</repPdDate></genInfo><invstOrSecs>"
+               + "<invstOrSec><name>Other Co</name><balance>1</balance></invstOrSec>" * 500
+               + "<invstOrSec><name>Acme Robotics Inc</name><balance>10</balance><valUSD>5</valUSD><units>NS</units>"
+                 "</invstOrSec></invstOrSecs></formData></edgarSubmission>").encode()
+        scan = mr.NportScan(["Acme Robotics"])
+        for i in range(0, len(doc), 1000):
+            scan.feed(doc[i:i + 1000])
+        [row] = scan.close()
+        self.assertEqual((row["fund"], row["value_per_share"]), ("Fund A", 0.5))
+
+    def test_no_holdings_found_is_partial_when_a_filing_failed(self):
+        hit = {"cik": "1", "form": "NPORT-P", "filed": "2026-06-30", "filer": "Stone Ridge", "accession": "a",
+               "url": "https://www.sec.gov/big.xml", "period_ending": "2026-06-30"}
+        out, saved = [], (mr.edgar_search, mr.emit, mr.fetch_nport_holdings)
+        mr.edgar_search = lambda alias, forms, *a: (([hit], {"total": 1, "truncated": False}) if forms == ["NPORT-P"]
+                                                     else ([], {"total": 0, "truncated": False}))
+        mr.emit = out.append
+
+        def fail(url, ua, aliases):
+            raise mr.FetchError("decompressed response larger than 2147483648 bytes")
+        mr.fetch_nport_holdings = fail
+        try:
+            mr.marks(["Pleo"], "ua", "2025-08-01", 2, 20)
+        finally:
+            mr.edgar_search, mr.emit, mr.fetch_nport_holdings = saved
+        last = next(r for r in out if r["type"] == "no_holdings_found")
+        self.assertTrue(last["partial"])
+        self.assertEqual(last["unread"], ["https://www.sec.gov/big.xml"])
+        self.assertNotIn("nothing failed", last["note"])
+
+    def test_tagged_xbrl_fact_quote_needs_no_extra_words(self):
+        self.assertEqual(mr.quote_warnings("x", "<fsa:Equity>-760000000</fsa:Equity>", "760000000"), [])
+        self.assertTrue(mr.quote_warnings("x", "equity was", "equity was"))
 
     def test_single_alias_is_never_dropped(self):
         def search(alias, forms, *a):
