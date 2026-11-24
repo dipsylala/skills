@@ -1375,6 +1375,122 @@ class OfficersLayoffsHiring(unittest.TestCase):
         self.assertEqual(matches[1]["alt_names"], ["ACME ROBOTICS FZE", "Volga Trade"])
         self.assertEqual((out[-1]["entries_searched"], out[-1]["matches"]), (3, 2))
 
+    FORM_D = """<?xml version="1.0"?>
+<edgarSubmission xmlns="http://www.sec.gov/edgar/formd">
+  <primaryIssuer>
+    <cik>0001900001</cik><entityName>Acme Robotics, Inc.</entityName>
+    <issuerAddress><street1>1 Main St</street1><city>Boston</city><stateOrCountry>MA</stateOrCountry></issuerAddress>
+    <jurisdictionOfInc>DELAWARE</jurisdictionOfInc>
+    <issuerPreviousNameList><value>Acme Labs Inc.</value></issuerPreviousNameList>
+    <edgarPreviousNameList><value>None</value></edgarPreviousNameList>
+    <entityType>Corporation</entityType>
+    <yearOfInc><withinFiveYears>true</withinFiveYears><value>2021</value></yearOfInc>
+  </primaryIssuer>
+  <relatedPersonsList>
+    <relatedPersonInfo>
+      <relatedPersonName><firstName>Jane</firstName><lastName>Doe</lastName></relatedPersonName>
+      <relatedPersonAddress><street1>2 Home Rd</street1></relatedPersonAddress>
+      <relatedPersonRelationshipList><relationship>Executive Officer</relationship><relationship>Director</relationship></relatedPersonRelationshipList>
+      <relationshipClarification>CEO</relationshipClarification>
+    </relatedPersonInfo>
+  </relatedPersonsList>
+  <offeringData>
+    <industryGroup><industryGroupType>Other Technology</industryGroupType></industryGroup>
+    <issuerSize><revenueRange>Decline to Disclose</revenueRange></issuerSize>
+    <federalExemptionsExclusions><item>06b</item></federalExemptionsExclusions>
+    <typeOfFiling><newOrAmendment><isAmendment>true</isAmendment></newOrAmendment><dateOfFirstSale><value>2023-03-01</value></dateOfFirstSale></typeOfFiling>
+    <typesOfSecuritiesOffered><isEquityType>true</isEquityType><isOptionToAcquireType>false</isOptionToAcquireType></typesOfSecuritiesOffered>
+    <offeringSalesAmounts><totalOfferingAmount>Indefinite</totalOfferingAmount><totalAmountSold>25000000</totalAmountSold><totalRemaining>Indefinite</totalRemaining></offeringSalesAmounts>
+    <investors><hasNonAccreditedInvestors>false</hasNonAccreditedInvestors><totalNumberAlreadyInvested>12</totalNumberAlreadyInvested></investors>
+  </offeringData>
+</edgarSubmission>"""
+
+    def test_formd_parses_issuer_people_and_amounts(self):
+        hits = [{"accession": "0001900001-24-000001", "cik": "0001900001", "form": "D/A", "filed": "2024-02-01",
+                 "url": "https://www.sec.gov/Archives/edgar/data/1900001/000190000124000001/primary_doc.xml"},
+                {"accession": "0001900001-24-000001", "form": "D/A", "filed": "2024-02-01",
+                 "url": "https://www.sec.gov/Archives/edgar/data/1900001/000190000124000001/primary_doc.xml"},
+                {"accession": "0001900001-23-000009", "cik": "0001900001", "form": "D", "filed": "2023-03-10",
+                 "url": "https://www.sec.gov/Archives/edgar/data/1900001/000190000123000009/xslFormDX01/primary_doc.htm"}]
+        got = []
+
+        def get(url):
+            got.append(url)
+            return self.FORM_D
+        out = list(mr.formd_report(["Jane Doe"], None, search=lambda q: (hits, {"total": 2, "truncated": False}), get=get))
+        filings = [r for r in out if r["type"] == "formd_filing"]
+        self.assertEqual(len(filings), 2)
+        self.assertEqual(got[1], "https://www.sec.gov/Archives/edgar/data/1900001/000190000123000009/primary_doc.xml")
+        f = filings[0]
+        self.assertEqual((f["issuer"], f["jurisdiction"], f["year_of_inc"], f["address"]),
+                         ("Acme Robotics, Inc.", "DELAWARE", "2021", "Boston, MA"))
+        self.assertEqual(f["previous_names"], ["Acme Labs Inc."])
+        self.assertEqual(f["related_persons"], [{"name": "Jane Doe", "relationships": ["Executive Officer", "Director"],
+                                                 "clarification": "CEO"}])
+        self.assertNotIn("Home Rd", json.dumps(f))
+        self.assertEqual((f["total_sold"], f["total_offering"], f["investors"]), (25000000.0, "Indefinite", 12))
+        self.assertEqual((f["amendment"], f["first_sale"], f["securities"], f["pooled_fund"]),
+                         (True, "2023-03-01", ["Equity"], False))
+        issuer = out[-1]["issuers"][0]
+        self.assertEqual((issuer["filings"], issuer["first_filed"], issuer["last_filed"], issuer["people"]),
+                         (2, "2023-03-10", "2024-02-01", ["Jane Doe"]))
+
+    def test_icij_keeps_name_matches_with_node_details(self):
+        reply = {"q0": {"result": [
+            {"id": "1", "name": "ACME ROBOTICS LIMITED", "description": "Entity node extracted from the Panama Papers data.",
+             "types": [{"name": "Entity"}]},
+            {"id": "2", "name": "ACME GARDENS, NASSAU", "types": [{"name": "Address"}]},
+            {"id": "3", "name": "ROBOTICS HOLDINGS", "types": [{"name": "Entity"}]}]},
+            "q1": {"result": [{"id": "1", "name": "ACME ROBOTICS LIMITED", "types": [{"name": "Entity"}]}]}}
+        bodies = []
+        out = list(mr.icij_report(["Acme Robotics", "Acme Robotics Ltd"], poster=lambda b: bodies.append(b) or reply,
+                                  fetcher=lambda u: json.dumps({"properties": {"data_source": "Panama Papers",
+                                                                               "country_codes": ["PA"],
+                                                                               "incorporation_date": "2009-01-02"}}).encode()))
+        nodes = [r for r in out if r["type"] == "icij_node"]
+        self.assertEqual([(n["id"], n["query"]) for n in nodes], [("1", ["Acme Robotics", "Acme Robotics Ltd"])])
+        self.assertEqual((nodes[0]["leak"], nodes[0]["countries"], nodes[0]["incorporated"]), ("Panama Papers", ["PA"], "2009-01-02"))
+        self.assertEqual(out[-1]["loose_results_dropped"], 2)
+        self.assertEqual(bodies[0]["queries"]["q1"]["query"], "Acme Robotics Ltd")
+
+    def test_footprint_rdap_wayback_github_and_whois_fallback(self):
+        boot = {"services": [[["com"], ["https://rdap.example/com/v1/"]]]}
+
+        def get(url):
+            if url == mr.RDAP_BOOTSTRAP:
+                return json.dumps(boot).encode()
+            if url.startswith("https://rdap.example/com/v1/domain/acme.com"):
+                return json.dumps({"events": [{"eventAction": "registration", "eventDate": "2019-04-01T00:00:00Z"}],
+                                   "entities": [{"roles": ["registrar"], "vcardArray": ["vcard", [["fn", {}, "text", "Gandi"]]]}]}).encode()
+            if "web.archive.org" in url:
+                return json.dumps([["timestamp", "statuscode"], ["20190501000000", "200"], ["20190601000000", "301"],
+                                   ["20240101000000", "200"]]).encode()
+            if url.endswith("/orgs/acme"):
+                return json.dumps({"name": "Acme", "created_at": "2019-05-01T00:00:00Z", "public_repos": 3}).encode()
+            if "/orgs/acme/repos" in url:
+                return json.dumps([{"name": "sdk", "pushed_at": "2026-10-01T00:00:00Z", "stargazers_count": 40},
+                                   {"name": "old", "pushed_at": "2022-01-01T00:00:00Z", "stargazers_count": 5},
+                                   {"name": "fork", "fork": True, "pushed_at": "2026-11-01T00:00:00Z", "stargazers_count": 900}]).encode()
+            raise AssertionError(url)
+        out = list(mr.footprint_report("https://www.acme.com/about", github="acme", founded=2010, fetcher=get,
+                                       today=dt.date(2026, 11, 24)))
+        by = {r["type"]: r for r in out}
+        self.assertEqual((by["footprint_domain"]["registered"], by["footprint_domain"]["registrar"]), ("2019-04-01", "Gandi"))
+        self.assertEqual(by["footprint_wayback"]["first_capture"], "2019-05-01")
+        self.assertEqual(by["footprint_wayback"]["by_year"]["2019"], {"months": 2, "months_ok": 1})
+        self.assertEqual((by["footprint_github"]["last_push"], by["footprint_github"]["repos_pushed_last_6_months"],
+                          by["footprint_github"]["stars"]), ("2026-10-01", 1, 45))
+        self.assertEqual(by["footprint_flag"]["founded"], 2010)
+
+        def whois(server, q):
+            return {"whois.iana.org": "refer: whois.nic.io\nwhois:        whois.nic.io\n",
+                    "whois.nic.io": "Domain Name: acme.io\nCreation Date: 2015-10-07T12:43:38Z\nRegistrar: Gandi SAS\n"}[server]
+        out = list(mr.footprint_report("acme.io", founded=2014, fetcher=lambda u: json.dumps(boot).encode()
+                                       if u == mr.RDAP_BOOTSTRAP else b"", whois=whois))
+        d = next(r for r in out if r["type"] == "footprint_domain")
+        self.assertEqual((d["registered"], d["registrar"], d["url"]), ("2015-10-07", "Gandi SAS", "whois://whois.nic.io/acme.io"))
+        self.assertFalse(any(r["type"] == "footprint_flag" for r in out))
+
     def fi_fetcher(self, notices, situations=(), periods=()):
         company = {"companies": [{"businessId": {"value": "1234567-8", "registrationDate": "2016-11-18"},
                                   "names": [{"name": "Acme Oy", "type": "1"}, {"name": "Acme Ltd", "type": "2"}],

@@ -125,7 +125,7 @@ def fetch_bytes(url, user_agent, retries=2, auth=None, accept=None):
             with urllib.request.urlopen(request, timeout=60) as r:
                 return read_body(r, r.headers.get("Content-Encoding") == "gzip")
         except urllib.error.HTTPError as e:
-            if e.code in (429, 500, 502, 503) and attempt < retries:
+            if e.code in (429, 500, 502, 503, 504) and attempt < retries:
                 time.sleep(2 * (attempt + 1))
                 continue
             raise FetchError(f"HTTP {e.code} for {url}") from e
@@ -2445,7 +2445,7 @@ def post_json(url, body, retries=2):
             with urllib.request.urlopen(request, timeout=60) as r:
                 return json.loads(read_body(r, r.headers.get("Content-Encoding") == "gzip"))
         except urllib.error.HTTPError as e:
-            if e.code in (429, 500, 502, 503) and attempt < retries:
+            if e.code in (429, 500, 502, 503, 504) and attempt < retries:
                 time.sleep(2 * (attempt + 1))
                 continue
             raise FetchError(f"HTTP {e.code} for {url}") from e
@@ -2567,6 +2567,288 @@ def csl_report(names, fetcher=None):
            "note": "a match shares every distinctive word of a name and is not yet the company: compare the address, "
                    "country, and identifiers with the entity record before reporting it. The file does not include "
                    "the UFLPA Entity List, the Section 1260H list, the FCC Covered List, or SAM.gov exclusions"}
+
+
+# ---------------------------------------------------------------- Form D ----
+
+def _xml_local(root):
+    """Drop namespaces from every tag, so Form D documents with and without one parse alike."""
+    for el in root.iter():
+        if isinstance(el.tag, str) and "}" in el.tag:
+            el.tag = el.tag.rsplit("}", 1)[1]
+    return root
+
+
+def _xt(el, path):
+    found = el.find(path) if el is not None else None
+    return found.text.strip() if found is not None and found.text and found.text.strip() else None
+
+
+def _money(text):
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return text  # "Indefinite" and the like
+
+
+def parse_form_d(xml_text):
+    """The fields of a Form D primary_doc.xml that matter for an entity record and funding timeline."""
+    root = _xml_local(ET.fromstring(xml_text))
+    issuer = root.find("primaryIssuer")
+    year = issuer.find("yearOfInc") if issuer is not None else None
+    if year is not None and _xt(year, "value"):
+        year_of_inc = _xt(year, "value")
+    elif year is not None and year.find("overFiveYears") is not None:
+        year_of_inc = "over five years before filing"
+    elif year is not None and year.find("yetToBeFormed") is not None:
+        year_of_inc = "yet to be formed"
+    else:
+        year_of_inc = None
+    offering = root.find("offeringData")
+    industry = _xt(offering, "industryGroup/industryGroupType")
+    sales = offering.find("offeringSalesAmounts") if offering is not None else None
+    first_sale = offering.find("typeOfFiling/dateOfFirstSale") if offering is not None else None
+    people = []
+    for p in root.iter("relatedPersonInfo"):
+        name = " ".join(filter(None, [_xt(p, "relatedPersonName/firstName"), _xt(p, "relatedPersonName/middleName"),
+                                      _xt(p, "relatedPersonName/lastName")]))
+        people.append({"name": name, "relationships": [r.text.strip() for r in p.iter("relationship") if r.text],
+                       **({"clarification": _xt(p, "relationshipClarification")}
+                          if _xt(p, "relationshipClarification") else {})})
+    previous = [v.text.strip() for lst in ("issuerPreviousNameList", "edgarPreviousNameList")
+                for v in (issuer.findall(lst + "/value") if issuer is not None else []) if v.text and v.text.strip()]
+    return {
+        "issuer": _xt(issuer, "entityName"), "cik": _xt(issuer, "cik"),
+        "jurisdiction": _xt(issuer, "jurisdictionOfInc"), "year_of_inc": year_of_inc,
+        "entity_type": _xt(issuer, "entityType"),
+        "address": ", ".join(filter(None, [_xt(issuer, "issuerAddress/city"), _xt(issuer, "issuerAddress/stateOrCountry")])) or None,
+        "previous_names": [n for n in previous if n.lower() != "none"] or None,
+        "industry": industry, "pooled_fund": bool(industry and "Pooled Investment Fund" in industry),
+        "revenue_range": _xt(offering, "issuerSize/revenueRange") or _xt(offering, "issuerSize/aggregateNetAssetValueRange"),
+        "exemptions": [i.text.strip() for i in offering.iter("item") if i.text] if offering is not None else [],
+        "amendment": _xt(offering, "typeOfFiling/newOrAmendment/isAmendment") == "true",
+        "first_sale": (_xt(first_sale, "value") or ("yet to occur" if first_sale is not None and first_sale.find("yetToOccur") is not None else None)),
+        "securities": [el.tag.removeprefix("is").removesuffix("Type") for el in offering.findall("typesOfSecuritiesOffered/*")
+                       if (el.text or "").strip() == "true"] if offering is not None else [],
+        "total_offering": _money(_xt(sales, "totalOfferingAmount")), "total_sold": _money(_xt(sales, "totalAmountSold")),
+        "total_remaining": _money(_xt(sales, "totalRemaining")),
+        "investors": _int_or_none(_xt(offering, "investors/totalNumberAlreadyInvested")),
+        "related_persons": people,
+    }
+
+
+def formd_report(queries, user_agent, search=None, get=None, max_hits=40):
+    """Form D filings found by EDGAR full-text search for each name (a company, a former name, or a founder),
+    each parsed from its primary_doc.xml."""
+    search = search or (lambda q: edgar_search(q, ["D", "D/A"], None, None, user_agent, max_hits))
+    get = get or (lambda u: fetch(u, user_agent))
+    seen, issuers, searched = set(), {}, []
+    for q in queries:
+        try:
+            hits, summary = search(q)
+        except FetchError as e:
+            yield {"type": "formd_unavailable", "query": q, "error": str(e)}
+            continue
+        searched.append({"query": q, "filings": summary.get("total"), "truncated": summary.get("truncated"),
+                         "url": search_web_url(q, ["D", "D/A"], None)})
+        for h in hits:
+            if h["accession"] in seen or not h.get("cik"):
+                continue
+            seen.add(h["accession"])
+            # the filing's own folder holds the raw XML; xslFormDX01/ holds a rendered copy
+            url = (f"https://www.sec.gov/Archives/edgar/data/{int(h['cik'])}/"
+                   f"{h['accession'].replace('-', '')}/primary_doc.xml")
+            try:
+                d = parse_form_d(get(url))
+            except (FetchError, ET.ParseError, AttributeError) as e:
+                yield {"type": "formd_unavailable", "query": q, "url": url, "error": str(e)}
+                continue
+            yield {"type": "formd_filing", "query": q, "form": h.get("form"), "filed": h.get("filed"), **d, "url": url}
+            i = issuers.setdefault(d["cik"] or d["issuer"], {
+                "issuer": d["issuer"], "cik": d["cik"], "jurisdiction": d["jurisdiction"],
+                "year_of_inc": d["year_of_inc"], "pooled_fund": d["pooled_fund"], "filings": 0, "first_filed": None,
+                "last_filed": None, "people": set()})
+            i["filings"] += 1
+            i["first_filed"] = min(filter(None, [i["first_filed"], h.get("filed")]), default=None)
+            i["last_filed"] = max(filter(None, [i["last_filed"], h.get("filed")]), default=None)
+            i["people"].update(p["name"] for p in d["related_persons"])
+    yield {"type": "formd_summary", "searched": searched,
+           "issuers": [{**i, "people": sorted(i["people"])} for i in issuers.values()],
+           "note": "full-text search matches the name anywhere in the filing, so an issuer can be an investor's fund "
+                   "(`pooled_fund`) or a company that only names the person: match each issuer to the entity record "
+                   "before using it. Each D/A restates its offering's running total, so take an offering's amount "
+                   "from its latest filing and never add amendments together"}
+
+
+# ------------------------------------------------------- offshore leaks ----
+
+ICIJ_RECONCILE = "https://offshoreleaks.icij.org/api/v1/reconcile"
+ICIJ_NODE = "https://offshoreleaks.icij.org/api/v1/rest/nodes/"
+
+
+def icij_report(names, poster=None, fetcher=None, limit=25, max_nodes=30):
+    """ICIJ Offshore Leaks nodes whose names contain every distinctive word of a name, with each node's
+    leak, countries, and data date."""
+    post = poster or (lambda body: post_json(ICIJ_RECONCILE, body))
+    get = fetcher or (lambda u: fetch_bytes(u, None))
+    queries = {f"q{i}": {"query": n, "limit": limit} for i, n in enumerate(names)}
+    try:
+        reply = post({"queries": queries})
+    except (FetchError, ValueError) as e:
+        yield {"type": "icij_unavailable", "error": str(e), "url": ICIJ_RECONCILE}
+        return
+    found, loose, nodes = {}, 0, 0
+    for key, q in queries.items():
+        for r in (reply.get(key) or {}).get("result") or []:
+            kind = ((r.get("types") or [{}])[0]).get("name")
+            if kind == "Address" or not _name_match(q["query"], r.get("name")):
+                loose += 1
+                continue
+            if r["id"] in found:
+                found[r["id"]]["query"].append(q["query"])
+                continue
+            rec = {"type": "icij_node", "query": [q["query"]], "id": r["id"], "name": r.get("name"), "node_type": kind,
+                   "description": r.get("description"), "url": f"https://offshoreleaks.icij.org/nodes/{r['id']}"}
+            if nodes < max_nodes:
+                nodes += 1
+                try:
+                    props = json.loads(get(ICIJ_NODE + str(r["id"]))).get("properties") or {}
+                    rec.update({k: v for k, v in {
+                        "leak": props.get("data_source"), "countries": props.get("country_codes"),
+                        "jurisdiction": props.get("jurisdiction_description") or props.get("jurisdiction"),
+                        "incorporated": props.get("incorporation_date"), "status": props.get("status"),
+                        "data_current_to": props.get("valid_until")}.items() if v})
+                except (FetchError, ValueError):
+                    pass
+            found[r["id"]] = rec
+    yield from found.values()
+    yield {"type": "icij_summary", "query": names, "matches": len(found), "loose_results_dropped": loose,
+           "note": "a match shares every distinctive word of a name, which is not proof it is the company or person: "
+                   "compare the node's countries, dates, and linked entities (open its `url`) with the entity record. "
+                   "Appearing in a leak is not wrongdoing in itself"}
+
+
+# ------------------------------------------------------------- footprint ----
+
+RDAP_BOOTSTRAP = "https://data.iana.org/rdap/dns.json"
+
+
+def whois_query(server, query):
+    """One port-43 WHOIS query, for domains whose registry has no RDAP service (.io, .ai)."""
+    import socket
+    out = b""
+    with socket.create_connection((server, 43), timeout=20) as conn:
+        conn.sendall((query + "\r\n").encode())
+        while len(out) < 1024 * 1024:
+            chunk = conn.recv(65536)
+            if not chunk:
+                break
+            out += chunk
+    return out.decode("utf-8", "replace")
+
+
+def whois_domain(domain, query=None):
+    """Registration dates and registrar from the registry's WHOIS server, which whois.iana.org names."""
+    query = query or whois_query
+    tld = domain.rsplit(".", 1)[-1]
+    server = next((l.split(":", 1)[1].strip() for l in query("whois.iana.org", tld).splitlines()
+                   if l.lower().startswith("whois:")), None)
+    if not server:
+        return None
+    text = query(server, domain)
+    field = lambda *keys: next((l.split(":", 1)[1].strip()[:10] for l in text.splitlines()
+                                if l.split(":", 1)[0].strip().lower() in keys and ":" in l), None)
+    return {"registered": field("creation date", "created", "registered on"),
+            "expires": field("registry expiry date", "expiry date", "expires"),
+            "last_changed": field("updated date", "changed", "last updated"),
+            "registrar": next((l.split(":", 1)[1].strip() for l in text.splitlines()
+                               if l.strip().lower().startswith("registrar:") and l.split(":", 1)[1].strip()), None),
+            "url": f"whois://{server}/{domain}"}
+
+
+def _domain_of(text):
+    host = urllib.parse.urlparse(text if "//" in text else "//" + text).hostname or text
+    return host.lower().removeprefix("www.")
+
+
+def footprint_report(domain, github=None, founded=None, fetcher=None, today=None, whois=None):
+    """The domain's registration (RDAP), the site's history (Wayback Machine), and a GitHub organisation's
+    activity, with a flag when the claimed founding year is older than both domain and site."""
+    get = fetcher or (lambda u: fetch_bytes(u, None))
+    today = today or dt.date.today()
+    domain = _domain_of(domain)
+    years = []
+    try:
+        services = json.loads(get(RDAP_BOOTSTRAP))["services"]
+        labels = domain.split(".")
+        base = next((urls[0] for i in range(1, len(labels)) for tlds, urls in services
+                     if ".".join(labels[i:]) in tlds), None)
+        if not base:  # no RDAP for this registry: ask its WHOIS server instead
+            try:
+                w = whois_domain(domain, whois)
+            except OSError as e:
+                w, err = None, str(e)
+            else:
+                err = f"no RDAP service or WHOIS server for .{labels[-1]}"
+            if w and w["registered"]:
+                years.append(int(w["registered"][:4]))
+                yield {"type": "footprint_domain", "domain": domain, **w}
+            else:
+                yield {"type": "footprint_unavailable", "part": "domain",
+                       "error": err if not w else "WHOIS gave no creation date"}
+        else:
+            url = base.rstrip("/") + "/domain/" + domain
+            d = json.loads(get(url))
+            events = {e.get("eventAction"): (e.get("eventDate") or "")[:10] for e in d.get("events") or []}
+            registrar = next((v[3] for e in d.get("entities") or [] if "registrar" in (e.get("roles") or [])
+                              for v in (e.get("vcardArray") or [None, []])[1] if v[0] == "fn"), None)
+            if events.get("registration"):
+                years.append(int(events["registration"][:4]))
+            yield {"type": "footprint_domain", "domain": domain, "registered": events.get("registration"),
+                   "expires": events.get("expiration"), "last_changed": events.get("last changed"),
+                   "registrar": registrar, "status": d.get("status"), "url": url}
+    except (FetchError, ValueError, KeyError) as e:
+        yield {"type": "footprint_unavailable", "part": "domain", "error": str(e)}
+    cdx = "https://web.archive.org/cdx/search/cdx?" + urllib.parse.urlencode(
+        {"url": domain, "fl": "timestamp,statuscode", "collapse": "timestamp:6", "output": "json"})
+    try:
+        rows = json.loads(get(cdx) or b"[]")[1:]
+        if rows:
+            by_year = {}
+            for ts, status in rows:
+                y = by_year.setdefault(ts[:4], {"months": 0, "months_ok": 0})
+                y["months"] += 1
+                y["months_ok"] += status == "200"
+            first, last = rows[0][0], rows[-1][0]
+            years.append(int(first[:4]))
+            yield {"type": "footprint_wayback", "domain": domain, "first_capture": f"{first[:4]}-{first[4:6]}-{first[6:8]}",
+                   "last_capture": f"{last[:4]}-{last[4:6]}-{last[6:8]}", "by_year": by_year,
+                   "page": f"https://web.archive.org/web/{first[:8]}000000*/{domain}", "url": cdx}
+        else:
+            yield {"type": "footprint_wayback", "domain": domain, "first_capture": None, "url": cdx}
+    except (FetchError, ValueError) as e:
+        yield {"type": "footprint_unavailable", "part": "wayback", "error": str(e), "url": cdx}
+    if github:
+        try:
+            org = json.loads(get(f"https://api.github.com/orgs/{github}"))
+            repos = json.loads(get(f"https://api.github.com/orgs/{github}/repos?sort=pushed&per_page=100&type=public"))
+            own = [r for r in repos if not r.get("fork") and not r.get("archived")]
+            pushed = sorted((r.get("pushed_at") or "")[:10] for r in own)
+            cutoff = (today - dt.timedelta(days=183)).isoformat()
+            yield {"type": "footprint_github", "org": github, "name": org.get("name"), "created": (org.get("created_at") or "")[:10],
+                   "public_repos": org.get("public_repos"), "blog": org.get("blog") or None,
+                   "last_push": pushed[-1] if pushed else None, "repos_pushed_last_6_months": sum(p >= cutoff for p in pushed),
+                   "stars": sum(r.get("stargazers_count") or 0 for r in own),
+                   "top_repos": [{"name": r["name"], "stars": r.get("stargazers_count"), "pushed": (r.get("pushed_at") or "")[:10]}
+                                 for r in sorted(own, key=lambda r: -(r.get("stargazers_count") or 0))[:5]],
+                   "url": f"https://github.com/{github}"}
+        except (FetchError, ValueError, KeyError, TypeError) as e:
+            yield {"type": "footprint_unavailable", "part": "github", "error": str(e)}
+    if founded and len(years) == 2 and int(founded) < min(years) - 2:
+        yield {"type": "footprint_flag", "severity": "review", "founded": int(founded), "domain_registered": years[0],
+               "first_capture": years[1],
+               "detail": "the claimed founding year is more than two years older than both the domain's registration "
+                         "and the site's first archived copy; look for an earlier domain before calling it a red flag"}
 
 
 # --------------------------------------------------------------- hiring ----
@@ -4307,6 +4589,16 @@ def main(argv=None):
     s.add_argument("--since", help="earliest date as YYYY-MM-DD (default five years ago; 2007-10-01 at the earliest)")
     s = sub.add_parser("csl", help="the US Consolidated Screening List (OFAC, BIS, State Department lists) for these names")
     s.add_argument("names", nargs="+", help="company, group company, and officer names")
+    s = sub.add_parser("formd", help="Form D filings naming a company or person, parsed: state and year of "
+                                     "incorporation, related persons, amounts raised (sec.gov)")
+    s.add_argument("names", nargs="+", help="company names, former names, and founders' or the CEO's names")
+    s.add_argument("--max-hits", type=int, default=40, help="filings read per name")
+    s = sub.add_parser("icij", help="ICIJ Offshore Leaks nodes matching these names")
+    s.add_argument("names", nargs="+", help="company, group company, and officer names")
+    s = sub.add_parser("footprint", help="domain registration (RDAP), site history (Wayback Machine), GitHub activity")
+    s.add_argument("domain", help="the company's domain, such as acme.com")
+    s.add_argument("--github", help="the GitHub organisation, such as acme-inc, as the company's site links it")
+    s.add_argument("--founded", type=int, help="the founding year the company claims, for the history check")
     s = sub.add_parser("jobs", help="open roles from the company's job board, optionally with a monthly trend")
     s.add_argument("target", help="the careers page URL, a job-board URL, or provider:token (greenhouse:acme)")
     s.add_argument("--history", action="store_true", help="also count roles in monthly archived copies (slow)")
@@ -4423,6 +4715,15 @@ def main(argv=None):
                 emit(r)
         elif a.cmd == "csl":
             for r in csl_report(a.names):
+                emit(r)
+        elif a.cmd == "formd":
+            for r in formd_report(a.names, a.user_agent, max_hits=a.max_hits):
+                emit(r)
+        elif a.cmd == "icij":
+            for r in icij_report(a.names):
+                emit(r)
+        elif a.cmd == "footprint":
+            for r in footprint_report(a.domain, a.github, a.founded):
                 emit(r)
         elif a.cmd == "jobs":
             for r in jobs_report(a.target, a.history):
