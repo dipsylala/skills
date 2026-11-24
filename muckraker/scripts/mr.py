@@ -39,9 +39,10 @@ class FetchError(Exception):
     pass
 
 
-def read_body(stream, gzipped, limit=MAX_BODY):
+def read_body(stream, gzipped, limit=MAX_BODY, sink=None):
     """Read a response body in chunks, never holding more than `limit` bytes of
-    raw or decompressed data, so an oversized page or a gzip bomb fails cleanly."""
+    raw or decompressed data, so an oversized page or a gzip bomb fails cleanly.
+    With `sink`, each decompressed chunk goes to it instead and nothing is kept."""
     out, size = [], 0
     raw_total = 0
     d = zlib.decompressobj(16 + zlib.MAX_WBITS) if gzipped else None
@@ -61,13 +62,13 @@ def read_body(stream, gzipped, limit=MAX_BODY):
         size += len(data)
         if size > limit:
             raise FetchError(f"decompressed response larger than {limit} bytes")
-        out.append(data)
+        sink(data) if sink else out.append(data)
     if d is not None:
         tail = d.flush(limit - size + 1)
         size += len(tail)
         if size > limit or d.unconsumed_tail:
             raise FetchError(f"decompressed response larger than {limit} bytes")
-        out.append(tail)
+        sink(tail) if sink else out.append(tail)
     return b"".join(out)
 
 
@@ -97,7 +98,7 @@ def decode_body(raw):
     return raw.decode("cp1252", errors="replace")
 
 
-def fetch_bytes(url, user_agent, retries=2, auth=None, accept=None):
+def fetch_bytes(url, user_agent, retries=2, auth=None, accept=None, limit=MAX_BODY, sink=None):
     """Return the raw body of `url`. `auth` is sent as an Authorization header
     on this request only, never on a redirect (Companies House documents redirect
     to signed storage URLs that reject it). `user_agent` is the user's SEC contact,
@@ -123,7 +124,7 @@ def fetch_bytes(url, user_agent, retries=2, auth=None, accept=None):
             request.add_unredirected_header("Authorization", auth)
         try:
             with urllib.request.urlopen(request, timeout=60) as r:
-                return read_body(r, r.headers.get("Content-Encoding") == "gzip")
+                return read_body(r, r.headers.get("Content-Encoding") == "gzip", limit, sink)
         except urllib.error.HTTPError as e:
             if e.code in (429, 500, 502, 503, 504) and attempt < retries:
                 time.sleep(2 * (attempt + 1))
@@ -460,20 +461,37 @@ def _flagged_footnotes(doc, fact_ids):
     return flagged
 
 
+SHORT_ALIAS = 6  # aliases this short also match loan codes in consumer-loan pools
+
+
+def alias_in(alias, text):
+    """True when `alias` appears in `text` as whole words: not inside a longer word
+    ("Pleo" in "Pleorama"), and for a short alias not as the prefix of a loan code
+    such as "PLEO-MZHJ" (a hyphenated token with a digit or no vowel), which pools
+    of consumer loans list by the thousand."""
+    a = alias.lower()
+    for m in re.finditer(r"(?<!\w)" + re.escape(a) + r"(?!\w)", text.lower()):
+        code = re.match(r"-(\w+)", text[m.end():])
+        if code and len(a) <= SHORT_ALIAS and (re.search(r"\d", code.group(1))
+                                               or not re.search(r"[aeiouy]", code.group(1), re.I)):
+            continue
+        return True
+    return False
+
+
 def parse_ixbrl_holdings(doc, aliases):
     """Schedule-of-investments rows whose investment identifier names an alias.
 
     Uses the inline XBRL tags BDCs attach to each row (InvestmentIdentifierAxis),
     so the values are the filed numbers, already scaled.
     """
-    wanted = [a.lower() for a in aliases]
     contexts = {}
     for cid, body in _CONTEXT_RE.findall(doc):
         typed = _TYPED_RE.search(body)
         if not typed:
             continue
         ident = text_of(typed.group(1))
-        if not any(a in ident.lower() for a in wanted):
+        if not any(alias_in(a, ident) for a in aliases):
             continue
         instant = re.search(r"<xbrli:instant>([^<]+)", body)
         end = re.search(r"<xbrli:endDate>([^<]+)", body)
@@ -550,7 +568,6 @@ def table_date(doc, table_start, lookback=30000, heading_chars=600):
 def parse_table_rows(doc, aliases):
     """Fallback for filings without row-level XBRL: table rows that name an alias
     and read like a holding (a loan, notes, units, shares...)."""
-    wanted = [a.lower() for a in aliases]
     out = []
     for tm in re.finditer(r"<table\b.*?</table>", doc, re.S | re.I):
         header = None
@@ -562,7 +579,7 @@ def parse_table_rows(doc, aliases):
             # schedule's heading often spans rows, the first holding a single word)
             if header is None and line.count(" | ") >= 2 and not _AMOUNT_RE.search(line):
                 header = line
-            if (any(a in line.lower() for a in wanted) and _HOLDING_WORDS.search(line)
+            if (any(alias_in(a, line) for a in aliases) and _HOLDING_WORDS.search(line)
                     and _AMOUNT_RE.search(line)):  # a holding row carries an amount
                 record = {"row": line}
                 if header:
@@ -577,56 +594,96 @@ def parse_table_rows(doc, aliases):
     return out
 
 
-def parse_nport_holdings(doc, aliases):
-    """N-PORT holdings whose name or title contains an alias."""
-    wanted = [a.lower() for a in aliases]
-    root = ET.fromstring(doc.encode("utf-8"))
-    for el in root.iter():  # drop namespaces so paths stay simple
-        if isinstance(el.tag, str):
-            el.tag = el.tag.rsplit("}", 1)[-1]
+NPORT_MAX = 2 * 1024 * 1024 * 1024  # N-PORT files are streamed, so a 400 MB fund file is fine
 
+
+def _nport_record(sec, info, aliases):
+    """One N-PORT holding (an invstOrSec element, namespaces dropped) as a record, or None
+    when its name and title name none of the aliases."""
     def find_text(node, path):
         el = node.find(path)
         return el.text.strip() if el is not None and el.text else None
 
-    period = find_text(root, ".//genInfo/repPdDate")
-    fund = find_text(root, ".//genInfo/seriesName") or find_text(root, ".//genInfo/regName")
-    series = find_text(root, ".//genInfo/seriesId")  # stable when a fund is renamed
-    out = []
-    for sec in root.iter("invstOrSec"):
-        name, title = find_text(sec, "name") or "", find_text(sec, "title") or ""
-        if not any(a in name.lower() or a in title.lower() for a in wanted):
-            continue
-        record = {"fund": fund, "as_of": period, "name": name, "title": title}
-        if series:
-            record["series_id"] = series
-        raw = {}
-        for tag in ("balance", "units", "curCd", "valUSD", "pctVal", "assetCat", "fairValLevel", "cusip", "lei"):
-            v = find_text(sec, tag)
-            if v is not None:
-                raw[tag] = v
-                record[tag] = float(v) if tag in ("balance", "valUSD", "pctVal") else v
-        # values exactly as the file writes them, ready for a red-flag quote
-        record["quote"] = " ".join(f"<{t}>{v}</{t}>" for t, v in
-                                   [("name", find_text(sec, "name"))] + [(t, raw.get(t)) for t in ("balance", "valUSD")]
-                                   if v is not None)
-        if record.get("units") == "NS" and record.get("balance") and "valUSD" in record:
-            record["value_per_share"] = round(record["valUSD"] / record["balance"], 4)
-        for tag in ("maturityDt", "couponKind", "annualizedRt", "isDefault", "areIntrstPmntsInArrs", "isPaidKind"):
-            v = find_text(sec, f"debtSec/{tag}")
-            if v is not None:
-                record[tag] = v
-        flags = [label for tag, label in (("isDefault", "in default"), ("areIntrstPmntsInArrs", "interest in arrears"),
-                                          ("isPaidKind", "paid in kind")) if record.get(tag) == "Y"]
-        if flags:  # the fund's own report on the loan, like a BDC's flagged footnotes
-            record["fund_flags"] = flags
-        if record.get("units") == "PA" and record.get("balance") and record.get("valUSD", -1) >= 0:
-            record["mark"] = round(100 * record["valUSD"] / record["balance"], 1)
-        notes = holding_notes(f"{name} {title}", record.get("valUSD"))
-        if notes:
-            record["notes"] = notes
-        out.append(record)
-    return out
+    name, title = find_text(sec, "name") or "", find_text(sec, "title") or ""
+    if not any(alias_in(a, name) or alias_in(a, title) for a in aliases):
+        return None
+    record = {"fund": info.get("seriesName") or info.get("regName"), "as_of": info.get("repPdDate"),
+              "name": name, "title": title}
+    if info.get("seriesId"):  # stable when a fund is renamed
+        record["series_id"] = info["seriesId"]
+    raw = {}
+    for tag in ("balance", "units", "curCd", "valUSD", "pctVal", "assetCat", "fairValLevel", "cusip", "lei"):
+        v = find_text(sec, tag)
+        if v is not None:
+            raw[tag] = v
+            record[tag] = float(v) if tag in ("balance", "valUSD", "pctVal") else v
+    # values exactly as the file writes them, ready for a red-flag quote
+    record["quote"] = " ".join(f"<{t}>{v}</{t}>" for t, v in
+                               [("name", find_text(sec, "name"))] + [(t, raw.get(t)) for t in ("balance", "valUSD")]
+                               if v is not None)
+    if record.get("units") == "NS" and record.get("balance") and "valUSD" in record:
+        record["value_per_share"] = round(record["valUSD"] / record["balance"], 4)
+    for tag in ("maturityDt", "couponKind", "annualizedRt", "isDefault", "areIntrstPmntsInArrs", "isPaidKind"):
+        v = find_text(sec, f"debtSec/{tag}")
+        if v is not None:
+            record[tag] = v
+    flags = [label for tag, label in (("isDefault", "in default"), ("areIntrstPmntsInArrs", "interest in arrears"),
+                                      ("isPaidKind", "paid in kind")) if record.get(tag) == "Y"]
+    if flags:  # the fund's own report on the loan, like a BDC's flagged footnotes
+        record["fund_flags"] = flags
+    if record.get("units") == "PA" and record.get("balance") and record.get("valUSD", -1) >= 0:
+        record["mark"] = round(100 * record["valUSD"] / record["balance"], 1)
+    notes = holding_notes(f"{name} {title}", record.get("valUSD"))
+    if notes:
+        record["notes"] = notes
+    return record
+
+
+class NportScan:
+    """Reads an N-PORT file piece by piece, keeping only the matching holdings, so a
+    fund that lists hundreds of thousands of loans never sits in memory whole."""
+    _INFO = ("repPdDate", "seriesName", "regName", "seriesId")
+
+    def __init__(self, aliases):
+        self.aliases, self.info, self.out = aliases, {}, []
+        self.parser = ET.XMLPullParser(events=("end",))
+
+    def feed(self, data):
+        self.parser.feed(data)
+        self._drain()
+
+    def close(self):
+        self.parser.close()
+        self._drain()
+        return self.out
+
+    def _drain(self):
+        for _, el in self.parser.read_events():
+            tag = el.tag.rsplit("}", 1)[-1] if isinstance(el.tag, str) else ""
+            if tag in self._INFO and el.text and el.text.strip():
+                self.info.setdefault(tag, el.text.strip())
+            elif tag == "invstOrSec":
+                for sub in el.iter():  # drop namespaces so paths stay simple
+                    if isinstance(sub.tag, str):
+                        sub.tag = sub.tag.rsplit("}", 1)[-1]
+                record = _nport_record(el, self.info, self.aliases)
+                if record:
+                    self.out.append(record)
+                el.clear()
+
+
+def parse_nport_holdings(doc, aliases):
+    """N-PORT holdings whose name or title names an alias."""
+    scan = NportScan(aliases)
+    scan.feed(doc.encode("utf-8") if isinstance(doc, str) else doc)
+    return scan.close()
+
+
+def fetch_nport_holdings(url, user_agent, aliases):
+    """Stream an N-PORT file from sec.gov through NportScan, without the usual size cap."""
+    scan = NportScan(aliases)
+    fetch_bytes(url, user_agent, retries=0, limit=NPORT_MAX, sink=scan.feed)  # no retry: the parser has the start
+    return scan.close()
 
 
 SAME_BATCH_DAYS = 10  # filings a filer makes within this many days count as one batch
@@ -885,26 +942,28 @@ def marks(aliases, user_agent, since, per_filer, max_filers, verbose=False, seen
         if h["url"].lower().endswith(".xml") or key not in seen_docs:
             seen_docs.add(key)
             unique.append(h)
-    holders, fund_rows, skipped = set(), [], 0
+    holders, fund_rows, skipped, unread = set(), [], 0, []
     for filing in unique:
         base = {"filer": filing["filer"], "form": filing["form"], "filed": filing["filed"],
                 "period_ending": filing["period_ending"], "url": filing["url"]}
         try:
-            doc = fetch(filing["url"], user_agent)
+            if filing["url"].lower().endswith(".xml"):
+                rows, kind = fetch_nport_holdings(filing["url"], user_agent, aliases), "fund_holding"
+            else:
+                doc = fetch(filing["url"], user_agent)
+                if filing["form"].startswith("NPORT"):  # an HTML exhibit in an N-PORT filing
+                    rows, kind = parse_table_rows(doc, aliases), "table_row"
+                else:
+                    rows, kind = parse_ixbrl_holdings(doc, aliases), "loan_or_equity"
+                    if not rows:
+                        rows, kind = parse_table_rows(doc, aliases), "table_row"
         except FetchError as e:
             emit({**base, "type": "error", "error": str(e)})
+            unread.append(filing["url"])
             continue
-        try:
-            if filing["url"].lower().endswith(".xml"):
-                rows, kind = parse_nport_holdings(doc, aliases), "fund_holding"
-            elif filing["form"].startswith("NPORT"):  # an HTML exhibit in an N-PORT filing
-                rows, kind = parse_table_rows(doc, aliases), "table_row"
-            else:
-                rows, kind = parse_ixbrl_holdings(doc, aliases), "loan_or_equity"
-                if not rows:
-                    rows, kind = parse_table_rows(doc, aliases), "table_row"
         except ET.ParseError as e:
             emit({**base, "type": "error", "error": f"could not parse: {e}"})
+            unread.append(filing["url"])
             continue
         if not rows and verbose:  # usually a filer that names the borrower as a customer
             emit({**base, "type": "no_matching_rows"})
@@ -930,10 +989,17 @@ def marks(aliases, user_agent, since, per_filer, max_filers, verbose=False, seen
     for change in fund_mark_changes(fund_rows):
         emit(change)
     if not holders:  # say so, so an empty result is not mistaken for a failure
-        emit({"type": "no_holdings_found", "aliases": aliases, "searched_since": since,
-              "filings_matched": len(hits), "urls": search_urls,
-              "note": "no lender schedule or fund holding names these borrowers; nothing failed. Cite the "
-                      "full-text searches in urls"})
+        if unread:
+            emit({"type": "no_holdings_found", "aliases": aliases, "searched_since": since,
+                  "filings_matched": len(hits), "urls": search_urls, "partial": True, "unread": unread,
+                  "note": f"no filing read names these borrowers, but {len(unread)} could not be read (see the "
+                          "error records), so this result is partial: open those filings, or say under Gaps that "
+                          "they were not read"})
+        else:
+            emit({"type": "no_holdings_found", "aliases": aliases, "searched_since": since,
+                  "filings_matched": len(hits), "urls": search_urls,
+                  "note": "no lender schedule or fund holding names these borrowers; nothing failed. Cite the "
+                          "full-text searches in urls"})
     if skipped:
         emit({"type": "already_seen", "skipped": skipped,
               "note": "records already in the --skip-seen file were left out, so appending does not double-count"})
@@ -4430,7 +4496,10 @@ def quote_warnings(page, quote, matched):
     """Why a found quote may still not prove the flag: too short to carry the
     flagged figures, or matched in several places (the context shows the first)."""
     warnings = []
-    if len(re.findall(r"\w+", re.sub(r"<[^>]+>", " ", quote))) < MIN_QUOTE_WORDS:
+    # an XBRL fact quoted with its tag (<fsa:Equity>-760000000</fsa:Equity>, or an N-PORT
+    # <valUSD>) names what the figure is, so it needs no surrounding words
+    tagged_fact = re.search(r"<([\w.-]+:)?[A-Za-z][\w.-]*[^>]*>[^<]*\w[^<]*</", quote)
+    if not tagged_fact and len(re.findall(r"\w+", re.sub(r"<[^>]+>", " ", quote))) < MIN_QUOTE_WORDS:
         warnings.append(f"quote has fewer than {MIN_QUOTE_WORDS} words, so finding it does not show the flagged "
                         "figures; quote the whole row or sentence")
     count = page.count(matched) if matched else 0
