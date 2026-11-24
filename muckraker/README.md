@@ -109,7 +109,7 @@ Without a token, the US state registry and national registers agents read OpenCo
 
 ### OpenSanctions API key
 
-Without a key, the sanctions agent reads the OpenSanctions website search and the OFAC list. With a key in `OPENSANCTIONS_API_KEY`, it uses the OpenSanctions API. OpenSanctions data is free for non-commercial use; commercial use needs a licence from [OpenSanctions](https://www.opensanctions.org/licensing/).
+Without a key, the sanctions agent reads the OpenSanctions website search and the US Consolidated Screening List (`mr.py csl`). With a key in `OPENSANCTIONS_API_KEY`, it uses the OpenSanctions API. OpenSanctions data is free for non-commercial use; commercial use needs a licence from [OpenSanctions](https://www.opensanctions.org/licensing/).
 
 ### Browser tool
 
@@ -121,7 +121,7 @@ Each country below was tested by a full run on a VC-backed company registered th
 
 | Country | Tested on | Register access |
 | --- | --- | --- |
-| United States | Two US companies | `mr.py edgar-*` and `marks` (SEC), `us-states` (CO, NY, TX, OR, CT open data); other state registers by agent |
+| United States | Two US companies | `mr.py edgar-*` and `marks` (SEC), `us-states` (CO, NY, TX, OR, CT open data); `usaspending` (federal awards) and `csl` (US screening list); other state registers by agent |
 | United Kingdom | Their UK subsidiaries | `mr.py ch`, `ch-officers`, `uk-accounts`, `uk-pages` (Companies House API) |
 | Belgium | Aikido | Agent: KBO, NBB accounts API, Belgian Official Gazette |
 | France | GitGuardian | `mr.py fr` (company search API, BODACC) |
