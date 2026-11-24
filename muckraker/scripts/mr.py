@@ -2488,6 +2488,8 @@ def us_states_report(names, fetcher=None, limit=50):
 
 USASPENDING = "https://api.usaspending.gov/api/v2"
 USA_EARLIEST = "2007-10-01"  # the award search covers nothing earlier
+USA_LOANS_FROM = "2020-04-01"  # loans are searched back to the PPP's start whatever the window
+USA_IDV_CODES = ["IDV_A", "IDV_B", "IDV_B_A", "IDV_B_B", "IDV_B_C", "IDV_C", "IDV_D", "IDV_E"]
 _USA_FIELDS = ["Award ID", "Recipient Name", "Recipient UEI", "Awarding Agency", "Awarding Sub Agency", "Description",
                "generated_internal_id", "recipient_id"]
 _USA_SPENDING = ["Start Date", "End Date", "Award Amount", "Total Outlays"]
@@ -2532,7 +2534,9 @@ def usaspending_report(names, since=None, poster=None, today=None, limit=25):
     seen, recipients, other_names, truncated, agencies = set(), {}, set(), [], {}
     for name in names:
         for group, codes, extra, sort in USA_AWARD_GROUPS:
-            body = {"filters": {"recipient_search_text": [name], "award_type_codes": codes, "time_period": period},
+            window = ([{"start_date": min(since, USA_LOANS_FROM), "end_date": today.isoformat()}]
+                      if group == "loans" else period)
+            body = {"filters": {"recipient_search_text": [name], "award_type_codes": codes, "time_period": window},
                     "fields": _USA_FIELDS + extra, "sort": sort, "order": "desc", "limit": limit, "page": 1}
             try:
                 reply = post("/search/spending_by_award/", body)
@@ -2569,6 +2573,31 @@ def usaspending_report(names, since=None, poster=None, today=None, limit=25):
                        "agency": agency, "sub_agency": row.get("Awarding Sub Agency"),
                        "description": (row.get("Description") or "")[:300] or None,
                        "url": f"https://www.usaspending.gov/award/{gid}"}
+    # contract vehicles (IDIQs, GWACs) carry no money themselves but show what the company can bid on
+    vehicles = []
+    for name in names:
+        body = {"filters": {"recipient_search_text": [name], "award_type_codes": USA_IDV_CODES, "time_period": period},
+                "fields": ["Award ID", "Recipient Name", "Start Date", "Awarding Agency", "Awarding Sub Agency",
+                           "Description", "generated_internal_id"], "sort": "Start Date", "order": "desc",
+                "limit": limit, "page": 1}
+        try:
+            reply = post("/search/spending_by_award/", body)
+        except (FetchError, ValueError) as e:
+            yield {"type": "usa_unavailable", "query": name, "group": "contract vehicles", "error": str(e)}
+            continue
+        for row in reply.get("results") or []:
+            gid = row.get("generated_internal_id")
+            if gid in seen or not any(_name_match(n, row.get("Recipient Name") or "") for n in names):
+                continue
+            seen.add(gid)
+            vehicles.append({"award_id": row.get("Award ID"), "start": row.get("Start Date"),
+                             "agency": row.get("Awarding Sub Agency") or row.get("Awarding Agency"),
+                             "description": (row.get("Description") or "")[:200] or None,
+                             "url": f"https://www.usaspending.gov/award/{gid}"})
+    if vehicles:
+        yield {"type": "usa_vehicles", "vehicles": vehicles,
+               "note": "indefinite-delivery contracts the company holds a place on; money comes only through task "
+                       "orders, which are listed as contracts"}
     ueis = sorted(r["uei"] for r in recipients.values() if r["uei"])
     years = []
     if ueis:
@@ -2580,6 +2609,12 @@ def usaspending_report(names, since=None, poster=None, today=None, limit=25):
                        **{k: y.get(f"{k.capitalize()}_Obligations") for k in ("contract", "grant", "loan", "direct", "other")}}
                 years.append(row)
                 yield {"type": "usa_year", "ueis": ueis, **row}
+                if (row["obligations"] or 0) < 0:
+                    yield {"type": "usa_flag", "severity": "review", "fiscal_year": row["fiscal_year"],
+                           "obligations": row["obligations"],
+                           "detail": "negative obligations: an agency took back money it had committed (a closeout, "
+                                     "a reduced scope, or a termination); open the largest award's transaction history "
+                                     "on its page to see which"}
         except (FetchError, ValueError, KeyError, TypeError) as e:
             yield {"type": "usa_unavailable", "query": ueis, "group": "yearly totals", "error": str(e)}
     total = sum(agencies.values())
@@ -2588,11 +2623,18 @@ def usaspending_report(names, since=None, poster=None, today=None, limit=25):
                         sorted(agencies.items(), key=lambda kv: -kv[1])] if total > 0 else [],
            **({"truncated": truncated} if truncated else {}),
            **({"other_recipients": sorted(other_names)[:20]} if other_names else {}),
+           "loans_since": min(since, USA_LOANS_FROM),
+           **({"no_uei": [r["name"] for r in recipients.values() if not r["uei"]]}
+              if any(not r["uei"] for r in recipients.values()) else {}),
            "note": "award amounts are each award's lifetime total and `usa_year` obligations are what agencies committed "
                    "in each US fiscal year (October to September), not cash paid. Recipients are matched by name: check "
                    "each UEI's page (address, parent) before counting it as the company. `agencies` shares cover the "
                    "awards listed here, not loans; a truncated group lists only its largest awards. SBA loans, including "
-                   "PPP and disaster loans, are loans, not income; a forgiven PPP loan is still listed at its value"}
+                   "PPP and disaster loans, are loans, not income; a forgiven PPP loan is still listed at its value. "
+                   "Recipients in `no_uei` (often a PPP borrower) are matched by name only and left out of `usa_year`. "
+                   "USAspending leaves out Other Transaction agreements (DIU and other OT deals, often a defence "
+                   "startup's largest) and some SBIR awards: check SBIR.gov's firm portfolio and the company's own "
+                   "contract announcements for those"}
 
 
 # --------------------------------------------------- screening list (CSL) ----
@@ -2621,6 +2663,9 @@ def csl_report(names, fetcher=None):
         if not hits:
             continue
         found += 1
+        listed = re.search(r"Listing Date[^,;]*,\s*(\d{4}-\d{2}-\d{2})", row.get("ids") or "")
+        if listed and not row.get("start_date"):
+            row["start_date"] = listed.group(1)
         yield {"type": "csl_match", "query": hits, "list": source, "name": row.get("name"),
                "entity_type": row.get("type") or None,
                **{k: row.get(k) or None for k in ("programs", "addresses", "start_date", "end_date",
@@ -2657,6 +2702,11 @@ def _money(text):
         return text  # "Indefinite" and the like
 
 
+_LEGAL_SUFFIXES = {"llc", "l.l.c", "inc", "lp", "l.p", "llp", "ltd", "corp", "corporation", "co", "plc", "gp"}
+# issuers that invest in the company rather than being it: an SPV series, a fund, a syndicate vehicle
+_VEHICLE_RE = re.compile(r"\ba series of\b|\bspv\b|\bfund\b|\bsyndicate\b|\bcapital partners\b", re.I)
+
+
 def parse_form_d(xml_text):
     """The fields of a Form D primary_doc.xml that matter for an entity record and funding timeline."""
     root = _xml_local(ET.fromstring(xml_text))
@@ -2676,8 +2726,12 @@ def parse_form_d(xml_text):
     first_sale = offering.find("typeOfFiling/dateOfFirstSale") if offering is not None else None
     people = []
     for p in root.iter("relatedPersonInfo"):
-        name = " ".join(filter(None, [_xt(p, "relatedPersonName/firstName"), _xt(p, "relatedPersonName/middleName"),
-                                      _xt(p, "relatedPersonName/lastName")]))
+        first, middle, last = (_xt(p, f"relatedPersonName/{k}Name") for k in ("first", "middle", "last"))
+        first, middle = (None if v and v.strip(" .-/").lower() in ("", "na", "n/a", "none") else v for v in (first, middle))
+        if first and first.lower().strip(".,") in _LEGAL_SUFFIXES:  # an entity: "Sydecar" + "LLC"
+            name = f"{last}, {first}" if last else first
+        else:
+            name = " ".join(filter(None, [first, middle, last]))
         people.append({"name": name, "relationships": [r.text.strip() for r in p.iter("relationship") if r.text],
                        **({"clarification": _xt(p, "relationshipClarification")}
                           if _xt(p, "relationshipClarification") else {})})
@@ -2690,6 +2744,8 @@ def parse_form_d(xml_text):
         "address": ", ".join(filter(None, [_xt(issuer, "issuerAddress/city"), _xt(issuer, "issuerAddress/stateOrCountry")])) or None,
         "previous_names": [n for n in previous if n.lower() != "none"] or None,
         "industry": industry, "pooled_fund": bool(industry and "Pooled Investment Fund" in industry),
+        "investor_vehicle": bool((industry and "Pooled Investment Fund" in industry)
+                                 or _VEHICLE_RE.search(_xt(issuer, "entityName") or "")),
         "revenue_range": _xt(offering, "issuerSize/revenueRange") or _xt(offering, "issuerSize/aggregateNetAssetValueRange"),
         "exemptions": [i.text.strip() for i in offering.iter("item") if i.text] if offering is not None else [],
         "amendment": _xt(offering, "typeOfFiling/newOrAmendment/isAmendment") == "true",
@@ -2707,7 +2763,8 @@ def parse_form_d(xml_text):
 def formd_report(queries, user_agent, search=None, get=None, max_hits=40):
     """Form D filings found by EDGAR full-text search for each name (a company, a former name, or a founder),
     each parsed from its primary_doc.xml."""
-    search = search or (lambda q: edgar_search(q, ["D", "D/A"], None, None, user_agent, max_hits))
+    # EDGAR full-text search's "D" covers amendments too; "D,D/A" returns only the amendments
+    search = search or (lambda q: edgar_search(q, ["D"], None, None, user_agent, max_hits))
     get = get or (lambda u: fetch(u, user_agent))
     seen, issuers, searched = set(), {}, []
     for q in queries:
@@ -2717,7 +2774,7 @@ def formd_report(queries, user_agent, search=None, get=None, max_hits=40):
             yield {"type": "formd_unavailable", "query": q, "error": str(e)}
             continue
         searched.append({"query": q, "filings": summary.get("total"), "truncated": summary.get("truncated"),
-                         "url": search_web_url(q, ["D", "D/A"], None)})
+                         "url": search_web_url(q, ["D"], None)})
         for h in hits:
             if h["accession"] in seen or not h.get("cik"):
                 continue
@@ -2733,7 +2790,8 @@ def formd_report(queries, user_agent, search=None, get=None, max_hits=40):
             yield {"type": "formd_filing", "query": q, "form": h.get("form"), "filed": h.get("filed"), **d, "url": url}
             i = issuers.setdefault(d["cik"] or d["issuer"], {
                 "issuer": d["issuer"], "cik": d["cik"], "jurisdiction": d["jurisdiction"],
-                "year_of_inc": d["year_of_inc"], "pooled_fund": d["pooled_fund"], "filings": 0, "first_filed": None,
+                "year_of_inc": d["year_of_inc"], "pooled_fund": d["pooled_fund"],
+                "investor_vehicle": d["investor_vehicle"], "filings": 0, "first_filed": None,
                 "last_filed": None, "people": set()})
             i["filings"] += 1
             i["first_filed"] = min(filter(None, [i["first_filed"], h.get("filed")]), default=None)
@@ -2742,7 +2800,8 @@ def formd_report(queries, user_agent, search=None, get=None, max_hits=40):
     yield {"type": "formd_summary", "searched": searched,
            "issuers": [{**i, "people": sorted(i["people"])} for i in issuers.values()],
            "note": "full-text search matches the name anywhere in the filing, so an issuer can be an investor's fund "
-                   "(`pooled_fund`) or a company that only names the person: match each issuer to the entity record "
+                   "or SPV (`investor_vehicle`: a pooled fund, or named \"a Series of\", SPV, or Fund; check others such "
+                   "as a syndicate LLC by hand) or a company that only names the person: match each issuer to the entity record "
                    "before using it. Each D/A restates its offering's running total, so take an offering's amount "
                    "from its latest filing and never add amendments together"}
 
@@ -2776,6 +2835,9 @@ def icij_report(names, poster=None, fetcher=None, limit=25, max_nodes=30):
                 continue
             rec = {"type": "icij_node", "query": [q["query"]], "id": r["id"], "name": r.get("name"), "node_type": kind,
                    "description": r.get("description"), "url": f"https://offshoreleaks.icij.org/nodes/{r['id']}"}
+            extra = sorted(distinctive_words(r.get("name") or "") - distinctive_words(q["query"]))
+            if extra:  # "Vuppala Rao - Sameer" for "Sameer Rao": a different person until shown otherwise
+                rec["extra_words"] = extra
             if nodes < max_nodes:
                 nodes += 1
                 try:
@@ -2844,7 +2906,7 @@ def footprint_report(domain, github=None, founded=None, fetcher=None, today=None
     get = fetcher or (lambda u: fetch_bytes(u, None))
     today = today or dt.date.today()
     domain = _domain_of(domain)
-    years = []
+    years, registered = [], None
     try:
         services = json.loads(get(RDAP_BOOTSTRAP))["services"]
         labels = domain.split(".")
@@ -2859,6 +2921,7 @@ def footprint_report(domain, github=None, founded=None, fetcher=None, today=None
                 err = f"no RDAP service or WHOIS server for .{labels[-1]}"
             if w and w["registered"]:
                 years.append(int(w["registered"][:4]))
+                registered = w["registered"]
                 yield {"type": "footprint_domain", "domain": domain, **w}
             else:
                 yield {"type": "footprint_unavailable", "part": "domain",
@@ -2871,6 +2934,7 @@ def footprint_report(domain, github=None, founded=None, fetcher=None, today=None
                               for v in (e.get("vcardArray") or [None, []])[1] if v[0] == "fn"), None)
             if events.get("registration"):
                 years.append(int(events["registration"][:4]))
+                registered = events["registration"]
             yield {"type": "footprint_domain", "domain": domain, "registered": events.get("registration"),
                    "expires": events.get("expiration"), "last_changed": events.get("last changed"),
                    "registrar": registrar, "status": d.get("status"), "url": url}
@@ -2886,11 +2950,20 @@ def footprint_report(domain, github=None, founded=None, fetcher=None, today=None
                 y = by_year.setdefault(ts[:4], {"months": 0, "months_ok": 0})
                 y["months"] += 1
                 y["months_ok"] += status == "200"
-            first, last = rows[0][0], rows[-1][0]
-            years.append(int(first[:4]))
-            yield {"type": "footprint_wayback", "domain": domain, "first_capture": f"{first[:4]}-{first[4:6]}-{first[6:8]}",
-                   "last_capture": f"{last[:4]}-{last[4:6]}-{last[6:8]}", "by_year": by_year,
-                   "page": f"https://web.archive.org/web/{first[:8]}000000*/{domain}", "url": cdx}
+            day = lambda ts: f"{ts[:4]}-{ts[4:6]}-{ts[6:8]}"
+            cut = (registered or "").replace("-", "")
+            prior = [ts for ts, _ in rows if cut and ts[:8] < cut]  # a previous owner's site
+            own = [ts for ts, _ in rows if not (cut and ts[:8] < cut)]
+            first, last = (own[0] if own else None), rows[-1][0]
+            if first:
+                years.append(int(first[:4]))
+            yield {"type": "footprint_wayback", "domain": domain, "first_capture": day(first) if first else None,
+                   "last_capture": day(last), "by_year": by_year,
+                   **({"prior_owner_captures": {"first": day(prior[0]), "last": day(prior[-1]), "months": len(prior),
+                                                "note": "captures from before the domain's current registration, "
+                                                        "usually an earlier owner's site; left out of first_capture"}}
+                      if prior else {}),
+                   "page": f"https://web.archive.org/web/{(first or rows[0][0])[:8]}000000*/{domain}", "url": cdx}
         else:
             yield {"type": "footprint_wayback", "domain": domain, "first_capture": None, "url": cdx}
     except (FetchError, ValueError) as e:
@@ -2925,6 +2998,10 @@ JOB_BOARDS = [  # provider, pattern for the board token in a careers page or URL
     ("greenhouse", r"(?:boards|job-boards)(?:\.eu)?\.greenhouse\.io/([A-Za-z0-9_-]+)"),
     ("lever", r"jobs(?:\.eu)?\.lever\.co/([A-Za-z0-9_-]+)"),
     ("ashby", r"jobs\.ashbyhq\.com/([A-Za-z0-9_.-]+)"),
+    # the providers' APIs, which a careers page that builds its list in JavaScript calls
+    ("greenhouse", r"boards-api(?:\.eu)?\.greenhouse\.io/v1/boards/([A-Za-z0-9_-]+)"),
+    ("lever", r"api(?:\.eu)?\.lever\.co/v0/postings/([A-Za-z0-9_-]+)"),
+    ("ashby", r"api\.ashbyhq\.com/posting-api/job-board/([A-Za-z0-9_.-]+)"),
 ]
 BOARD_PAGES = {"greenhouse": ["https://job-boards.greenhouse.io/{t}", "https://boards.greenhouse.io/{t}"],
                "lever": ["https://jobs.lever.co/{t}"]}
@@ -3023,7 +3100,7 @@ def jobs_report(target, history=False, fetcher=None, pause=1.0, offices=()):
         best = max((c["office_matches"] for c in candidates), default=0)
         picks = [c for c in candidates if c["office_matches"] == best] if words else candidates
         if len(picks) == 1:
-            board, guessed = (picks[0]["provider"], label), True
+            board, guessed, guess = (picks[0]["provider"], label), True, picks[0]
         elif candidates:
             yield {"type": "jobs_board_ambiguous", "url": target,
                    "note": "no single board matches the offices given (--offices); rerun with provider:token "
@@ -3041,8 +3118,11 @@ def jobs_report(target, history=False, fetcher=None, pause=1.0, offices=()):
         return
     if guessed:
         yield {"type": "jobs_board_guessed", "provider": provider, "board": token, "url": url,
+               **({"offices": list(offices), "office_matches": guess["office_matches"]} if words else {}),
                "note": "the careers page links no board, so this one was found by the company's domain name; "
-                       "check that its locations are the company's offices before using the counts"}
+                       "check that its locations are the company's offices before using the counts"
+                       + ("; none of its roles is in an office given, so it may be another company's board"
+                          if words and not guess["office_matches"] else "")}
 
     def tally(i):
         counts = {}
