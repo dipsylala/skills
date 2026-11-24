@@ -1321,7 +1321,11 @@ class OfficersLayoffsHiring(unittest.TestCase):
             calls.append((path, body))
             if path == "/search/spending_over_time/":
                 return {"results": [{"time_period": {"fiscal_year": "2025"}, "aggregated_amount": 900.0,
-                                     "Contract_Obligations": 800.0, "Grant_Obligations": 100.0, "Loan_Obligations": 0}]}
+                                     "Contract_Obligations": 800.0, "Grant_Obligations": 100.0, "Loan_Obligations": 0},
+                                    {"time_period": {"fiscal_year": "2026"}, "aggregated_amount": -300.0}]}
+            if body["filters"]["award_type_codes"] == mr.USA_IDV_CODES:
+                return {"results": [{"Award ID": "IDIQ1", "Recipient Name": "ACME ROBOTICS INC", "Start Date": "2025-12-29",
+                                     "Awarding Sub Agency": "Missile Defense Agency", "generated_internal_id": "CONT_IDV_1"}]}
             group = body["filters"]["award_type_codes"]
             if group == ["A", "B", "C", "D"]:
                 return {"results": [
@@ -1339,6 +1343,10 @@ class OfficersLayoffsHiring(unittest.TestCase):
                 raise mr.FetchError("HTTP 503")
             return {"results": []}
         out = list(mr.usaspending_report(["Acme Robotics"], poster=post, today=dt.date(2026, 11, 24)))
+        loan_call = next(b for p, b in calls if b.get("filters", {}).get("award_type_codes") == ["07", "08"])
+        self.assertEqual(loan_call["filters"]["time_period"][0]["start_date"], "2020-04-01")
+        self.assertEqual(out[-1]["no_uei"], ["Acme Robotics, Inc."])
+        self.assertIn("Other Transaction", out[-1]["note"])
         awards = [r for r in out if r["type"] == "usa_award"]
         self.assertEqual([a["award_id"] for a in awards], ["W1", "L1"])
         self.assertEqual(awards[0]["url"], "https://www.usaspending.gov/award/CONT_AWD_W1")
@@ -1353,6 +1361,8 @@ class OfficersLayoffsHiring(unittest.TestCase):
         self.assertEqual(summary["other_recipients"], ["ACMEROBOT HOLDINGS"])
         self.assertEqual(summary["truncated"], [{"query": "Acme Robotics", "group": "contracts"}])
         self.assertEqual(summary["recipients"][0]["page"], "https://www.usaspending.gov/recipient/r1-C/latest")
+        self.assertEqual(next(r for r in out if r["type"] == "usa_vehicles")["vehicles"][0]["award_id"], "IDIQ1")
+        self.assertEqual(next(r for r in out if r["type"] == "usa_flag")["fiscal_year"], 2026)
 
     def test_csl_matches_names_and_aliases(self):
         rows = [
@@ -1362,18 +1372,22 @@ class OfficersLayoffsHiring(unittest.TestCase):
              "type": "Entity", "alt_names": "ACME ROBOTICS FZE; Volga Trade", "programs": "RUSSIA-EO14024"},
             {"source": "Specially Designated Nationals (SDN) - Treasury Department", "name": "Acme Shipping",
              "type": "Entity", "alt_names": ""},
+            {"source": "Non-SDN Chinese Military-Industrial Complex Companies List (CMIC) - Treasury Department",
+             "name": "Acme Robotics Holdings", "type": "Entity", "alt_names": "",
+             "ids": "Target Type, Private Company; Listing Date (CMIC), 2021-06-03; Effective Date (CMIC), 2021-08-02"},
         ]
         buf = io.StringIO()
         import csv
-        w = csv.DictWriter(buf, fieldnames=["source", "name", "type", "programs", "addresses", "alt_names", "start_date"])
+        w = csv.DictWriter(buf, fieldnames=["source", "name", "type", "programs", "addresses", "alt_names", "start_date", "ids"])
         w.writeheader()
         w.writerows(rows)
         out = list(mr.csl_report(["Acme Robotics Inc"], fetcher=lambda u: buf.getvalue().encode()))
         matches = [r for r in out if r["type"] == "csl_match"]
-        self.assertEqual([m["name"] for m in matches], ["Acme Robotics Co., Ltd.", "Volga Trading LLC"])
+        self.assertEqual([m["name"] for m in matches], ["Acme Robotics Co., Ltd.", "Volga Trading LLC", "Acme Robotics Holdings"])
+        self.assertEqual(matches[2]["start_date"], "2021-06-03")
         self.assertEqual((matches[0]["entity_type"], matches[0]["start_date"]), ("Entity", "2024-05-01"))
         self.assertEqual(matches[1]["alt_names"], ["ACME ROBOTICS FZE", "Volga Trade"])
-        self.assertEqual((out[-1]["entries_searched"], out[-1]["matches"]), (3, 2))
+        self.assertEqual((out[-1]["entries_searched"], out[-1]["matches"]), (4, 3))
 
     FORM_D = """<?xml version="1.0"?>
 <edgarSubmission xmlns="http://www.sec.gov/edgar/formd">
@@ -1404,6 +1418,20 @@ class OfficersLayoffsHiring(unittest.TestCase):
     <investors><hasNonAccreditedInvestors>false</hasNonAccreditedInvestors><totalNumberAlreadyInvested>12</totalNumberAlreadyInvested></investors>
   </offeringData>
 </edgarSubmission>"""
+
+    def test_footprint_sets_aside_an_earlier_owners_captures(self):
+        def get(url):
+            if url == mr.RDAP_BOOTSTRAP:
+                return json.dumps({"services": [[["com"], ["https://rdap.example/"]]]}).encode()
+            if "rdap.example" in url:
+                return json.dumps({"events": [{"eventAction": "registration", "eventDate": "2018-10-13T00:00:00Z"}]}).encode()
+            return json.dumps([["timestamp", "statuscode"], ["20130601000000", "200"], ["20161007000000", "200"],
+                               ["20190525000000", "200"]]).encode()
+        out = {r["type"]: r for r in mr.footprint_report("acme.com", founded=2012, fetcher=get)}
+        w = out["footprint_wayback"]
+        self.assertEqual((w["first_capture"], w["prior_owner_captures"]["first"], w["prior_owner_captures"]["months"]),
+                         ("2019-05-25", "2013-06-01", 2))
+        self.assertEqual(out["footprint_flag"]["first_capture"], 2019)  # the 2013 captures no longer hide a padded claim
 
     def test_formd_parses_issuer_people_and_amounts(self):
         hits = [{"accession": "0001900001-24-000001", "cik": "0001900001", "form": "D/A", "filed": "2024-02-01",
@@ -1436,6 +1464,29 @@ class OfficersLayoffsHiring(unittest.TestCase):
         self.assertEqual((issuer["filings"], issuer["first_filed"], issuer["last_filed"], issuer["people"]),
                          (2, "2023-03-10", "2024-02-01", ["Jane Doe"]))
 
+    def test_formd_searches_form_d_family_and_names_vehicles(self):
+        asked = []
+        saved = mr.edgar_search
+        mr.edgar_search = lambda q, forms, *a: asked.append(forms) or ([], {"total": 0, "truncated": False})
+        try:
+            out = list(mr.formd_report(["Hermeus"], "ua", get=lambda u: ""))
+        finally:
+            mr.edgar_search = saved
+        self.assertEqual(asked, [["D"]])  # "D,D/A" returns only amendments
+        self.assertIn("forms=D&", out[-1]["searched"][0]["url"] + "&")
+        doc = self.FORM_D.replace("<entityName>Acme Robotics, Inc.</entityName>",
+                                  "<entityName>Acme C a Series of What If Ventures Master LLC</entityName>").replace(
+            "<relatedPersonName><firstName>Jane</firstName><lastName>Doe</lastName></relatedPersonName>",
+            "<relatedPersonName><firstName>LLC</firstName><lastName>Sydecar</lastName></relatedPersonName>")
+        d = mr.parse_form_d(doc)
+        self.assertEqual((d["investor_vehicle"], d["pooled_fund"]), (True, False))
+        self.assertEqual(d["related_persons"][0]["name"], "Sydecar, LLC")
+        d = mr.parse_form_d(self.FORM_D.replace(
+            "<firstName>Jane</firstName><lastName>Doe</lastName>",
+            "<firstName>-</firstName><lastName>Fundamental Ventures Fund I GP, LLC</lastName>"))
+        self.assertEqual(d["related_persons"][0]["name"], "Fundamental Ventures Fund I GP, LLC")
+        self.assertFalse(mr.parse_form_d(self.FORM_D)["investor_vehicle"])
+
     def test_icij_keeps_name_matches_with_node_details(self):
         reply = {"q0": {"result": [
             {"id": "1", "name": "ACME ROBOTICS LIMITED", "description": "Entity node extracted from the Panama Papers data.",
@@ -1453,6 +1504,11 @@ class OfficersLayoffsHiring(unittest.TestCase):
         self.assertEqual((nodes[0]["leak"], nodes[0]["countries"], nodes[0]["incorporated"]), ("Panama Papers", ["PA"], "2009-01-02"))
         self.assertEqual(out[-1]["loose_results_dropped"], 2)
         self.assertEqual(bodies[0]["queries"]["q1"]["query"], "Acme Robotics Ltd")
+        self.assertNotIn("extra_words", nodes[0])
+        out = list(mr.icij_report(["Sameer Rao"], poster=lambda b: {"q0": {"result": [
+            {"id": "9", "name": "Vuppala Rao - Sameer", "types": [{"name": "Officer"}]}]}},
+            fetcher=lambda u: b"{}"))
+        self.assertEqual(out[0]["extra_words"], ["vuppala"])
 
     def test_footprint_rdap_wayback_github_and_whois_fallback(self):
         boot = {"services": [[["com"], ["https://rdap.example/com/v1/"]]]}
@@ -1482,6 +1538,7 @@ class OfficersLayoffsHiring(unittest.TestCase):
         self.assertEqual((by["footprint_github"]["last_push"], by["footprint_github"]["repos_pushed_last_6_months"],
                           by["footprint_github"]["stars"]), ("2026-10-01", 1, 45))
         self.assertEqual(by["footprint_flag"]["founded"], 2010)
+        self.assertNotIn("prior_owner_captures", by["footprint_wayback"])
 
         def whois(server, q):
             return {"whois.iana.org": "refer: whois.nic.io\nwhois:        whois.nic.io\n",
@@ -1557,6 +1614,23 @@ class OfficersLayoffsHiring(unittest.TestCase):
             return "<html>jobs load here</html>"
         out = list(mr.jobs_report("https://www.acme.com/careers", fetcher=get))
         self.assertEqual([r["type"] for r in out], ["jobs_board_guessed", "jobs_openings"])
+
+    def test_board_found_from_api_url_in_script(self):
+        page = '<script>fetch("https://api.lever.co/v0/postings/hermeus?mode=json")</script>'
+        self.assertEqual(mr.find_job_board(page), ("lever", "hermeus"))
+        self.assertEqual(mr.find_job_board('x="https://boards-api.greenhouse.io/v1/boards/acme/jobs"'), ("greenhouse", "acme"))
+        self.assertEqual(mr.find_job_board('u="https://api.ashbyhq.com/posting-api/job-board/acme"'), ("ashby", "acme"))
+
+    def test_single_guessed_board_shows_office_matches(self):
+        def get(url):
+            if "api.ashbyhq.com/posting-api/job-board/acme" in url:
+                return json.dumps({"jobs": [{"title": "PM", "department": "Product", "location": "Paris"}]})
+            if "greenhouse" in url or "lever" in url:
+                raise mr.FetchError("HTTP 404")
+            return "<html>jobs load here</html>"
+        guess = list(mr.jobs_report("https://www.acme.com/careers", fetcher=get, offices=["Boston"]))[0]
+        self.assertEqual((guess["type"], guess["office_matches"]), ("jobs_board_guessed", 0))
+        self.assertIn("another company", guess["note"])
 
     def test_board_guess_picks_the_board_with_the_offices(self):
         def get(url):
