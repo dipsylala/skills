@@ -920,6 +920,15 @@ class SnykRunTwoFixes(unittest.TestCase):
         [c] = mr.fund_mark_changes([line("2025-06-30", 10.0, 5.0), line("2026-06-30", 12.0, 2.0)])
         self.assertEqual(c["paired_by"], "only_line")
 
+    def test_mark_change_lists_the_quarters_between(self):
+        def line(as_of, value):
+            return {"filer": "T", "cik": "1", "fund": "F", "as_of": as_of, "name": "AIVEN", "balance": 10.0,
+                    "url": as_of, "value_per_share": value}
+        [c] = mr.fund_mark_changes([line("2025-06-30", 50.65), line("2026-03-31", 50.0), line("2026-06-30", 12.2)])
+        self.assertEqual([p["value"] for p in c["path"]], [50.65, 50.0, 12.2])
+        [c] = mr.fund_mark_changes([line("2025-06-30", 50.65), line("2026-06-30", 12.2)])
+        self.assertNotIn("path", c)
+
 
 def tiny_text_pdf():
     """A one-page PDF like Companies House's electronic forms: a subset font whose
@@ -1278,7 +1287,7 @@ class OfficersLayoffsHiring(unittest.TestCase):
 
     def test_us_states_open_registers(self):
         rows = {
-            "colorado": [{"entityid": "2021", "entityname": "Acme Robotics, Inc.", "entitystatus": "Delinquent",
+            "colorado": [{"entityid": "2021", "entityname": "Acme Robotics, Inc., Delinquent June 1, 2024", "entitystatus": "Delinquent",
                           "jurisdictonofformation": "DE", "entityformdate": "2021-09-15T00:00:00.000"}],
             "texas": [{"taxpayer_name": "ACME ROBOTICS INC", "taxpayer_number": "32", "right_to_transact_business_code": "U"}],
             "oregon": [{"registry_number": "187", "business_name": "ACME ROBOTICS INC", "jurisdiction": "DE",
@@ -1296,7 +1305,7 @@ class OfficersLayoffsHiring(unittest.TestCase):
             return json.dumps(next(v for k, v in rows.items() if k in url)).encode()
         out = list(mr.us_states_report(["Acme Robotics", "O'Neil Labs"], fetcher=get))
         ents = {r["state"]: r for r in out if r["type"] == "us_state_entity"}
-        self.assertEqual(ents["CO"]["status"], "Delinquent")
+        self.assertEqual((ents["CO"]["name"], ents["CO"]["status"]), ("Acme Robotics, Inc.", "Delinquent"))
         self.assertEqual(ents["CO"]["formed_in"], "DE")
         self.assertEqual(ents["TX"]["status"], "right to transact business code 'U'")
         self.assertEqual((ents["OR"]["address"], ents["OR"]["agent"]), ("BOSTON, MA", "CSC"))
@@ -1304,6 +1313,51 @@ class OfficersLayoffsHiring(unittest.TestCase):
         self.assertEqual([r["state"] for r in out if r["type"] == "us_state_unavailable"], ["NY"])
         self.assertIn("O%27%27NEIL+LABS%25", urls[0])
         self.assertEqual([s["state"] for s in out[-1]["searched"]], ["CO", "TX", "OR", "CT"])
+
+    def fi_fetcher(self, notices, situations=(), periods=()):
+        company = {"companies": [{"businessId": {"value": "1234567-8", "registrationDate": "2016-11-18"},
+                                  "names": [{"name": "Acme Oy", "type": "1"}, {"name": "Acme Ltd", "type": "2"}],
+                                  "companyForms": [{"descriptions": [{"languageCode": "3", "description": "Limited company"}]}],
+                                  "companySituations": list(situations), "status": "2",
+                                  "registeredEntries": [{"register": "1", "type": "1",
+                                                         "descriptions": [{"languageCode": "3", "description": "Registered"}]}]}]}
+
+        def get(url):
+            if "description?code=EC" in url:
+                return b"TASE\t\tFINANCIAL STATEMENTS\nKOROI\t\tCAPITAL INCREASE\nHAL\t\tBOARD OF DIRECTORS\n"
+            if "description?code=NRT" in url:
+                return b"M\t\tAmendment notification\nTA\t\tFinancial statements\n"
+            if "opendata-ytj-api" in url:
+                return json.dumps(company).encode()
+            if "opendata-xbrl-api" in url:
+                return json.dumps({"financials": [{"financialDate": p} for p in periods]}).encode()
+            return json.dumps({"publicNotices": notices}).encode()
+        return get
+
+    def test_fi_notices_deduplicated_and_late_accounts(self):
+        tase = lambda d, n: {"registrationDate": d, "recordNumber": n, "typeOfRegistration": "TA", "entryCodes": ["TASE"]}
+        notices = [tase("2018-08-09", "1"), tase("2019-09-19", "2"), tase("2021-01-15", "3"), tase("2022-08-10", "4"),
+                   {"registrationDate": "2026-09-09", "recordNumber": "5", "typeOfRegistration": "M", "entryCodes": ["KOROI", "HAL"]},
+                   {"registrationDate": "2026-09-09", "recordNumber": "5", "typeOfRegistration": "M", "entryCodes": ["KOROI", "HAL"]}]
+        out = list(mr.fi_report("1234567-8", fy_end="03-31", fetcher=self.fi_fetcher(notices), today=dt.date(2024, 1, 10)))
+        self.assertEqual(out[0]["other_names"], ["Acme Ltd"])
+        kor = [r for r in out if r["type"] == "fi_notice" and r["record"] == "5"]
+        self.assertEqual(len(kor), 1)
+        self.assertEqual(kor[0]["entries"], ["KOROI (capital increase)", "HAL (board of directors)"])
+        self.assertEqual(kor[0]["kind"], "Amendment notification")
+        flags = [(r["flag"], r["period_end"]) for r in out if r["type"] == "fi_flag"]
+        # FY 2020 registered 2021-01-15, after its 2020-11-30 deadline; nothing for FY 2021; FY 2023 was due 2023-11-30
+        self.assertEqual(flags, [("late accounts", "2020-03-31"), ("accounts not registered", "2021-03-31"),
+                                 ("accounts not registered", "2023-03-31")])
+        self.assertEqual(out[-1]["capital_events"], ["2026-09-09"])
+
+    def test_fi_situation_flag_and_year_end_from_digital_accounts(self):
+        get = self.fi_fetcher([], situations=[{"type": "KONK", "registrationDate": "2025-02-01"}],
+                              periods=["2023-12-31", "2024-12-31"])
+        out = list(mr.fi_report("1234567-8", fetcher=get, today=dt.date(2025, 3, 1)))
+        self.assertEqual([r["flag"] for r in out if r["type"] == "fi_flag"][0], "bankruptcy")
+        self.assertTrue(out[-1]["financial_year_end"].startswith("12-31 (from the periods"))
+        self.assertEqual(len([r for r in out if r["type"] == "fi_accounts_digital"]), 2)
 
     def test_job_board_found_on_page_and_counted(self):
         page = '<script src="https://boards.greenhouse.io/embed/job_board/js?for=acme"></script>'
