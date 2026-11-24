@@ -3499,7 +3499,9 @@ def fi_report(query, fy_end=None, fetcher=None, today=None):
 
 # --------------------------------------------------------------- Denmark ----
 
-DK_FILINGS = "http://distribution.virk.dk/offentliggoerelser/_search"  # http only: port 443 does not answer
+# Explicitly http, as documented at https://datacvr.virk.dk/artikel/system-til-system-adgang-til-regnskabsdata:
+# neither distribution.virk.dk nor regnskaber.virk.dk answers https
+DK_FILINGS = "http://distribution.virk.dk/offentliggoerelser/_search"
 DK_RECENT_YEARS = 3
 DK_LATE_GRACE_DAYS = 7  # publication can trail receipt by a few days; later than this is a major flag
 DK_FIGURES = {  # field: element names in the Danish GAAP (fsa) and IFRS taxonomies, first found wins
