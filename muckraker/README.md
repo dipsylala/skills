@@ -68,7 +68,7 @@ Agents keep key values out of their reports and write `[REDACTED]` for any crede
 
 ### Python (for the fetcher script)
 
-`scripts/mr.py` fetches EDGAR filings and XBRL figures, finds how lenders and funds value a company's loans and shares, reads GLEIF ownership chains, searches and reads UK Companies House records and accounts (scanned ones as page images, electronic forms as text), the French register with its BODACC notices, the Irish register's open data, the Finnish register's open data (PRH), Luxembourg's filed accounts from the Centrale des Bilans open data, checks UK directors' other companies for insolvencies and disqualifications, searches the US state registers published as open data (Colorado, New York, Texas, Oregon, Connecticut), finds US WARN layoff notices (California and Texas), counts a company's open roles and their trend, and checks red-flag quotes against their sources. It needs Python 3.9 or later and nothing else. Agents use it when it runs and fall back to fetching pages themselves when it doesn't, which is slower and costs far more tokens.
+`scripts/mr.py` fetches EDGAR filings and XBRL figures, finds how lenders and funds value a company's loans and shares, reads GLEIF ownership chains, searches and reads UK Companies House records and accounts (scanned ones as page images, electronic forms as text), the French register with its BODACC notices, the Irish register's open data, the Finnish register's open data (PRH), Danish annual reports from the Business Authority's open index and their XBRL, Luxembourg's filed accounts from the Centrale des Bilans open data, checks UK directors' other companies for insolvencies and disqualifications, searches the US state registers published as open data (Colorado, New York, Texas, Oregon, Connecticut), finds US WARN layoff notices (California and Texas), counts a company's open roles and their trend, and checks red-flag quotes against their sources. It needs Python 3.9 or later and nothing else. Agents use it when it runs and fall back to fetching pages themselves when it doesn't, which is slower and costs far more tokens.
 
 With Python, the coordinator also replaces up to three agents and most of its own checking with script calls. On a US company with a UK subsidiary:
 
@@ -131,13 +131,13 @@ Each country below was tested by a full run on a VC-backed company registered th
 | Luxembourg | Tadaweb | `mr.py lu` (Centrale des Bilans open data) |
 | Norway | Sanity | `mr.py no` (Brønnøysund open APIs and announcements); `uk-pages` for the scanned accounts |
 | Finland | Aiven | `mr.py fi` (PRH open data: profile, notice timeline, accounts dates); officers and figures from copies |
+| Denmark | Pleo | `mr.py dk` (filings index and XBRL: filing dates, figures, officers, notes); datacvr in a browser tool for status, owners, and capital history |
 
 ### TODO: countries to test
 
 Run Muckraker on a VC-backed company registered in the country. Note which routes worked, which agents duplicated each other, and what a deterministic `mr.py` command could do from an open API, then fix what the run shows.
 
 - [ ] **Switzerland:** has a row (Zefix, UID register, SOGC) from the Aikido run's subsidiary, but has never been the main target. Zefix answers fetch tools with 403.
-- [ ] **Denmark:** has a row. Check what the CVR register gives without a login.
 - [ ] **Canada:** has a row. Check federal corporations data against provincial registers.
 - [ ] **Sweden:** no row yet. Bolagsverket's free data is limited, so check what is open.
 - [ ] **Israel:** no row yet. It has many VC-backed tech companies, often with a US parent.
