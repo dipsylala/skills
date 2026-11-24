@@ -3757,13 +3757,23 @@ def dk_report(query, years=3, fetcher=None, today=None):
     its annual reports: each filing with its publication date against the ÅRL § 138
     deadline, and figures, officers and auditor, and notes from the latest `years`
     reports, with flags for late or missing accounts, negative equity, going-concern
-    notes, and auditor remarks."""
-    get = fetcher or (lambda u: fetch_bytes(u, None))
-    today = today or dt.date.today()
+    notes, and auditor remarks. Every record from the index or the reports carries
+    `transport`: both hosts serve plain http only, so what comes back is unauthenticated."""
     cvr = re.sub(r"\D", "", query) if re.fullmatch(r"\s*(?:DK)?[\d\s]{8,14}", query, re.I) else ""
     if len(cvr) != 8:
-        yield from dk_candidates(query, fetcher)
+        yield from dk_candidates(query, fetcher)  # GLEIF, over https
         return
+    for r in _dk_filings_report(cvr, years, fetcher, today):
+        yield {**r, "transport": DK_TRANSPORT}
+
+
+DK_TRANSPORT = ("unauthenticated http (the Business Authority serves no https): confirm a figure or flag "
+                "on datacvr.virk.dk or in the filed report before relying on it")
+
+
+def _dk_filings_report(cvr, years, fetcher, today):
+    get = fetcher or (lambda u: fetch_bytes(u, None))
+    today = today or dt.date.today()
     url = f"{DK_FILINGS}?q=cvrNummer:{cvr}&size=200"
     page = f"https://datacvr.virk.dk/enhed/virksomhed/{cvr}"
     by_end = {}

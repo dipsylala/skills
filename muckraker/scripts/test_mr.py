@@ -1883,6 +1883,7 @@ class Denmark(unittest.TestCase):
         [officers] = [r for r in out if r["type"] == "dk_officers"]
         self.assertEqual(officers["executive_board"], [{"name": "Jane Doe", "title": "CEO"}])
         self.assertEqual(out[-1]["reporting_class"], "Reporting class C, large enterprise")
+        self.assertTrue(all(r["transport"].startswith("unauthenticated http") for r in out))
 
     def test_ifrs_group_report_merged_with_danish_cover_file(self):
         hits = [self.filing("2025-01-01", "2025-12-31", "2026-03-27",
