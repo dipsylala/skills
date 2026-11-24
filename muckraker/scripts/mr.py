@@ -2317,6 +2317,94 @@ def warn_report(name, fetcher=None):
                    "pages or PDFs, so search those where the company has offices"}
 
 
+# ------------------------------------------------------ US state registers ----
+
+# States that publish their business register as open data (Socrata). New York's and Texas's
+# datasets list only active entities; the others include inactive ones with their status.
+US_STATE_DATASETS = [
+    ("CO", "https://data.colorado.gov/resource/4ykn-tg5h.json", "entityname"),
+    ("NY", "https://data.ny.gov/resource/n9v6-gdp6.json", "current_entity_name"),
+    ("TX", "https://data.texas.gov/resource/9cir-efmm.json", "taxpayer_name"),
+    ("OR", "https://data.oregon.gov/resource/tckn-sxa6.json", "business_name"),
+    ("CT", "https://data.ct.gov/resource/n7gp-d28j.json", "name"),
+]
+TX_RIGHT_TO_TRANSACT = {"A": "active"}  # other codes: check the Comptroller's taxable entity search
+
+
+def us_state_entity(state, r):
+    """One register row as a `us_state_entity` record, or None for Oregon's non-address rows."""
+    day = lambda v: (v or "")[:10] or None
+    if state == "CO":
+        return {"name": r.get("entityname"), "number": r.get("entityid"), "entity_type": r.get("entitytype"),
+                "formed_in": r.get("jurisdictonofformation"), "status": r.get("entitystatus"),
+                "registered": day(r.get("entityformdate")),
+                "address": ", ".join(filter(None, [r.get("principalcity"), r.get("principalstate")])),
+                "agent": r.get("agentorganizationname") or " ".join(filter(None, [r.get("agentfirstname"), r.get("agentlastname")])) or None,
+                "page": "https://www.sos.state.co.us/biz/BusinessEntityDetail.do?masterFileId=" + (r.get("entityid") or "")}
+    if state == "NY":
+        return {"name": r.get("current_entity_name"), "number": r.get("dos_id"), "entity_type": r.get("entity_type"),
+                "formed_in": r.get("jurisdiction"), "status": "active (the dataset lists active entities only)",
+                "registered": day(r.get("initial_dos_filing_date")), "agent": r.get("dos_process_name"),
+                "page": "https://apps.dos.ny.gov/publicInquiry/ (search DOS ID " + (r.get("dos_id") or "") + ")"}
+    if state == "TX":
+        code = r.get("right_to_transact_business_code")
+        return {"name": r.get("taxpayer_name"), "number": r.get("secretary_of_state_sos_or_coa_file_number"),
+                "taxpayer_number": r.get("taxpayer_number"), "entity_type": r.get("taxpayer_organizational_type"),
+                "status": TX_RIGHT_TO_TRANSACT.get(code, f"right to transact business code {code!r}" if code else None),
+                "registered": day(r.get("sos_charter_date")), "tax_liable_from": day(r.get("responsibility_beginning_date")),
+                "address": ", ".join(filter(None, [r.get("taxpayer_city"), r.get("taxpayer_state")])),
+                "page": "https://mycpa.cpa.state.tx.us/coa/ (search taxpayer number "
+                        + (r.get("taxpayer_number") or "") + ")"}
+    if state == "CT":
+        return {"name": r.get("name"), "number": r.get("accountnumber"), "entity_type": r.get("business_type"),
+                "formed_in": r.get("state_or_territory_formation"),
+                "status": " - ".join(filter(None, [r.get("status"), r.get("sub_status")])) or None,
+                "registered": day(r.get("date_registration")),
+                "address": ", ".join(filter(None, [r.get("billingcity"), r.get("billingstate")]))}
+    return None
+
+
+def oregon_entities(rows):
+    """Oregon has one row per name or address of an entity; merge them into one record per registry number."""
+    merged = {}
+    for r in rows:
+        e = merged.setdefault(r.get("registry_number"), {
+            "name": r.get("business_name"), "number": r.get("registry_number"), "entity_type": r.get("entity_type"),
+            "formed_in": r.get("jurisdiction"), "status": "listed (the dataset lists active businesses only)",
+            "registered": (r.get("registry_date") or "")[:10] or None,
+            "page": (r.get("business_details") or {}).get("url")})
+        kind = r.get("associated_name_type") or ""
+        if kind == "PRINCIPAL PLACE OF BUSINESS":
+            e["address"] = ", ".join(filter(None, [r.get("city"), r.get("state")]))
+        elif kind == "REGISTERED AGENT":
+            e["agent"] = r.get("entity_of_record_name") or " ".join(filter(None, [r.get("first_name"), r.get("last_name")])) or None
+        e["formed_in"] = e["formed_in"] or r.get("jurisdiction")
+    return list(merged.values())
+
+
+def us_states_report(names, fetcher=None, limit=50):
+    """Entities whose names start with any of `names` in the state registers published as open data."""
+    get = fetcher or (lambda u: fetch_bytes(u, None))
+    searched = []
+    for state, base, field in US_STATE_DATASETS:
+        clauses = " or ".join(f"upper({field}) like '{n.upper().strip().replace(chr(39), chr(39) * 2)}%'" for n in names)
+        url = base + "?" + urllib.parse.urlencode({"$where": clauses, "$limit": limit * (6 if state == "OR" else 1)})
+        try:
+            rows = json.loads(get(url))
+        except (FetchError, ValueError) as e:
+            yield {"type": "us_state_unavailable", "state": state, "error": str(e), "url": url}
+            continue
+        entities = oregon_entities(rows) if state == "OR" else [us_state_entity(state, r) for r in rows]
+        for e in entities:
+            yield {"type": "us_state_entity", "state": state, **{k: v for k, v in e.items() if v}, "url": url}
+        searched.append({"state": state, "matches": len(entities), "url": url,
+                         **({"truncated": True} if len(rows) >= limit * (6 if state == "OR" else 1) else {})})
+    yield {"type": "us_states_summary", "query": names, "searched": searched,
+           "note": "names starting with the query; match each entity to the company by address, state of formation, "
+                   "and agent before using it. NY, TX and OR list active entities only, so a missing entity there is "
+                   "inactive or never registered. Other states' registers are web pages: search them by hand"}
+
+
 # --------------------------------------------------------------- hiring ----
 
 JOB_BOARDS = [  # provider, pattern for the board token in a careers page or URL
@@ -3424,6 +3512,9 @@ def main(argv=None):
     s = sub.add_parser("warn", help="US WARN layoff notices naming the company (states with open data)")
     s.add_argument("name")
 
+    s = sub.add_parser("us-states", help="US entities in the state registers published as open data (CO, NY, TX, OR, CT)")
+    s.add_argument("names", nargs="+", help="name prefixes to search, such as \"Aikido Security\"")
+
     s = sub.add_parser("jobs", help="open roles from the company's job board, optionally with a monthly trend")
     s.add_argument("target", help="the careers page URL, a job-board URL, or provider:token (greenhouse:acme)")
     s.add_argument("--history", action="store_true", help="also count roles in monthly archived copies (slow)")
@@ -3521,6 +3612,9 @@ def main(argv=None):
                 emit(r)
         elif a.cmd == "warn":
             for r in warn_report(a.name):
+                emit(r)
+        elif a.cmd == "us-states":
+            for r in us_states_report(a.names):
                 emit(r)
         elif a.cmd == "jobs":
             for r in jobs_report(a.target, a.history):
