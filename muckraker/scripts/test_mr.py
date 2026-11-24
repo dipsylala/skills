@@ -1786,5 +1786,134 @@ class Norway(unittest.TestCase):
         self.assertEqual([r["type"] for r in gone], ["no_note"])
 
 
+DK_GAAP_XML = """<xbrl xmlns="http://www.xbrl.org/2003/instance" xmlns:e="http://xbrl.dcca.dk/fsa"
+ xmlns:d="http://xbrl.dcca.dk/cmn" xmlns:g="http://xbrl.dcca.dk/arr" xmlns:xbrldi="http://xbrl.org/2006/xbrldi">
+<context id="d"><entity><identifier scheme="http://www.dcca.dk/cvr">12345678</identifier></entity>
+ <period><startDate>2025-01-01</startDate><endDate>2025-12-31</endDate></period></context>
+<context id="i"><entity><identifier scheme="http://www.dcca.dk/cvr">12345678</identifier></entity>
+ <period><instant>2025-12-31</instant></period></context>
+<context id="p"><entity><identifier scheme="http://www.dcca.dk/cvr">12345678</identifier></entity>
+ <period><instant>2024-12-31</instant></period></context>
+<context id="b1"><entity><identifier scheme="http://www.dcca.dk/cvr">12345678</identifier></entity>
+ <period><startDate>2025-01-01</startDate><endDate>2025-12-31</endDate></period>
+ <scenario><xbrldi:typedMember dimension="d:IdentificationOfMemberOfExecutiveBoardDimension"><d:id>1</d:id></xbrldi:typedMember></scenario></context>
+<unit id="DKK"><measure>iso4217:DKK</measure></unit>
+<e:Revenue contextRef="d" unitRef="DKK" decimals="-3">553621000</e:Revenue>
+<e:ProfitLoss contextRef="d" unitRef="DKK" decimals="-3">-537956000</e:ProfitLoss>
+<e:Equity contextRef="i" unitRef="DKK" decimals="-3">-760211000</e:Equity>
+<e:Equity contextRef="p" unitRef="DKK" decimals="-3">-222255000</e:Equity>
+<e:ClassOfReportingEntity contextRef="d">Reporting class C, large enterprise</e:ClassOfReportingEntity>
+<e:DisclosureOfUncertaintiesRelatingToGoingConcern contextRef="d">&lt;p&gt;Going concern: the parent has issued a letter of support of up to EUR 85m.&lt;/p&gt;</e:DisclosureOfUncertaintiesRelatingToGoingConcern>
+<g:SupplementaryInformationOnAudit contextRef="d">The Company has lost more than half of its share capital, contrary to the Danish Companies Act.</g:SupplementaryInformationOnAudit>
+<g:TypeOfModifiedOpinionOnAuditedFinancialStatements contextRef="d">Opinion</g:TypeOfModifiedOpinionOnAuditedFinancialStatements>
+<d:NameAndSurnameOfMemberOfExecutiveBoard contextRef="b1">Jane Doe</d:NameAndSurnameOfMemberOfExecutiveBoard>
+<d:TitleOfMemberOfExecutiveBoard contextRef="b1">CEO</d:TitleOfMemberOfExecutiveBoard>
+</xbrl>"""
+
+DK_COVER_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<xbrli:xbrl xmlns:xbrli="http://www.xbrl.org/2003/instance" xmlns:fsa="http://xbrl.dcca.dk/fsa"
+ xmlns:cmn="http://xbrl.dcca.dk/cmn" xmlns:xbrldi="http://xbrl.org/2006/xbrldi">
+<xbrli:context id="g"><xbrli:entity><xbrli:identifier scheme="http://www.dcca.dk/cvr">87654321</xbrli:identifier></xbrli:entity>
+ <xbrli:period><xbrli:startDate>2025-01-01</xbrli:startDate><xbrli:endDate>2025-12-31</xbrli:endDate></xbrli:period>
+ <xbrli:scenario><xbrldi:explicitMember dimension="cmn:ConsolidatedSoloDimension">cmn:ConsolidatedMember</xbrldi:explicitMember></xbrli:scenario></xbrli:context>
+<xbrli:unit id="pure"><xbrli:measure>xbrli:pure</xbrli:measure></xbrli:unit>
+<fsa:AverageNumberOfEmployees contextRef="g" unitRef="pure" decimals="0">856</fsa:AverageNumberOfEmployees>
+<cmn:NameAndSurnameOfMemberOfSupervisoryBoard contextRef="g">Ann Chair</cmn:NameAndSurnameOfMemberOfSupervisoryBoard>
+</xbrli:xbrl>"""
+
+DK_IFRS_XHTML = """<html xmlns="http://www.w3.org/1999/xhtml" xmlns:ix="http://www.xbrl.org/2013/inlineXBRL"
+ xmlns:xbrli="http://www.xbrl.org/2003/instance" xmlns:ifrs-full="https://xbrl.ifrs.org/taxonomy/2024-03-27/ifrs-full"><body>
+<ix:header><ix:resources>
+<xbrli:context id="c1"><xbrli:entity><xbrli:identifier scheme="x">87654321</xbrli:identifier></xbrli:entity>
+ <xbrli:period><xbrli:startDate>2025-01-01</xbrli:startDate><xbrli:endDate>2025-12-31</xbrli:endDate></xbrli:period></xbrli:context>
+<xbrli:context id="c2"><xbrli:entity><xbrli:identifier scheme="x">87654321</xbrli:identifier></xbrli:entity>
+ <xbrli:period><xbrli:instant>2025-12-31</xbrli:instant></xbrli:period></xbrli:context>
+<xbrli:unit id="EUR"><xbrli:measure>iso4217:EUR</xbrli:measure></xbrli:unit>
+</ix:resources></ix:header>
+<p>Revenue <ix:nonFraction name="ifrs-full:Revenue" contextRef="c1" unitRef="EUR" scale="3" decimals="-3" format="ixt:num-dot-decimal">129,904</ix:nonFraction></p>
+<p>Loss (<ix:nonFraction name="ifrs-full:ProfitLoss" contextRef="c1" unitRef="EUR" scale="3" sign="-" decimals="-3">45,765</ix:nonFraction>)</p>
+<p>Equity <ix:nonFraction name="ifrs-full:Equity" contextRef="c2" unitRef="EUR" scale="3" format="ixt:num-comma-decimal">105.139</ix:nonFraction></p>
+<p><ix:nonNumeric name="ifrs-full:NameOfParentEntity" contextRef="c1">Top <span>Holding</span> <ix:nonNumeric name="ifrs-full:NameOfUltimateParentOfGroup" contextRef="c1">Ultimate ApS</ix:nonNumeric></ix:nonNumeric></p>
+</body></html>"""
+
+
+class Denmark(unittest.TestCase):
+    def filings(self, cvr, hits):
+        return json.dumps({"hits": {"hits": [{"_source": {"cvrNummer": cvr, **h}} for h in hits]}}).encode()
+
+    @staticmethod
+    def filing(start, end, published, docs):
+        return {"offentliggoerelsestype": "regnskab", "offentliggoerelsesTidspunkt": published + "T10:00:00Z",
+                "omgoerelse": False, "regnskab": {"regnskabsperiode": {"startDato": start, "slutDato": end}},
+                "dokumenter": [{"dokumentType": t, "dokumentMimeType": m, "dokumentUrl": u} for t, m, u in docs]}
+
+    def test_deadlines(self):
+        # 6 months from the year end, moved off a weekend (30 June 2024 was a Sunday); 4 for class D;
+        # 2019 years had 5 months plus the COVID-19 extension of 3
+        self.assertEqual(mr.dk_deadline(dt.date(2024, 12, 31))[0], dt.date(2025, 6, 30))
+        self.assertEqual(mr.dk_deadline(dt.date(2023, 12, 31))[0], dt.date(2024, 7, 1))
+        self.assertEqual(mr.dk_deadline(dt.date(2025, 12, 31), "Reporting class D")[0], dt.date(2026, 4, 30))
+        self.assertEqual(mr.dk_deadline(dt.date(2019, 12, 31))[0], dt.date(2020, 8, 31))
+        self.assertEqual(mr.dk_deadline(dt.date(2018, 12, 31))[0], dt.date(2019, 5, 31))
+
+    def test_danish_gaap_report_filings_and_flags(self):
+        hits = [self.filing("2023-01-01", "2023-12-31", "2024-07-30", [("AARSRAPPORT", "application/pdf", "u/23.pdf")]),
+                self.filing("2025-01-01", "2025-12-31", "2026-03-30",
+                            [("AARSRAPPORT", "application/xml", "u/25.xml"), ("AARSRAPPORT", "application/pdf", "u/25.pdf"),
+                             ("KONCERNREGNSKAB_FOR_OVERLIGGENDE_MODER", "application/xhtml+xml", "u/parent.xhtml")])]
+
+        def get(url):
+            return self.filings(12345678, hits) if "offentliggoerelser" in url else DK_GAAP_XML.encode()
+        out = list(mr.dk_report("12345678", fetcher=get, today=dt.date(2026, 11, 24)))
+        filed = [r for r in out if r["type"] == "dk_accounts_filed"]
+        self.assertEqual(filed[1]["parent_group_accounts"], "u/parent.xhtml")
+        self.assertEqual(filed[1]["report"], "u/25.pdf")
+        flags = {r["flag"]: r for r in out if r["type"] == "dk_flag"}
+        self.assertEqual((flags["late accounts"]["days_late"], flags["late accounts"]["severity"]), (29, "major"))
+        self.assertIn("gap between filed periods", flags)  # FY2024 is missing
+        self.assertEqual(flags["negative equity"]["equity"], -760211000.0)
+        self.assertIn("letter of support", flags["going-concern note"]["quote"])
+        self.assertNotIn("<p>", flags["going-concern note"]["quote"])
+        self.assertIn("share capital", flags["auditor remark"]["quote"])
+        self.assertNotIn("modified audit opinion", flags)  # "Opinion" is the section heading, not a modification
+        self.assertNotIn("accounts not published", flags)  # FY2026 is not due yet
+        [year] = [r for r in out if r["type"] == "dk_accounts_year"]
+        self.assertEqual((year["scope"], year["currency"], year["revenue"], year["equity"]),
+                         ("entity", "DKK", 553621000.0, -760211000.0))
+        [officers] = [r for r in out if r["type"] == "dk_officers"]
+        self.assertEqual(officers["executive_board"], [{"name": "Jane Doe", "title": "CEO"}])
+        self.assertEqual(out[-1]["reporting_class"], "Reporting class C, large enterprise")
+
+    def test_ifrs_group_report_merged_with_danish_cover_file(self):
+        hits = [self.filing("2025-01-01", "2025-12-31", "2026-03-27",
+                            [("AARSRAPPORT", "application/xml", "u/cover.xml"),
+                             ("AARSRAPPORT", "application/xhtml+xml", "u/group.xhtml"),
+                             ("AARSRAPPORT_ESEF", "application/xml", "u/esef.xml")])]
+
+        def get(url):
+            if "offentliggoerelser" in url:
+                return self.filings(87654321, hits)
+            return (DK_COVER_XML if url.endswith("cover.xml") else DK_IFRS_XHTML).encode()
+        out = list(mr.dk_report("87654321", fetcher=get, today=dt.date(2027, 7, 15)))
+        [year] = [r for r in out if r["type"] == "dk_accounts_year"]
+        self.assertEqual((year["scope"], year["currency"], year["revenue"], year["net_profit"], year["equity"],
+                          year["employees"], year["url"]),
+                         ("group", "EUR", 129904000.0, -45765000.0, 105139000.0, 856.0, "u/group.xhtml"))
+        self.assertEqual([r["supervisory_board"] for r in out if r["type"] == "dk_officers"], [[{"name": "Ann Chair"}]])
+        [notes] = [r for r in out if r["type"] == "dk_notes"]
+        self.assertEqual(notes["parent_and_related_parties"], ["Ultimate ApS", "Top Holding Ultimate ApS"])  # inner fact closes first
+        self.assertEqual([r["flag"] for r in out if r["type"] == "dk_flag"], ["accounts not published"])
+
+    def test_name_lists_danish_lei_candidates(self):
+        def get(url):
+            rec = lambda lei, name, jur, reg: {"attributes": {"lei": lei, "entity": {
+                "legalName": {"name": name}, "jurisdiction": jur, "registeredAs": reg, "status": "ACTIVE"},
+                "registration": {}}}
+            return json.dumps({"data": [rec("A" * 20, "Acme Holding ApS", "DK", "39114127"),
+                                        rec("B" * 20, "Acme AB", "SE", "556")]}).encode()
+        out = list(mr.dk_report("Acme", fetcher=get))
+        self.assertEqual([(r["type"], r.get("cvr")) for r in out], [("dk_candidate", "39114127"), ("dk_note", None)])
+
+
 if __name__ == "__main__":
     unittest.main()
