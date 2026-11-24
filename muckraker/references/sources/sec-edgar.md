@@ -16,7 +16,7 @@ EDGAR holds US public filings, and also filings by private companies raising mon
 3. **Annual report** (10-K or 20-F, latest): risk factors that name specific problems, and the Legal Proceedings section. The Financials agent reads the figures, auditor, and going-concern language.
 4. **Events** (8-K, latest 3 years): Item 4.01 auditor changes, 4.02 restatements, 5.02 officer departures, 1.03 bankruptcy.
 5. **Ownership and insiders:** the latest proxy (DEF 14A) for officers, directors, and pay; Schedules 13D and 13G for large holders; Forms 3, 4, and 5 for heavy insider selling.
-6. **Private raises:** Form D filings, with amounts raised and the related persons listed.
+6. **Private raises:** Form D filings, with amounts raised and the related persons listed. When your prompt gives `formd.jsonl`, take them from its `formd_filing` records (each D/A restates its offering's running total, so take an offering's amount from its latest filing) and do not search or open them again.
 7. **Enforcement:** search the name restricted to sec.gov together with "litigation release" and with "administrative proceeding", and open each hit that names the company.
 
 A company with no EDGAR filings is a valid result: report `STATUS: NOTHING FOUND` with the searches you ran.
