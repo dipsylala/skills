@@ -2553,5 +2553,22 @@ class ItalyRunFixes(unittest.TestCase):
         self.assertEqual(list(mr.vat_report("US", "1"))[0]["type"], "vat_note")
 
 
+class RegisterRecordsHelp(unittest.TestCase):
+    def test_every_listed_record_type_is_printed_by_the_code(self):
+        source = pathlib.Path(mr.__file__).read_text(encoding="utf-8")
+        for cc, text in mr.REGISTER_RECORDS.items():
+            names = re.findall(r"^  ([a-z]+_[a-z_]+)\s", text, re.M)
+            self.assertTrue(names, cc)
+            for name in names:
+                self.assertIn('"%s"' % name, source, "%s --help lists %s, which mr.py never prints" % (cc, name))
+
+    def test_each_country_command_shows_its_records(self):
+        for cc in mr.REGISTER_RECORDS:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), self.assertRaises(SystemExit):
+                mr.main([cc, "--help"])
+            self.assertIn("%s_flag" % cc, out.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

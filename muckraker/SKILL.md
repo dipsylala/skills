@@ -10,7 +10,7 @@ Given a company name, find out who the company is, what it has filed, what has b
 
 ## 1. Pin down the entity
 
-Take the company name and anything else the user gave (country, website, ticker, company number). When the user names several companies, build one entity record per company and run every later step for each. Search the web to find the candidates.
+Take the company name and anything else the user gave (country, website, ticker, company number). When the user names several companies, build one entity record per company and run every later step for each. Each company sends up to 13 agents, so with more than two companies, ask the user which two to research first before sending any agents, and research the others only when they ask. Search the web to find the candidates.
 
 - One clear match: build its entity record, as the steps below say.
 - Several plausible matches (different countries, a parent and its subsidiaries, a similar name): list them with what tells them apart and ask the user which one to research. Researching the wrong "Acme Ltd" wastes every agent you send.
@@ -74,7 +74,7 @@ Run these before sending the agents, since their records go into the agents' pro
 | Source | File | Run when |
 | --- | --- | --- |
 | UK Companies House, then who writes Financials | [uk-companies-house.md](references/coordinator/uk-companies-house.md), [uk-financials.md](references/coordinator/uk-financials.md) | You can run Python and `COMPANIES_HOUSE_API_KEY` is set |
-| National registers (France, Ireland, Luxembourg, Norway, Finland, Denmark, Israel, Spain, Brazil) | [national-register-commands.md](references/coordinator/national-register-commands.md) | You can run Python and a group company is registered in one of those countries |
+| National registers | [national-register-commands.md](references/coordinator/national-register-commands.md) | You can run Python and a group company is registered in a country that file's table lists |
 | Form D | [form-d.md](references/coordinator/form-d.md) | You can run Python and the user gave the SEC contact |
 
 Run these while the agents work:
