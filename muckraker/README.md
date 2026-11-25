@@ -14,7 +14,7 @@ It is manual-only. The agent never starts it on its own.
 ## How it works
 
 1. **Pin down the entity.** Muckraker finds the legal entity behind the name and checks each identifier in its registry: the SEC CIK, the UK company number, the US state entity number, and so on. If several companies match, it asks you which one you mean.
-2. **Ask for SEC contact details.** SEC asks automated clients to identify themselves, so Muckraker asks for a name and email to send in the `User-Agent` header. It asks on every run. If you decline, the SEC sources use only web fetch and search tools. You can also ask it to skip SEC entirely, which drops the SEC EDGAR and debt-marks sources.
+2. **Ask for SEC contact details.** SEC asks automated clients to identify themselves, so Muckraker asks for a name and email to send in the `User-Agent` header. The format is a name, a space, then an email address, such as `Jane Smith jane@example.com`. It asks on every run, unless you set `MUCKRAKER_SEC_UA` (see [SEC contact](#sec-contact)), which it then uses without asking. If you decline, the SEC sources use only web fetch and search tools. You can also ask it to skip SEC entirely, which drops the SEC EDGAR and debt-marks sources.
 3. **Send one agent per source, in parallel.** Each agent reads one source, writes its full report to a run folder outside your project, and replies with a single status line, so the main session isn't flooded with output.
 4. **Check and write.** The coordinator reads the reports, opens the source behind every red flag to confirm it, compares facts that more than one source covers, and writes the dossier.
 
@@ -84,6 +84,16 @@ Run its offline tests with:
 ```bash
 python -m unittest muckraker/scripts/test_mr.py
 ```
+
+### SEC contact
+
+SEC asks automated clients to declare a name and a contact email in the `User-Agent` header. Muckraker sends it to sec.gov only, never to other sites. The format is a name, a space, then an email address:
+
+```text
+Jane Smith jane@example.com
+```
+
+To skip the question on every run, set it as `MUCKRAKER_SEC_UA` (see [Credentials](#credentials)), in quotes because of the spaces: `MUCKRAKER_SEC_UA="Jane Smith jane@example.com"`. `mr.py` takes the same value with `--user-agent "Jane Smith jane@example.com"`. It refuses to query sec.gov with a value in any other form, such as an email alone, and says so in an `error` record.
 
 ### Companies House API key
 

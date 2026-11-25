@@ -1,5 +1,6 @@
 """Offline tests for mr.py parsers, run with: python -m unittest muckraker/scripts/test_mr.py"""
 
+import contextlib
 import datetime as dt
 import gzip
 import io
@@ -1870,6 +1871,35 @@ class Fetch(unittest.TestCase):
     def test_sec_requires_user_agent(self):
         with self.assertRaises(mr.FetchError):
             mr.fetch("https://data.sec.gov/submissions/CIK0000000001.json", None)
+
+    def test_sec_contact_format(self):
+        for good in ("Jane Smith jane@example.com", "Acme Research Ltd ops@acme.co.uk", "  Jane j@x.io  ",
+                     '"Jane Smith jane@example.com"'):
+            self.assertIsNone(mr.sec_contact_problem(good), good)
+        for bad in (None, "", "   ", "jane@example.com", "Jane Smith", "Jane Smith jane@example",
+                    "Jane Smith @example.com", "jane@example.com Jane Smith"):
+            self.assertIn("needs --user-agent", mr.sec_contact_problem(bad), repr(bad))
+
+    def test_quoted_contact_sent_without_quotes(self):
+        # PowerShell's .env loader in the README keeps the quotes as part of the value
+        self.assertEqual(mr.clean_sec_contact('"Jane Smith jane@example.com"'), "Jane Smith jane@example.com")
+
+    def test_malformed_contact_refused_without_echoing_it(self):
+        with self.assertRaises(mr.FetchError) as caught:
+            mr.fetch("https://data.sec.gov/submissions/CIK0000000001.json", "secretname")
+        self.assertIn("Name email", str(caught.exception))
+        self.assertNotIn("secretname", str(caught.exception))
+
+    def test_sec_command_stops_before_any_request(self):
+        out = io.StringIO()
+        original, mr.fetch = mr.fetch, lambda *a, **k: self.fail("fetched with a malformed contact")
+        try:
+            with contextlib.redirect_stdout(out):
+                code = mr.main(["--user-agent", "jane@example.com", "edgar-filings", "1"])
+        finally:
+            mr.fetch = original
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(out.getvalue())["type"], "error")
 
     def test_sec_contact_goes_to_sec_gov_only(self):
         sent = {}
