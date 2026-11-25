@@ -7,7 +7,8 @@ text from the document (`quote`) so the coordinator can confirm it.
 
 sec.gov asks automated clients to identify themselves. Pass the name and email
 the user gave with --user-agent "Name email" or the MUCKRAKER_SEC_UA
-environment variable; commands that reach sec.gov refuse to run without one.
+environment variable, such as "Jane Smith jane@example.com"; commands that
+reach sec.gov refuse to run without one, or with a value not in that form.
 
 Standard library only; Python 3.9 or later.
 """
@@ -98,6 +99,28 @@ def decode_body(raw):
     return raw.decode("cp1252", errors="replace")
 
 
+SEC_CONTACT = re.compile(r"\S.*\s[^\s@]+@[^\s@]+\.[^\s@]+")
+SEC_COMMANDS = {"edgar-filings", "edgar-facts", "edgar-search", "marks", "formd"}
+
+
+def clean_sec_contact(user_agent):
+    """The contact without surrounding spaces or quotes, which a .env file loaded by
+    PowerShell (or a pasted value) keeps as part of the value."""
+    return (user_agent or "").strip().strip("\"'").strip()
+
+
+def sec_contact_problem(user_agent):
+    """Why `user_agent` cannot go to sec.gov, or None. SEC asks automated clients
+    to declare a name and a contact email, so the value must be "Name email",
+    such as "Jane Smith jane@example.com". The message never repeats the value."""
+    if not clean_sec_contact(user_agent):
+        return "sec.gov needs --user-agent or MUCKRAKER_SEC_UA"
+    if not SEC_CONTACT.fullmatch(clean_sec_contact(user_agent)):
+        return ('sec.gov needs --user-agent or MUCKRAKER_SEC_UA as "Name email", such as '
+                '"Jane Smith jane@example.com": a name, a space, then an email address')
+    return None
+
+
 def fetch_bytes(url, user_agent, retries=2, auth=None, accept=None, limit=MAX_BODY, sink=None):
     """Return the raw body of `url`. `auth` is sent as an Authorization header
     on this request only, never on a redirect (Companies House documents redirect
@@ -106,8 +129,11 @@ def fetch_bytes(url, user_agent, retries=2, auth=None, accept=None, limit=MAX_BO
     global _last_sec_request
     host = urllib.parse.urlparse(url).hostname or ""
     is_sec = host == "sec.gov" or host.endswith(".sec.gov")
-    if is_sec and not user_agent:
-        raise FetchError("sec.gov needs --user-agent or MUCKRAKER_SEC_UA")
+    problem = sec_contact_problem(user_agent) if is_sec else None
+    if problem:
+        raise FetchError(problem)
+    if is_sec:
+        user_agent = clean_sec_contact(user_agent)
     headers = {"User-Agent": "muckraker", "Accept-Encoding": "gzip"}
     if accept:
         headers["Accept"] = accept
@@ -5180,7 +5206,7 @@ def report_paths(targets):
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--user-agent", default=os.environ.get("MUCKRAKER_SEC_UA"),
-                   help='"Name email" for sec.gov (or set MUCKRAKER_SEC_UA)')
+                   help='"Name email" for sec.gov, such as "Jane Smith jane@example.com" (or set MUCKRAKER_SEC_UA)')
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("edgar-filings", help="filer identity and recent filings")
@@ -5338,6 +5364,10 @@ def main(argv=None):
     a = p.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")  # Windows consoles default to cp1252
+    problem = sec_contact_problem(a.user_agent) if a.cmd in SEC_COMMANDS else None
+    if problem:  # these commands only talk to sec.gov, so stop before the first request
+        emit({"type": "error", "error": problem})
+        return 1
     try:
         if a.cmd == "edgar-filings":
             data = json.loads(fetch(f"https://data.sec.gov/submissions/CIK{cik10(a.cik)}.json", a.user_agent))
