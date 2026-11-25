@@ -879,6 +879,18 @@ def skip_covered(aliases, searched):
     return left
 
 
+def name_mismatch(record, aliases):
+    """The longer aliases a holding fails to match when only a one-word alias found it: "Papaya" finds
+    "Papaya Growth Opportunity Corp." while the borrower is "Papaya Global", so the row is probably another
+    company. Empty when the row matches a multi-word alias, or no longer alias contains the word."""
+    text = " ".join(str(record.get(k) or "") for k in ("identifier", "name", "title", "row", "issuer"))
+    matched = [a for a in aliases if alias_in(a, text)]
+    if not matched or any(len(a.split()) > 1 for a in matched):
+        return []
+    return [a for a in aliases if a not in matched
+            and any(re.search(r"(?<!\w)" + re.escape(m) + r"(?!\w)", a, re.I) for m in matched)]
+
+
 def marks(aliases, user_agent, since, per_filer, max_filers, verbose=False, seen=None):
     seen = seen or set()
     complete, by_alias = [], {}  # complete: aliases whose searches returned every hit
@@ -974,6 +986,10 @@ def marks(aliases, user_agent, since, per_filer, max_filers, verbose=False, seen
             if record_key(record) in seen:  # already in the file this run appends to
                 skipped += 1
                 continue
+            longer = name_mismatch(record, aliases)
+            if longer:
+                record["name_mismatch"] = {"lacks": longer, "note": "only a one-word alias matched this row, and it "
+                                           "lacks the rest of the borrower's name: probably another company"}
             emit(record)
             if kind == "fund_holding":
                 fund_rows.append({**base, **row, "cik": filing["cik"]})
@@ -2003,7 +2019,8 @@ def page_images(pdf, out_dir, pages=None, scale=1):
             f.write(body)
         written += 1
         yield {"type": "uk_accounts_page", **base, "path": path}
-    note = "image n is page n in a scanned filing; open the pages you need with your file reader"
+    note = ("image n is page n of the PDF, which is often not the page number printed on it (a cover page shifts "
+            "them); cite both, as \"image 12 (printed p.10)\". Open the pages you need with your file reader")
     try:
         has_text = not written and bool(pdf_text(pdf))
     except ValueError:
@@ -2405,7 +2422,25 @@ US_STATE_DATASETS = [
     ("OR", "https://data.oregon.gov/resource/tckn-sxa6.json", "business_name"),
     ("CT", "https://data.ct.gov/resource/n7gp-d28j.json", "name"),
 ]
-TX_RIGHT_TO_TRANSACT = {"A": "active"}  # other codes: check the Comptroller's taxable entity search
+# the Comptroller's record layout for the franchise-tax dataset (data.texas.gov 9cir-efmm)
+TX_RIGHT_TO_TRANSACT = {"A": "active", "N": "forfeited", "D": "eligible for termination",
+                        "I": "involuntarily ended", "U": "not established"}
+# statuses that mean a state has suspended the entity's standing; the entity can usually cure them by filing
+US_STATE_BAD_STATUS = re.compile(r"delinquent|noncompliant|forfeit|revoked|suspended|eligible for termination|"
+                                 r"involuntarily ended", re.I)
+
+
+def us_state_flag(state, entity):
+    """A `us_state_flag` when the entity's status shows it lost good standing in that state, else None."""
+    status = entity.get("status") or ""
+    if not US_STATE_BAD_STATUS.search(status):
+        return None
+    return {"type": "us_state_flag", "state": state, "name": entity.get("name"), "number": entity.get("number"),
+            "status": status, "severity": "major" if re.search(r"forfeit|revoked|involuntarily", status, re.I) else "minor",
+            "rule": "the entity lost good standing for missing annual reports, taxes or a registered agent; a forfeited "
+                    "or revoked entity may not transact business in that state until it is reinstated. Confirm on the "
+                    "state's own page before citing it",
+            **({"page": entity["page"]} if entity.get("page") else {})}
 
 
 def us_state_entity(state, r):
@@ -2476,6 +2511,9 @@ def us_states_report(names, fetcher=None, limit=50):
         entities = oregon_entities(rows) if state == "OR" else [us_state_entity(state, r) for r in rows]
         for e in entities:
             yield {"type": "us_state_entity", "state": state, **{k: v for k, v in e.items() if v}, "url": url}
+            flag = us_state_flag(state, e)
+            if flag:
+                yield {**flag, "url": url}
         searched.append({"state": state, "matches": len(entities), "url": url,
                          **({"truncated": True} if len(rows) >= limit * (6 if state == "OR" else 1) else {})})
     yield {"type": "us_states_summary", "query": names, "searched": searched,
@@ -2489,6 +2527,7 @@ def us_states_report(names, fetcher=None, limit=50):
 USASPENDING = "https://api.usaspending.gov/api/v2"
 USA_EARLIEST = "2007-10-01"  # the award search covers nothing earlier
 USA_LOANS_FROM = "2020-04-01"  # loans are searched back to the PPP's start whatever the window
+USA_MAX_PAGES = 4  # pages read per name and group while every row is another recipient
 USA_IDV_CODES = ["IDV_A", "IDV_B", "IDV_B_A", "IDV_B_B", "IDV_B_C", "IDV_C", "IDV_D", "IDV_E"]
 _USA_FIELDS = ["Award ID", "Recipient Name", "Recipient UEI", "Awarding Agency", "Awarding Sub Agency", "Description",
                "generated_internal_id", "recipient_id"]
@@ -2536,16 +2575,27 @@ def usaspending_report(names, since=None, poster=None, today=None, limit=25):
         for group, codes, extra, sort in USA_AWARD_GROUPS:
             window = ([{"start_date": min(since, USA_LOANS_FROM), "end_date": today.isoformat()}]
                       if group == "loans" else period)
-            body = {"filters": {"recipient_search_text": [name], "award_type_codes": codes, "time_period": window},
-                    "fields": _USA_FIELDS + extra, "sort": sort, "order": "desc", "limit": limit, "page": 1}
-            try:
-                reply = post("/search/spending_by_award/", body)
-            except (FetchError, ValueError) as e:
-                yield {"type": "usa_unavailable", "query": name, "group": group, "error": str(e)}
-                continue
-            if (reply.get("page_metadata") or {}).get("hasNext"):
-                truncated.append({"query": name, "group": group})
-            for row in reply.get("results") or []:
+            rows, page, more = [], 0, False
+            # the search matches inside words ("Azimo" finds AZIMOV), so a page of rejects can hide the company's
+            # awards on the next page: read on while every row so far is another recipient
+            while page < USA_MAX_PAGES:
+                page += 1
+                body = {"filters": {"recipient_search_text": [name], "award_type_codes": codes, "time_period": window},
+                        "fields": _USA_FIELDS + extra, "sort": sort, "order": "desc", "limit": limit, "page": page}
+                try:
+                    reply = post("/search/spending_by_award/", body)
+                except (FetchError, ValueError) as e:
+                    yield {"type": "usa_unavailable", "query": name, "group": group, "error": str(e)}
+                    break
+                rows += reply.get("results") or []
+                more = bool((reply.get("page_metadata") or {}).get("hasNext"))
+                if not more or any(_name_match(n, r.get("Recipient Name") or "") for r in rows for n in names):
+                    break
+            if more:
+                matched_any = any(_name_match(n, r.get("Recipient Name") or "") for r in rows for n in names)
+                truncated.append({"query": name, "group": group, "pages_read": page,
+                                  **({} if matched_any else {"all_other_recipients": True})})
+            for row in rows:
                 recipient = row.get("Recipient Name") or ""
                 if not any(_name_match(n, recipient) for n in names):
                     other_names.add(recipient)  # the search also matches inside words ("Pleo" finds PeopleOne)
@@ -3008,6 +3058,22 @@ BOARD_PAGES = {"greenhouse": ["https://job-boards.greenhouse.io/{t}", "https://b
 BOARD_JOB_LINK = {"greenhouse": r"/{t}/jobs/(\d+)", "lever": r"jobs\.lever\.co/{t}/([0-9a-f-]{{36}})"}
 
 
+# applicant tracking systems whose boards this command cannot read; named so the report says why
+UNSUPPORTED_BOARDS = [("comeet", r"comeet\.(?:co|com)\b"), ("workable", r"apply\.workable\.com|workable\.com/api"),
+                      ("smartrecruiters", r"smartrecruiters\.com"), ("bamboohr", r"\.bamboohr\.com"),
+                      ("teamtailor", r"teamtailor\.com"), ("recruitee", r"recruitee\.com"),
+                      ("personio", r"jobs\.personio\.(?:de|com)"), ("workday", r"myworkdayjobs\.com"),
+                      ("icims", r"\.icims\.com"), ("jobvite", r"jobs\.jobvite\.com")]
+
+
+def unsupported_board(text):
+    """The name of an applicant tracking system the page uses that this command cannot read, or None."""
+    for name, pattern in UNSUPPORTED_BOARDS:
+        if re.search(pattern, text, re.I):
+            return name
+    return None
+
+
 def find_job_board(text):
     """(provider, token) for the first job board linked from a careers page, or None."""
     for provider, pattern in JOB_BOARDS:
@@ -3070,12 +3136,17 @@ def jobs_report(target, history=False, fetcher=None, pause=1.0, offices=()):
     get = fetcher or (lambda u: fetch(u, None))
     m = re.fullmatch(r"(greenhouse|lever|ashby):([A-Za-z0-9_.-]+)", target)
     board = (m.group(1), m.group(2)) if m else find_job_board(target)
+    other_ats = None
     if not board:
         try:
-            board = find_job_board(get(target))
-        except FetchError as e:
-            yield {"type": "error", "error": str(e)}
-            return
+            page = get(target)
+        except FetchError as e:  # a site that refuses scripts can still have a board under its domain's name
+            yield {"type": "jobs_page_unreadable", "url": target, "error": str(e),
+                   "note": "the careers page could not be read (do not retry it another way); trying boards named "
+                           "after the domain instead"}
+            page = ""
+        board = find_job_board(page)
+        other_ats = None if board else unsupported_board(page)
     guessed = False
     if not board:  # many careers pages build the job list in JavaScript; try the domain's name as the board
         label = (urllib.parse.urlparse(target).hostname or "").removeprefix("www.").split(".")[0]
@@ -3106,6 +3177,11 @@ def jobs_report(target, history=False, fetcher=None, pause=1.0, offices=()):
                    "note": "no single board matches the offices given (--offices); rerun with provider:token "
                            "for the company's own board"}
             return
+    if not board and other_ats:
+        yield {"type": "jobs_board_unsupported", "provider": other_ats, "url": target,
+               "note": f"the careers page uses {other_ats}, whose board this command cannot read; count the roles on the "
+                       "careers page by hand, and say under Gaps that no trend was measured"}
+        return
     if not board:
         yield {"type": "jobs_board_unknown", "url": target,
                "note": "no Greenhouse, Lever or Ashby board is linked from this page; pass provider:token if you know it"}
@@ -3525,6 +3601,74 @@ def ie_report(query, fetcher=None, today=None):
            "note": "the CRO publishes accounts filings in yearly datasets, so the newest returns may not be in them yet"
                    + (f"; the profile's last annual return date ({last_ar.isoformat()}) is newer than the latest filing here, "
                       "so check its received date in a copy of the filing list" if last_ar and (not latest_ard or last_ar > latest_ard) else "")}
+
+
+# --------------------------------------------------------------- Israel ----
+
+# The Public Knowledge Workshop's daily copy of the Corporations Authority's company file; its
+# robots.txt bars /api/ (where name search lives) but allows /get/. data.gov.il, the source, refuses scripts.
+IL_COPY = "https://next.obudget.org/get/org/company/"
+IL_SEARCH = "https://ica.justice.gov.il/GenericCorporarionInfo/SearchCorporation?unit=8"
+IL_STATUS = {"פעילה": "active", "מחוקה": "struck off", "מחוסלת": "liquidated", "מחוסלת מרצון": "liquidated voluntarily",
+             "בפירוק": "in liquidation", "בפירוק מרצון": "in voluntary liquidation", "לא פעילה": "inactive"}
+
+
+def il_report(query, fetcher=None, today=None):
+    """Israeli company from a daily copy of the Corporations Authority's register: profile and
+    flags for a violating company (מפרה: unpaid annual fees or unfiled annual reports), a status
+    other than active, and a lagging last annual report."""
+    get = fetcher or (lambda u: fetch(u, None))
+    today = today or dt.date.today()
+    number = re.sub(r"[\s-]", "", query)
+    if not re.fullmatch(r"\d{9}", number):
+        yield {"type": "il_note", "url": IL_SEARCH,
+               "note": "mr.py il takes a 9-digit company number. Find it in the Corporations Authority's free search "
+                       "in a browser (do not script it; search the English name if the Hebrew one finds nothing)"}
+        return
+    url = IL_COPY + number
+    try:
+        record = json.loads(get(url))
+    except FetchError as e:
+        if "HTTP 404" not in str(e):
+            raise
+        yield {"type": "il_note", "url": IL_SEARCH,
+               "note": f"the register copy has no company {number}; check the number in the Corporations Authority's search"}
+        return
+    v = record.get("value") or {}
+    d = v.get("details") or {}
+    status, sub_status = (d.get("status") or "").strip(), (d.get("sub_status") or "").strip() or None
+    copied = (v.get("__last_modified_at") or "")[:10] or None
+    yield {"type": "il_company", "company_number": number, "name": v.get("name"), "name_en": v.get("name_en"),
+           "company_type": d.get("type"), "limit": d.get("limit"), "status": status,
+           "status_en": IL_STATUS.get(status), "sub_status": sub_status, "registered": d.get("registration_date"),
+           "violating": bool(d.get("is_mafera")), "last_annual_report_year": d.get("last_report_year"),
+           "address": ", ".join(d.get("address_lines") or []) or None, "objects": d.get("goal"),
+           "government_contracts": v.get("received_amount_contracts_alltime"),
+           "government_supports": v.get("received_amount_supports_alltime"),
+           "copy_date": copied, "url": url, "register_url": IL_SEARCH}
+    flags = []
+    if d.get("is_mafera"):
+        flags.append({"flag": "violating company", "severity": "major",
+                      "rule": "the Corporations Authority marks a company מפרה (violating) when it has not paid its "
+                              "annual fee or filed its annual reports (Companies Law, s. 362A)"})
+    if status and status != "פעילה":
+        flags.append({"flag": "not active", "severity": "minor" if "מרצון" in status else "major", "status": status,
+                      "status_en": IL_STATUS.get(status),
+                      "rule": "a voluntary (solvent) liquidation is minor; struck off or court liquidation is major"})
+    if sub_status:
+        flags.append({"flag": "sub-status", "severity": "major" if "מחיק" in sub_status else "minor",
+                      "sub_status": sub_status, "rule": "a sub-status mentioning מחיקה is a warning before strike-off"})
+    last = d.get("last_report_year")
+    if status == "פעילה" and isinstance(last, int) and last < today.year - 1:
+        flags.append({"flag": "annual report lagging", "severity": "minor", "last_annual_report_year": last,
+                      "rule": "a company files an annual report every year; one more than a year behind is overdue"})
+    for f in flags:
+        yield {"type": "il_flag", **f, "url": url}
+    yield {"type": "il_summary", "company_number": number, "flags": len(flags), "copy_date": copied,
+           "note": "a copy of the Corporations Authority's register made by the Public Knowledge Workshop (obudget.org), "
+                   "refreshed daily: name it as a copy with its date and confirm a red flag in the Authority's search "
+                   "(register_url). Officers, shareholders, allotments, charges and annual reports are in the paid "
+                   "company file; private companies publish no accounts"}
 
 
 # --------------------------------------------------------------- Norway ----
@@ -4525,7 +4669,12 @@ def _dk_filings_report(cvr, years, fetcher, today):
 # ------------------------------------------------------- verify-report -----
 
 _URL_RE = re.compile(r"https?://[^\s<>()\"'`\]]+")
-_QUOTE_LINE_RE = re.compile(r"\bQuote:\s*(.+)", re.I)
+# "Quote:", or with a label in brackets: "Quote (table row):"
+_QUOTE_LINE_RE = re.compile(r"\bQuote(?:\s*\([^)\n]*\))?\s*:\s*(.+)", re.I)
+JS_SHELL_CHARS = 300  # a page with less visible text than this, outside its scripts, is built by JavaScript
+# bot checks answer with HTTP 200 and their own page; the quote is never on it
+_BOT_CHECK_RE = re.compile(r"<title>\s*(just a moment|attention required|radware block page|access denied|"
+                           r"request blocked|are you a robot|human verification)", re.I)
 _QUOTED_RE = re.compile(r"[\"“](.+?)[\"”]|`([^`]+)`")
 
 
@@ -4594,8 +4743,8 @@ def verify_reports(paths, user_agent, fetcher=None):
     once; a flag passes when its quote is found on any URL it cites."""
     fetcher = fetcher or (lambda u: fetch(u, user_agent))
     pages = {}
-    totals = {"confirmed": 0, "not_found": 0, "unreachable": 0, "too_large": 0, "no_text_layer": 0, "no_quote": 0,
-              "no_url": 0}
+    totals = {"confirmed": 0, "not_found": 0, "js_page": 0, "unreachable": 0, "too_large": 0, "no_text_layer": 0,
+              "no_quote": 0, "no_url": 0}
 
     def page_text(url):
         if url not in pages:
@@ -4603,6 +4752,12 @@ def verify_reports(paths, user_agent, fetcher=None):
                 body = fetcher(url)
                 if body.lstrip()[:5] == "%PDF-":  # a PDF has no searchable text here (often a scan)
                     pages[url] = ("pdf", None)
+                elif _BOT_CHECK_RE.search(body[:5000]):
+                    pages[url] = ("error", "the site answered with a bot check, not the page (do not retry it another "
+                                           "way; check the quote in a browser)")
+                elif "<script" in body.lower() and len(text_of(re.sub(
+                        r"(?is)<(script|style|noscript|template)\b.*?</\1\s*>", "", body))) < JS_SHELL_CHARS:
+                    pages[url] = ("js", searchable_text(body).lower())  # an app shell: the data loads later
                 else:
                     pages[url] = ("ok", searchable_text(body).lower())
             except FetchError as e:
@@ -4620,9 +4775,11 @@ def verify_reports(paths, user_agent, fetcher=None):
                 totals[record["result"]] += 1
                 yield record
                 continue
-            errors, pdfs = [], []
+            errors, pdfs, shells = [], [], []
             for url in flag["urls"]:
                 status, text = page_text(url)
+                if status == "js":
+                    shells.append(url)
                 if status == "error":
                     errors.append(f"{url}: {text}")
                     continue
@@ -4642,7 +4799,12 @@ def verify_reports(paths, user_agent, fetcher=None):
                     totals["confirmed"] += 1
                     break
             else:
-                if pdfs and len(pdfs) + len(errors) == len(flag["urls"]):
+                if shells and len(shells) + len(pdfs) + len(errors) == len(flag["urls"]):
+                    record.update(result="js_page", js_pages=shells,
+                                  note="the cited page is built by JavaScript, so its data is not in the fetched HTML; "
+                                       "open it in a browser and check the quote there")
+                    totals["js_page"] += 1
+                elif pdfs and len(pdfs) + len(errors) == len(flag["urls"]):
                     record.update(result="no_text_layer", pdfs=pdfs,
                                   note="the cited page is a PDF with no text to search (often a scan); read it yourself")
                     totals["no_text_layer"] += 1
@@ -4791,6 +4953,10 @@ def main(argv=None):
     s = sub.add_parser("ie", help="Ireland: CRO open data profile and annual-return filings with late-filing flags")
     s.add_argument("cro_or_name", help="a CRO company number, or a name to list candidates")
 
+    s = sub.add_parser("il", help="Israel: Corporations Authority profile from a daily register copy, with violating-"
+                                  "company, status and late-annual-report flags")
+    s.add_argument("company_number", help="a 9-digit company number (find it in the Authority's search in a browser)")
+
     s = sub.add_parser("no", help="Norway: Brønnøysund profile, officers, accounts and announcements, with late-filing "
                                   "and bankruptcy flags")
     s.add_argument("orgnr_or_name", help="a 9-digit organisasjonsnummer, or a name to list candidates")
@@ -4906,6 +5072,9 @@ def main(argv=None):
                 emit(r)
         elif a.cmd == "ie":
             for r in ie_report(a.cro_or_name):
+                emit(r)
+        elif a.cmd == "il":
+            for r in il_report(a.company_number):
                 emit(r)
         elif a.cmd == "no":
             for r in no_report(a.orgnr_or_name):

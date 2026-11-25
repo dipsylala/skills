@@ -1307,7 +1307,8 @@ class OfficersLayoffsHiring(unittest.TestCase):
         ents = {r["state"]: r for r in out if r["type"] == "us_state_entity"}
         self.assertEqual((ents["CO"]["name"], ents["CO"]["status"]), ("Acme Robotics, Inc.", "Delinquent"))
         self.assertEqual(ents["CO"]["formed_in"], "DE")
-        self.assertEqual(ents["TX"]["status"], "right to transact business code 'U'")
+        self.assertEqual(ents["TX"]["status"], "not established")
+        self.assertEqual([(r["state"], r["severity"]) for r in out if r["type"] == "us_state_flag"], [("CO", "minor")])
         self.assertEqual((ents["OR"]["address"], ents["OR"]["agent"]), ("BOSTON, MA", "CSC"))
         self.assertEqual(sum(r["type"] == "us_state_entity" and r["state"] == "OR" for r in out), 1)
         self.assertEqual([r["state"] for r in out if r["type"] == "us_state_unavailable"], ["NY"])
@@ -1359,7 +1360,7 @@ class OfficersLayoffsHiring(unittest.TestCase):
         summary = out[-1]
         self.assertEqual(summary["agencies"], [{"agency": "Department of Defense", "share": 1.0}])
         self.assertEqual(summary["other_recipients"], ["ACMEROBOT HOLDINGS"])
-        self.assertEqual(summary["truncated"], [{"query": "Acme Robotics", "group": "contracts"}])
+        self.assertEqual(summary["truncated"], [{"query": "Acme Robotics", "group": "contracts", "pages_read": 1}])
         self.assertEqual(summary["recipients"][0]["page"], "https://www.usaspending.gov/recipient/r1-C/latest")
         self.assertEqual(next(r for r in out if r["type"] == "usa_vehicles")["vehicles"][0]["award_id"], "IDIQ1")
         self.assertEqual(next(r for r in out if r["type"] == "usa_flag")["fiscal_year"], 2026)
@@ -2244,6 +2245,115 @@ class Denmark(unittest.TestCase):
                                         rec("B" * 20, "Acme AB", "SE", "556")]}).encode()
         out = list(mr.dk_report("Acme", fetcher=get))
         self.assertEqual([(r["type"], r.get("cvr")) for r in out], [("dk_candidate", "39114127"), ("dk_note", None)])
+
+
+class IsraelRunFixes(unittest.TestCase):
+    def il(self, details, number="515433167", today=dt.date(2026, 11, 24), missing=False):
+        urls = []
+
+        def get(url):
+            urls.append(url)
+            if missing:
+                raise mr.FetchError(f"HTTP 404 for {url}")
+            return json.dumps({"key": "x", "value": {"name": "פאפאיה גלובל בע״מ", "name_en": "PAPAYA GLOBAL LTD",
+                                                     "__last_modified_at": "2026-11-22T04:36:15Z", "details": details}})
+        return list(mr.il_report(number, get, today)), urls
+
+    ACTIVE = {"status": "פעילה", "sub_status": None, "is_mafera": None, "last_report_year": 2025,
+              "registration_date": "2016-04-04", "address_lines": ["המדע 14, הרצליה"], "type": "ישראלית חברה פרטית"}
+
+    def test_active_company_has_no_flags(self):
+        out, urls = self.il(self.ACTIVE)
+        self.assertEqual(urls, ["https://next.obudget.org/get/org/company/515433167"])
+        self.assertEqual((out[0]["status_en"], out[0]["violating"], out[0]["copy_date"]), ("active", False, "2026-11-22"))
+        self.assertEqual([r["type"] for r in out], ["il_company", "il_summary"])
+
+    def test_violating_and_lagging_company(self):
+        out, _ = self.il(dict(self.ACTIVE, is_mafera=True, last_report_year=2004))
+        flags = [(r["flag"], r["severity"]) for r in out if r["type"] == "il_flag"]
+        self.assertEqual(flags, [("violating company", "major"), ("annual report lagging", "minor")])
+
+    def test_status_flags(self):
+        out, _ = self.il(dict(self.ACTIVE, status="מחוסלת מרצון", last_report_year=None))
+        self.assertEqual([(r["flag"], r["severity"]) for r in out if r["type"] == "il_flag"], [("not active", "minor")])
+        out, _ = self.il(dict(self.ACTIVE, status="מחוקה"))
+        self.assertEqual([(r["flag"], r["severity"], r["status_en"]) for r in out if r["type"] == "il_flag"],
+                         [("not active", "major", "struck off")])
+
+    def test_name_and_unknown_number(self):
+        out, urls = self.il(self.ACTIVE, number="Papaya Global")
+        self.assertEqual((out[0]["type"], urls), ("il_note", []))
+        out, _ = self.il(self.ACTIVE, missing=True)
+        self.assertIn("has no company 515433167", out[0]["note"])
+
+    def test_jobs_falls_back_and_names_unsupported_board(self):
+        def refused(url):
+            raise mr.FetchError(f"HTTP 403 for {url}")
+        out = list(mr.jobs_report("https://www.acme.test/careers/", fetcher=refused))
+        self.assertEqual([r["type"] for r in out], ["jobs_page_unreadable", "jobs_board_unknown"])
+
+        def comeet(url):
+            if "careers" in url:
+                return '<script src="https://www.comeet.co/careers-api/api.js"></script>'
+            raise mr.FetchError(f"HTTP 404 for {url}")
+        out = list(mr.jobs_report("https://www.acme.test/careers/", fetcher=comeet))
+        self.assertEqual((out[-1]["type"], out[-1]["provider"]), ("jobs_board_unsupported", "comeet"))
+
+    def test_texas_forfeited_is_a_major_flag(self):
+        rows = {"texas": [{"taxpayer_name": "ACME INC", "taxpayer_number": "32", "right_to_transact_business_code": "N"}]}
+
+        def get(url):
+            return json.dumps(next((v for k, v in rows.items() if k in url), [])).encode()
+        out = list(mr.us_states_report(["Acme"], fetcher=get))
+        flag = next(r for r in out if r["type"] == "us_state_flag")
+        self.assertEqual((flag["state"], flag["status"], flag["severity"]), ("TX", "forfeited", "major"))
+
+    def test_quote_label_in_brackets(self):
+        md = ("## Red flags\n- **Runway.** URL: https://example.test/a\n"
+              "  Quote (table row): \"Net cash from operating activities (129) 1,243\"\n"
+              "2. **Allegation.** https://example.test/b Quote (statement to N12): \"לא מכירים קשר\"\n## Gaps\n")
+        self.assertEqual([f["quote"] for f in mr.parse_red_flags(md)],
+                         ["Net cash from operating activities (129) 1,243", "לא מכירים קשר"])
+
+    def test_javascript_page_is_reported(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "national-registers.md")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("## Red flags\n- **Missing accounts.** https://kvk.test/app Quote: \"2023 - Jaarrekening\"\n")
+            shell = "<html><head><script src='app.js'></script></head><body>Even geduld alsjeblieft</body></html>"
+            out = list(mr.verify_reports([path], None, fetcher=lambda u: shell))
+        self.assertEqual((out[0]["result"], out[-1]["js_page"]), ("js_page", 1))
+
+    def test_bot_check_page_is_unreachable(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "press.md")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("## Red flags\n1. **Allegation.** https://news.test/a Quote: \"no such instructions were given\"\n")
+            block = "<html><head><title>Radware Block Page</title></head><body>" + "x " * 400 + "</body></html>"
+            out = list(mr.verify_reports([path], None, fetcher=lambda u: block))
+        self.assertEqual(out[0]["result"], "unreachable")
+        self.assertIn("bot check", out[0]["errors"][0])
+
+    def test_one_word_alias_on_another_company_is_marked(self):
+        aliases = ["Papaya Global", "Papaya", "Azimo"]
+        self.assertEqual(mr.name_mismatch({"name": "Papaya Growth Opportunity Corp I"}, aliases), ["Papaya Global"])
+        self.assertEqual(mr.name_mismatch({"name": "Papaya Global Ltd"}, aliases), [])
+        self.assertEqual(mr.name_mismatch({"identifier": "Azimo Ltd, term loan"}, aliases), [])
+
+    def test_usaspending_reads_past_a_page_of_other_recipients(self):
+        def post(path, body):
+            if path == "/search/spending_over_time/":
+                return {"results": []}
+            if body["filters"]["award_type_codes"] != ["A", "B", "C", "D"]:
+                return {"results": []}
+            if body["page"] == 1:
+                return {"results": [{"Recipient Name": "AARON AZIMOV", "generated_internal_id": "x1"}],
+                        "page_metadata": {"hasNext": True}}
+            return {"results": [{"Award ID": "C9", "Recipient Name": "AZIMO INC", "Recipient UEI": "U", "Award Amount": 9.0,
+                                 "generated_internal_id": "c9"}], "page_metadata": {"hasNext": False}}
+        out = list(mr.usaspending_report(["Azimo"], poster=post, today=dt.date(2026, 11, 24)))
+        self.assertEqual([r["award_id"] for r in out if r["type"] == "usa_award"], ["C9"])
+        self.assertNotIn("truncated", out[-1])
 
 
 if __name__ == "__main__":

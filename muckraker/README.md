@@ -27,7 +27,7 @@ It is manual-only. The agent never starts it on its own.
 | SEC EDGAR | Filings, Form D private raises, mentions in other companies' filings, and enforcement actions |
 | UK Companies House | Officers, persons with significant control, charges, filing health, insolvency, and for young companies share allotments, implied valuations, shareholder lists, and founders' earlier companies (when the company, its parent, or a subsidiary is UK-registered) |
 | US state registry | Status (including suspensions), formation, registered agent, officers or managers, foreign registrations, and UCC liens where free (when the company, its parent, or a subsidiary is registered in a US state). Searches the registers five states publish as open data (Colorado, New York, Texas, Oregon, Connecticut) first, which often name a subsidiary's state of formation when Delaware's or California's search is closed to scripts; uses OpenCorporates with an API token |
-| National registers | Profile, officers, filed accounts, and insolvency notices in France, Luxembourg, Germany, the Netherlands, Belgium, Switzerland, Ireland, Norway, Finland, Denmark, Sweden, and Canada (when the company, its parent, or a subsidiary is registered there), with North Data and OpenCorporates as fallbacks |
+| National registers | Profile, officers, filed accounts, and insolvency notices in France, Luxembourg, Germany, the Netherlands, Belgium, Switzerland, Ireland, Norway, Finland, Denmark, Sweden, Israel, Australia, Hong Kong, India, and Canada (when the company, its parent, or a subsidiary is registered there), with North Data and OpenCorporates as fallbacks |
 | GLEIF ownership | The company's Legal Entity Identifier, its parent chain up to the ultimate parent, and its subsidiaries in every country |
 | Sanctions and offshore | Sanctions and politically-exposed-person screening (OpenSanctions, the US Consolidated Screening List), US export-control, forced-labour, and procurement-exclusion lists (Entity List, UFLPA, Section 1260H, FCC Covered List, SAM.gov exclusions), and the ICIJ Offshore Leaks database, for the company, its group, and its leaders |
 | Startup | Funding rounds from free startup databases and funding news, grants (UKRI, CORDIS, SBIR), crowdfunding, and accelerators (when the company is under seven years old or venture-backed) |
@@ -133,6 +133,7 @@ Each country below was tested by a full run on a VC-backed company registered th
 | Finland | Aiven | `mr.py fi` (PRH open data: profile, notice timeline, accounts dates); officers and figures from copies |
 | Sweden | Lovable | No script: Bolagsverket refuses automated access; the EU VAT register confirms the organisation number, and hitta.se's copy gives the board and one year of figures |
 | Denmark | Pleo | `mr.py dk` (filings index and XBRL: filing dates, figures, officers, notes); datacvr in a browser tool for status, owners, and capital history |
+| Israel | Papaya Global | `mr.py il` (daily copy of the Corporations Authority register on obudget.org: status, violating flag, last annual report); the Authority's search in a browser for the company number. Not scripted: the search can answer with a CAPTCHA, and data.gov.il refuses scripts |
 
 ### TODO: countries to test
 
@@ -140,13 +141,12 @@ Run Muckraker on a VC-backed company registered in the country. Note which route
 
 - [ ] **Switzerland:** has a row (Zefix, UID register, SOGC) from the Aikido run's subsidiary, but has never been the main target. Zefix answers fetch tools with 403.
 - [ ] **Canada:** has a row. Check federal corporations data against provincial registers.
-- [ ] **Israel:** no row yet. It has many VC-backed tech companies, often with a US parent.
 - [ ] **Spain and Italy:** no rows yet. Check the free parts of the registers (Registro Mercantil, Registro Imprese) and their gazettes (BORME).
 
 ## Limits
 
 - LinkedIn and most of S&P Global sit behind logins or paywalls, so Muckraker reports only what is public and lists the rest under Gaps.
-- National registers have direct entries for France, Luxembourg, Germany, the Netherlands, Belgium, Switzerland, Ireland, Norway, Finland, Denmark, Sweden, and Canada. For other countries the agent finds the register through Wikipedia's [list of official business registers](https://en.wikipedia.org/wiki/List_of_official_business_registers) and works out what it shows on each run, which is slower and less reliable. Add a row to `references/sources/national-registers.md` for any country you research often.
+- National registers have direct entries for France, Luxembourg, Germany, the Netherlands, Belgium, Switzerland, Ireland, Norway, Finland, Denmark, Sweden, Israel, Australia, Hong Kong, India, and Canada. For other countries the agent finds the register through Wikipedia's [list of official business registers](https://en.wikipedia.org/wiki/List_of_official_business_registers) and works out what it shows on each run, which is slower and less reliable. Add a row to `references/sources/national-registers.md` for any country you research often.
 - Lenders and funds that don't file with the SEC are invisible, so debt totals from valuation marks are a floor.
 - A private company's group accounts are often unpublished. The financial table then covers only subsidiaries that file accounts, such as a UK subsidiary.
 - UK accounts are read from their iXBRL version where one exists. Scanned accounts with no text layer are read as page images through `mr.py uk-pages`, which costs more tokens; other countries' scans are listed as `needs OCR` unless the agent has an OCR tool.
