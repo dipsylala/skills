@@ -6,9 +6,8 @@ record per fact, each with the source URL and, where there is one, the exact
 text from the document (`quote`) so the coordinator can confirm it.
 
 sec.gov asks automated clients to identify themselves. Pass the name and email
-the user gave for this run with --user-agent "Name email"; commands that reach
-sec.gov refuse to run without one. There is deliberately no environment-variable
-fallback, so a declined contact is never replaced by a stored one.
+the user gave with --user-agent "Name email" or the MUCKRAKER_SEC_UA
+environment variable; commands that reach sec.gov refuse to run without one.
 
 Standard library only; Python 3.9 or later.
 """
@@ -108,7 +107,7 @@ def fetch_bytes(url, user_agent, retries=2, auth=None, accept=None, limit=MAX_BO
     host = urllib.parse.urlparse(url).hostname or ""
     is_sec = host == "sec.gov" or host.endswith(".sec.gov")
     if is_sec and not user_agent:
-        raise FetchError("sec.gov needs --user-agent")
+        raise FetchError("sec.gov needs --user-agent or MUCKRAKER_SEC_UA")
     headers = {"User-Agent": "muckraker", "Accept-Encoding": "gzip"}
     if accept:
         headers["Accept"] = accept
@@ -5143,9 +5142,8 @@ def verify_reports(paths, user_agent, fetcher=None):
                 elif errors and len(errors) == len(flag["urls"]):
                     no_contact = all("needs --user-agent" in e for e in errors)
                     record.update(result="unreachable", errors=errors,
-                                  note="sec.gov pages need the SEC contact: rerun with --user-agent only if the user "
-                                       "gave one for this run, otherwise check the quote with the web fetch tool"
-                                  if no_contact
+                                  note="sec.gov pages need the SEC contact: rerun with --user-agent (it is sent to "
+                                       "sec.gov only), or check the quote with quote-check" if no_contact
                                   else "no cited page could be fetched; check it in a browser")
                     totals["unreachable"] += 1
                 else:
@@ -5181,8 +5179,8 @@ def report_paths(targets):
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--user-agent", default=None,
-                   help='"Name email" for sec.gov, as the user gave it for this run')
+    p.add_argument("--user-agent", default=os.environ.get("MUCKRAKER_SEC_UA"),
+                   help='"Name email" for sec.gov (or set MUCKRAKER_SEC_UA)')
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("edgar-filings", help="filer identity and recent filings")

@@ -1921,7 +1921,7 @@ class Fetch(unittest.TestCase):
 
     def test_missing_contact_explained(self):
         def fetcher(url):
-            raise mr.FetchError("sec.gov needs --user-agent")
+            raise mr.FetchError("sec.gov needs --user-agent or MUCKRAKER_SEC_UA")
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "sec.md")
             with open(path, "w", encoding="utf-8") as f:
