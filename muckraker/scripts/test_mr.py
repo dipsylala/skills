@@ -2356,5 +2356,114 @@ class IsraelRunFixes(unittest.TestCase):
         self.assertNotIn("truncated", out[-1])
 
 
+class SpainRunFixes(unittest.TestCase):
+    # text as mr.pdf_text gives it for a BORME section A PDF, with a page header in the middle of an entry and
+    # the words the text layer runs together ("ResultanteSuscrito", "Datosregistrales")
+    PAGE1 = ("BOLETÍN OFICIAL DEL REGISTRO MERCANTIL\nNúm. 57\nJueves 25 de marzo de 2021\nPág. 1\n"
+             "cve: BORME-A-2021-57-08\nVerificable en https://www.boe.es\nSECCIÓN PRIMERA\nEmpresarios\n"
+             "Actos inscritos\nBARCELONA\n"
+             "138541 - EVERYDAY SOFTWARE SOLUTIONS SL.\nNombramientos. ADM.UNICO: OTRA PERSONA. Datos registrales. "
+             "T 1 , F 1, S 8, H B 1, I/A 2 ( 1.03.21).\n"
+             "138542 - EVERYDAY SOFTWARE SL.\nRevocaciones. CONSEJERO: SIMON SEBASTIAN SCHMINCKE. Nombramientos. "
+             "CONSEJERO: REID MUELLER CHRISTIAN;PETER SPECHT. Ampliación de capital. Capital: 33.310,50 Euros.\n")
+    PAGE2 = ("BOLETÍN OFICIAL DEL REGISTRO MERCANTIL\nNúm. 57\nJueves 25 de marzo de 2021\nPág. 2\n"
+             "cve: BORME-A-2021-57-08\nVerificable en https://www.boe.es\n"
+             "ResultanteSuscrito: 116.314,95 Euros. Datosregistrales. T 46340 , F 75, S 8, H B 493653, I/A 8 (16.03.21).\n"
+             "138558 - EVERYDAY SOFTWARE SL.\nReducción de capital. Importe reducción: 9.336,45 Euros. Resultante "
+             "Suscrito: 106.978,50 Euros. Datos registrales. T 47437 , F 11,S 8, H B 493653, I/A 10 (16.03.21).\n")
+    FIRST = ("75997 - EVERYDAY SOFTWARE SL.\nConstitución. Comienzo de operaciones: 16.09.16. Domicilio: CL ALABA "
+             "NUM.61 (BARCELONA). Capital: 15.000,00 Euros. Nombramientos. CONSEJERO: ROMERO VENTURES SL. REPR.143 RRM: "
+             "ROMERO DE VILLALONGA JORDI. CONSEJERO: SIMON SEBASTIAN SCHMINCKE. Datos registrales. T 45613 , F 156, S 8, "
+             "H B 493653, I/A 1 ( 7.11.16).\n")
+
+    def es(self, pages, **kw):
+        texts = {"https://www.boe.es/borme/dias/2016/11/15/pdfs/BORME-A-2016-217-08.pdf": self.FIRST,
+                 "https://www.boe.es/borme/dias/2021/03/25/pdfs/BORME-A-2021-57-08.pdf": self.PAGE1 + "\n\n" + self.PAGE2}
+        return list(mr.es_report("Everyday Software, S.L.", pages, fetcher=lambda u, accept=None: u.encode(),
+                                 pdf_reader=lambda raw: texts[raw.decode()], **kw))
+
+    def test_entries_parsed_across_a_page_break(self):
+        out = self.es(["https://www.boe.es/borme/dias/2016/11/15/pdfs/BORME-A-2016-217-08.pdf",
+                       "https://www.boe.es/borme/dias/2021/03/25/pdfs/BORME-A-2021-57-08.pdf"])
+        entries = [r for r in out if r["type"] == "es_entry"]
+        self.assertEqual([e["inscription"] for e in entries], [1, 8, 10])  # SOLUTIONS SL is another company
+        self.assertEqual((entries[0]["inscribed"], entries[0]["address"]), ("2016-11-07", "CL ALABA NUM.61 (BARCELONA)"))
+        self.assertEqual(entries[1]["capital"], [{"change": 33310.5, "resulting": 116314.95}])
+        self.assertEqual(entries[2]["capital"], [{"change": -9336.45, "resulting": 106978.5}])
+        self.assertEqual(entries[1]["cve"], "BORME-A-2021-57-08")
+        summary = next(r for r in out if r["type"] == "es_summary")
+        self.assertEqual(summary["capital"], 106978.5)
+        board = {(o["role"], o["name"]) for o in summary["current_officers"]}
+        self.assertIn(("CONSEJERO", "PETER SPECHT"), board)
+        self.assertNotIn(("CONSEJERO", "SIMON SEBASTIAN SCHMINCKE"), board)  # appointed in 1, removed in 8
+        self.assertIn(("REPR.143 RRM", "ROMERO DE VILLALONGA JORDI"), board)
+        gap = next(r for r in out if r["type"] == "es_flag")
+        self.assertEqual((gap["flag"], gap["missing"][:2]), ("inscriptions missing", [2, 3]))
+
+    def test_dissolution_is_a_major_flag(self):
+        body = ("Disolución. Voluntaria. Extinción. Datos registrales. T 1 , F 2, S 8, H B 9, I/A 3 (2.11.21).")
+        acts, people, capital, reg = mr.borme_parse(body)
+        self.assertEqual((acts[:2], reg["inscription"]), (["Disolución", "Extinción"], 3))
+        text = "1 - ACME SL.\n" + body + "\n"
+        out = list(mr.es_report("Acme", ["u"], fetcher=lambda u, accept=None: b"", pdf_reader=lambda raw: text))
+        self.assertEqual([r["flag"] for r in out if r["type"] == "es_flag"], ["dissolution", "extinction"])
+
+    def test_empresia_pages_and_daily_scan(self):
+        pages = {"https://www.empresia.es/empresa/acme/":
+                 '<a href="https://www.boe.es/borme/dias/2021/03/25/pdfs/BORME-A-2021-57-08.pdf">x</a>'
+                 '<a href="/async/?t=EventosEntidad&amp;te=empresa&amp;x=1&amp;offset=30">more</a>',
+                 "https://www.empresia.es/async/?t=EventosEntidad&te=empresa&x=1&offset=30":
+                 '<a href="https://www.boe.es/borme/dias/2016/11/15/pdfs/BORME-A-2016-217-08.pdf">y</a>'}
+        self.assertEqual(len(mr.empresia_borme_pdfs("https://www.empresia.es/empresa/acme/", pages.get)), 2)
+        sumario = {"data": {"sumario": {"diario": [{"seccion": [
+            {"codigo": "A", "item": [{"identificador": "BORME-A-2026-1-08", "url_pdf": {"texto": "https://b/a.pdf"}},
+                                     {"identificador": "BORME-A-2026-1-28", "url_pdf": {"texto": "https://b/m.pdf"}}]},
+            {"codigo": "C", "apartado": [{"nombre": "BALANCES", "item": {"titulo": "ACME, S.L. (EN LIQUIDACIÓN)",
+                                                                         "url_pdf": {"texto": "https://b/c.pdf"}}}]}]}]}}}
+
+        def get(url, accept=None):
+            if "sumario/20260105" in url:
+                return json.dumps(sumario).encode()
+            if "sumario" in url:
+                raise mr.FetchError(f"HTTP 404 for {url}")
+            return b""
+        out = list(mr.es_report("Acme SL", scan_from="2026-01-04", scan_to="2026-01-05", fetcher=get,
+                                pdf_reader=lambda raw: "", pause=0))
+        notice = next(r for r in out if r["type"] == "es_notice")
+        self.assertEqual((notice["apartado"], notice["date"]), ("BALANCES", "2026-01-05"))
+        self.assertEqual(next(r for r in out if r["type"] == "es_scan")["borme_days"], 1)
+
+    def test_brazil_partners_and_special_situation(self):
+        company = {"razao_social": "OI S.A. - EM RECUPERACAO JUDICIAL", "descricao_situacao_cadastral": "ATIVA",
+                   "situacao_especial": "RECUPERACAO JUDICIAL", "data_situacao_especial": "2016-06-29",
+                   "qsa": [{"nome_socio": "EVERYDAY SOFTWARE, S.L.", "pais": "ESPANHA", "cnpj_cpf_do_socio": "43637458",
+                            "qualificacao_socio": "Sócio Pessoa Jurídica Domiciliado no Exterior",
+                            "data_entrada_sociedade": "2021-11-16", "faixa_etaria": "Não se aplica",
+                            "nome_representante_legal": "JOSE ROGERIO", "cpf_representante_legal": "***976708**",
+                            "qualificacao_representante_legal": "Procurador"}]}
+
+        def get(url):
+            return json.dumps({"message": "2026-11"} if url.endswith("/updated") else company)
+        out = list(mr.br_report("76.535.764/0001-43", get))
+        self.assertEqual((out[0]["cnpj"], out[0]["data_month"]), ("76535764000143", "2026-11"))
+        partner = out[1]
+        self.assertEqual((partner["country"], partner["representative"]), ("ESPANHA", "JOSE ROGERIO"))
+        self.assertNotIn("cpf_representante_legal", json.dumps(partner))  # no personal identifiers
+        self.assertEqual(out[-1]["flag"], "special situation")
+        self.assertEqual(list(mr.br_report("123", get))[0]["type"], "br_note")
+
+    def test_factorial_ats_named_and_us_flag_says_match_first(self):
+        page = '<link href="https://assets.factorialhr.com/ats/packs/css/CompanyPages/index.css">'
+
+        def get(url):
+            if "careers" in url:
+                return page
+            raise mr.FetchError(f"HTTP 404 for {url}")
+        out = list(mr.jobs_report("https://careers.acme.test/", fetcher=get))
+        self.assertEqual((out[-1]["type"], out[-1]["provider"]), ("jobs_board_unsupported", "factorial"))
+        flag = mr.us_state_flag("CO", {"name": "Acme ! Inc", "status": "Delinquent"})
+        self.assertIn("matched to the company", flag["match_first"])
+
+
 if __name__ == "__main__":
     unittest.main()
