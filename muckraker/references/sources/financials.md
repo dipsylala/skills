@@ -19,6 +19,8 @@ Read the company's own financial statements and turn them into a multi-year tabl
 - **Scanned accounts:** filings with no iXBRL version are often image-only PDFs. Read UK ones through `mr.py uk-pages` as above, contents page first; for others, read them if you have an OCR tool. Otherwise list each one under Gaps as `needs OCR` with its URL, and take what figures you can from the prior-year comparatives in the next year's accounts.
 - **No filed accounts** (a private US company, for example): record figures the company or reputable press have stated, each marked as a company claim or press report, and say under Gaps that no audited figures exist. Lenders' loan marks and credit ratings belong to the Debt and valuation marks and S&P Global sources; leave them to those agents.
 
+When the group's business sits in subsidiaries (a holding with an operating or licensed subsidiary), label every figure with its perimeter: consolidated, parent only, or one subsidiary. Reconcile consolidated figures from the press or the company with the entity accounts you can read, and record a gap between them under Facts rather than adding them together.
+
 ## Checks
 
 1. **Multi-year table:** for each of the last 3–5 years: revenue, gross profit, operating profit or loss, net profit or loss, cash and short-term investments, total debt, net assets, operating cash flow, and average headcount. State the currency and year end, and leave a cell empty rather than estimate it.

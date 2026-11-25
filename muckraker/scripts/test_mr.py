@@ -2465,5 +2465,63 @@ class SpainRunFixes(unittest.TestCase):
         self.assertIn("matched to the company", flag["match_first"])
 
 
+class ItalyRunFixes(unittest.TestCase):
+    def test_closed_company_has_no_overdue_flags(self):
+        api = {"/company/09502116": {"company_name": "SATISPAY LIMITED", "company_status": "converted-closed",
+                                     "type": "converted-or-closed", "date_of_cessation": "2019-05-17",
+                                     "accounts": {"overdue": True}, "confirmation_statement": {"overdue": True}}}
+
+        def fake(url, accept=None):
+            path = url[len(mr.CH_API):].split("?")[0]
+            if path in api:
+                return json.dumps(api[path])
+            raise mr.FetchError(f"HTTP 404 for {url}")
+        out = list(mr.ch_report("09502116", mr.CompaniesHouse(None, fetcher=fake), today=dt.date(2026, 11, 25)))
+        self.assertFalse([r for r in out if r.get("flag") in ("accounts overdue", "confirmation statement overdue")])
+        self.assertTrue(out[0]["accounts_overdue"])  # the profile still says so; only the flag is held back
+
+    def test_lu_reads_each_quarter_once_for_several_companies(self):
+        def block(rcs, end, equity):
+            return (f"<Declarer><RcsNumber>{rcs}</RcsNumber><LegalUnitName>{rcs} SA</LegalUnitName>"
+                    f"<Declaration type=\"CA_BILAN\"><StartDate>{end[:4]}-01-01</StartDate><EndDate>{end}</EndDate>"
+                    f"<RCSDepositDate>{end[:4]}-05-31</RCSDepositDate><ID_Doc>{rcs}{end}</ID_Doc><Currency>EUR</Currency>"
+                    f"<Label>Capitaux propres</Label><Data>{equity}</Data></Declaration></Declarer>")
+        calls = []
+
+        def streamer(url, rcs):
+            calls.append((url, rcs))
+            return [block("B1", "2025-12-31", 10), block("B2", "2025-12-31", -5)]
+        dataset = {"resources": [{"title": "deposit-2026q2.xml", "url": "u/2026q2"}]}
+        out = list(mr.lu_report(["B1", "b 2"], fetcher=lambda u: json.dumps(dataset), streamer=streamer,
+                                today=dt.date(2026, 11, 25)))
+        self.assertEqual(calls, [("u/2026q2", ("B1", "B2"))])
+        summaries = [r for r in out if r["type"] == "lu_summary"]
+        self.assertEqual([(s["rcs"], s["flags"]) for s in summaries], [("B1", 0), ("B2", 1)])
+        flag = next(r for r in out if r["type"] == "lu_flag")
+        self.assertEqual((flag["rcs"], flag["flag"]), ("B2", "negative equity"))
+
+    def test_ashby_posting_ages(self):
+        today = dt.date.today()
+        recent, old = (today - dt.timedelta(days=10)).isoformat(), (today - dt.timedelta(days=400)).isoformat()
+        board = {"jobs": [{"title": "A", "department": "Tech", "location": "Milan", "publishedAt": recent + "T08:00:00Z"},
+                          {"title": "B", "department": "Tech", "location": "Milan", "publishedAt": old + "T08:00:00Z"}]}
+        out = list(mr.jobs_report("ashby:acme", fetcher=lambda u: json.dumps(board)))
+        ages = next(r for r in out if r["type"] == "jobs_posting_ages")
+        self.assertEqual((ages["dated_roles"], ages["oldest"], ages["newest"]), (2, old, recent))
+        self.assertEqual(ages["posted_by_month"], {recent[:7]: 1})  # only the last 12 months are tallied
+
+    def test_vat_name_or_hidden(self):
+        italy = {"isValid": True, "name": "MOMENTUM S.P.A.", "address": "PIAZZA FIDIA 1 \n20159 MILANO MI\n",
+                 "requestDate": "2026-11-25T00:00:00Z"}
+        out = list(mr.vat_report("it", "IT 109 2736 0015", fetcher=lambda u: json.dumps(italy)))
+        self.assertEqual((out[0]["vat_number"], out[0]["name"], out[0]["address"]),
+                         ("IT10927360015", "MOMENTUM S.P.A.", "PIAZZA FIDIA 1, 20159 MILANO MI"))
+        spain = {"isValid": True, "name": "---", "address": "---"}
+        rec = list(mr.vat_report("ES", "B66854530", fetcher=lambda u: json.dumps(spain)))[0]
+        self.assertIsNone(rec["name"])
+        self.assertIn("does not disclose", rec["note"])
+        self.assertEqual(list(mr.vat_report("US", "1"))[0]["type"], "vat_note")
+
+
 if __name__ == "__main__":
     unittest.main()

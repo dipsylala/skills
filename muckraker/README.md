@@ -27,14 +27,14 @@ It is manual-only. The agent never starts it on its own.
 | SEC EDGAR | Filings, Form D private raises, mentions in other companies' filings, and enforcement actions |
 | UK Companies House | Officers, persons with significant control, charges, filing health, insolvency, and for young companies share allotments, implied valuations, shareholder lists, and founders' earlier companies (when the company, its parent, or a subsidiary is UK-registered) |
 | US state registry | Status (including suspensions), formation, registered agent, officers or managers, foreign registrations, and UCC liens where free (when the company, its parent, or a subsidiary is registered in a US state). Searches the registers five states publish as open data (Colorado, New York, Texas, Oregon, Connecticut) first, which often name a subsidiary's state of formation when Delaware's or California's search is closed to scripts; uses OpenCorporates with an API token |
-| National registers | Profile, officers, filed accounts, and insolvency notices in France, Luxembourg, Germany, the Netherlands, Belgium, Switzerland, Ireland, Norway, Finland, Denmark, Sweden, Israel, Spain, Brazil, Mexico, Australia, Hong Kong, India, and Canada (when the company, its parent, or a subsidiary is registered there), with North Data and OpenCorporates as fallbacks |
+| National registers | Profile, officers, filed accounts, and insolvency notices in France, Luxembourg, Germany, the Netherlands, Belgium, Switzerland, Ireland, Norway, Finland, Denmark, Sweden, Israel, Spain, Italy, Brazil, Mexico, Australia, Hong Kong, India, and Canada (when the company, its parent, or a subsidiary is registered there), with North Data and OpenCorporates as fallbacks |
 | GLEIF ownership | The company's Legal Entity Identifier, its parent chain up to the ultimate parent, and its subsidiaries in every country |
 | Sanctions and offshore | Sanctions and politically-exposed-person screening (OpenSanctions, the US Consolidated Screening List), US export-control, forced-labour, and procurement-exclusion lists (Entity List, UFLPA, Section 1260H, FCC Covered List, SAM.gov exclusions), and the ICIJ Offshore Leaks database, for the company, its group, and its leaders |
 | Startup | Funding rounds from free startup databases and funding news, grants (UKRI, CORDIS, SBIR), crowdfunding, and accelerators (when the company is under seven years old or venture-backed) |
 | S&P Global | Rating actions and tear sheets from S&P Global Ratings' public search |
 | Financials | A multi-year table from filed accounts or SEC data, plus notes on going concern, debt, and events after the year end |
 | Debt and valuation marks | How listed lenders (business development companies) and funds value the company's loans and shares, quarter by quarter |
-| Courts and insolvency | US federal dockets, US federal and state opinions, US regulators' enforcement actions (DOJ, FTC, CFPB, OFAC, FinCEN, BIS, inspectors general, Violation Tracker), UK judgments, and UK Gazette insolvency notices |
+| Courts and insolvency | US federal dockets, US federal and state opinions, US regulators' enforcement actions (DOJ, FTC, CFPB, OFAC, FinCEN, BIS, inspectors general, Violation Tracker), UK judgments, and UK Gazette insolvency notices. Courts elsewhere are searched by the National registers agent where the country's row names a court search |
 
 The dossier has these sections: Entity, Red flags (each marked as an allegation, a filed claim, or an established finding), Financials, Key facts, Conflicts between sources, Gaps, and Sources. It appears in the chat and is saved as `dossier.md` in the run folder, beside the full source reports.
 
@@ -68,7 +68,7 @@ Agents keep key values out of their reports and write `[REDACTED]` for any crede
 
 ### Python (for the fetcher script)
 
-`scripts/mr.py` fetches EDGAR filings and XBRL figures, finds how lenders and funds value a company's loans and shares, reads GLEIF ownership chains, searches and reads UK Companies House records and accounts (scanned ones as page images, electronic forms as text), the French register with its BODACC notices, the Irish register's open data, the Finnish register's open data (PRH), Danish annual reports from the Business Authority's open index and their XBRL, Luxembourg's filed accounts from the Centrale des Bilans open data, checks UK directors' other companies for insolvencies and disqualifications, searches the US state registers published as open data (Colorado, New York, Texas, Oregon, Connecticut), finds US WARN layoff notices (California and Texas), finds federal contracts, grants, and loans on USAspending.gov, screens names against the US Consolidated Screening List and the ICIJ Offshore Leaks database, reads Form D filings (state and year of incorporation, related persons, amounts raised), checks a domain's registration date, archived history, and GitHub activity, counts a company's open roles and their trend, and checks red-flag quotes against their sources. It needs Python 3.9 or later and nothing else. Agents use it when it runs and fall back to fetching pages themselves when it doesn't, which is slower and costs far more tokens.
+`scripts/mr.py` fetches EDGAR filings and XBRL figures, finds how lenders and funds value a company's loans and shares, reads GLEIF ownership chains, searches and reads UK Companies House records and accounts (scanned ones as page images, electronic forms as text), the French register with its BODACC notices, the Irish register's open data, the Norwegian register and its announcements, the Finnish register's open data (PRH), Danish annual reports from the Business Authority's open index and their XBRL, Luxembourg's filed accounts from the Centrale des Bilans open data (several companies in one pass), a daily copy of the Israeli register, Spanish register acts from the BORME gazette, Brazil's CNPJ register data, and EU VAT numbers with their registered names (VIES), checks UK directors' other companies for insolvencies and disqualifications, searches the US state registers published as open data (Colorado, New York, Texas, Oregon, Connecticut), finds US WARN layoff notices (California and Texas), finds federal contracts, grants, and loans on USAspending.gov, screens names against the US Consolidated Screening List and the ICIJ Offshore Leaks database, reads Form D filings (state and year of incorporation, related persons, amounts raised), checks a domain's registration date, archived history, and GitHub activity, counts a company's open roles and their trend, and checks red-flag quotes against their sources. It needs Python 3.9 or later and nothing else. Agents use it when it runs and fall back to fetching pages themselves when it doesn't, which is slower and costs far more tokens.
 
 With Python, the coordinator also replaces up to three agents and most of its own checking with script calls. On a US company with a UK subsidiary:
 
@@ -117,7 +117,7 @@ S&P Global Ratings' public search only loads in a real browser. If the agent can
 
 ## Country coverage
 
-Each country below was tested by a full run on a VC-backed company registered there, and that run's fixes were merged.
+Each country below was tested by a full run on a VC-backed company registered there, and the skill includes that run's fixes.
 
 | Country | Tested on | Register access |
 | --- | --- | --- |
@@ -131,10 +131,11 @@ Each country below was tested by a full run on a VC-backed company registered th
 | Luxembourg | Tadaweb | `mr.py lu` (Centrale des Bilans open data) |
 | Norway | Sanity | `mr.py no` (Brønnøysund open APIs and announcements); `uk-pages` for the scanned accounts |
 | Finland | Aiven | `mr.py fi` (PRH open data: profile, notice timeline, accounts dates); officers and figures from copies |
-| Sweden | Lovable | No script: Bolagsverket refuses automated access; the EU VAT register confirms the organisation number, and hitta.se's copy gives the board and one year of figures |
+| Sweden | Lovable | No script for the register: Bolagsverket refuses automated access; `mr.py vat SE` confirms the organisation number and registered name, and hitta.se's copy gives the board and one year of figures |
 | Denmark | Pleo | `mr.py dk` (filings index and XBRL: filing dates, figures, officers, notes); datacvr in a browser tool for status, owners, and capital history |
 | Israel | Papaya Global | `mr.py il` (daily copy of the Corporations Authority register on obudget.org: status, violating flag, last annual report); the Authority's search in a browser for the company number. Not scripted: the search can answer with a CAPTCHA, and data.gov.il refuses scripts |
 | Spain | Factorial | `mr.py es` (BORME section A PDFs: officers, capital, address, dissolution; the PDF list from empresia.es, or a daily scan); `mr.py br` for its Brazilian subsidiary (Receita CNPJ open data via minhareceita.org). Accounts and shareholders are paid at the Registro Mercantil |
+| Italy | Satispay | No script: the Registro Imprese's free search is a session-bound browser form and its records are paid; `mr.py vat` (VIES) confirms the name and address and caught the parent's rename; free copies give accounts figures; `mr.py lu` for the Luxembourg e-money subsidiary |
 
 ### TODO: countries to test
 
@@ -142,16 +143,16 @@ Run Muckraker on a VC-backed company registered in the country. Note which route
 
 - [ ] **Switzerland:** has a row (Zefix, UID register, SOGC) from the Aikido run's subsidiary, but has never been the main target. Zefix answers fetch tools with 403.
 - [ ] **Canada:** has a row. Check federal corporations data against provincial registers.
-- [ ] **Italy:** no row yet. Check the free parts of the Registro Imprese and its gazette.
+- [ ] **Brazil, Mexico, Australia, Hong Kong, and India:** have rows (Brazil a script, `mr.py br`) from subsidiaries in the Factorial, Papaya Global, and Satispay runs, but none has been the main target of a run.
 
 ## Limits
 
 - LinkedIn and most of S&P Global sit behind logins or paywalls, so Muckraker reports only what is public and lists the rest under Gaps.
-- National registers have direct entries for France, Luxembourg, Germany, the Netherlands, Belgium, Switzerland, Ireland, Norway, Finland, Denmark, Sweden, Israel, Spain, Brazil, Mexico, Australia, Hong Kong, India, and Canada. For other countries the agent finds the register through Wikipedia's [list of official business registers](https://en.wikipedia.org/wiki/List_of_official_business_registers) and works out what it shows on each run, which is slower and less reliable. Add a row to `references/sources/national-registers.md` for any country you research often.
+- National registers have direct entries for France, Luxembourg, Germany, the Netherlands, Belgium, Switzerland, Ireland, Norway, Finland, Denmark, Sweden, Israel, Spain, Italy, Brazil, Mexico, Australia, Hong Kong, India, and Canada. For other countries the agent finds the register through Wikipedia's [list of official business registers](https://en.wikipedia.org/wiki/List_of_official_business_registers) and works out what it shows on each run, which is slower and less reliable. Add a row to `references/sources/national-registers.md` for any country you research often.
 - Lenders and funds that don't file with the SEC are invisible, so debt totals from valuation marks are a floor.
 - A private company's group accounts are often unpublished. The financial table then covers only subsidiaries that file accounts, such as a UK subsidiary.
 - UK accounts are read from their iXBRL version where one exists. Scanned accounts with no text layer are read as page images through `mr.py uk-pages`, which costs more tokens; other countries' scans are listed as `needs OCR` unless the agent has an OCR tool.
-- Each run sends one agent per source per company (up to thirteen per company), so research on several companies uses a lot of tokens.
+- Each run sends one agent per source per company (about ten, more when the national registers work is split across countries), so research on several companies uses a lot of tokens: recent single-company runs used 0.9 to 1.4 million tokens.
 
 ## Privacy
 

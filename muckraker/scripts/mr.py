@@ -1316,6 +1316,9 @@ def ch_search(name, ch, limit=20):
            "url": f"{CH_WEB}/search/companies?q={q}"}
 
 
+CH_CLOSED_STATUSES = {"dissolved", "converted-closed", "closed", "removed"}
+
+
 def ch_report(number, ch, max_filings=200, today=None, list_filings=25):
     """Profile, officers, PSCs, charges, insolvency, filing history and computed flags."""
     number = number.strip().upper()
@@ -1338,8 +1341,10 @@ def ch_report(number, ch, max_filings=200, today=None, list_filings=25):
            "has_charges": p.get("has_charges"), "has_insolvency_history": p.get("has_insolvency_history"),
            "registered_office_in_dispute": p.get("registered_office_is_in_dispute"), "url": web}
     overdue = 0
+    # a dissolved or closed company owes no filings, though its last profile can still say "overdue"
+    closed = (p.get("company_status") or "") in CH_CLOSED_STATUSES or bool(p.get("date_of_cessation"))
     for field, what in (("accounts_overdue", "accounts overdue"), ("confirmation_overdue", "confirmation statement overdue")):
-        if (acc if field == "accounts_overdue" else cs).get("overdue"):
+        if (acc if field == "accounts_overdue" else cs).get("overdue") and not closed:
             overdue += 1
             yield {"type": "ch_flag", "flag": what, "severity": "major", "url": web}
 
@@ -3087,18 +3092,20 @@ def find_job_board(text):
 
 
 def job_board_openings(provider, token, get):
-    """Open roles as (title, department, location) from the provider's public jobs API."""
+    """Open roles as (title, department, location[, posted date]) from the provider's public jobs API."""
     if provider == "greenhouse":
         url = f"https://boards-api.greenhouse.io/v1/boards/{token}/departments"
         jobs = [(j.get("title"), d.get("name"), (j.get("location") or {}).get("name"))
                 for d in json.loads(get(url)).get("departments") or [] for j in d.get("jobs") or []]
     elif provider == "lever":
         url = f"https://api.lever.co/v0/postings/{token}?mode=json"
-        jobs = [(j.get("text"), (j.get("categories") or {}).get("team"), (j.get("categories") or {}).get("location"))
+        jobs = [(j.get("text"), (j.get("categories") or {}).get("team"), (j.get("categories") or {}).get("location"),
+                 dt.datetime.fromtimestamp(j["createdAt"] / 1000, dt.timezone.utc).date().isoformat()
+                 if isinstance(j.get("createdAt"), (int, float)) else None)
                 for j in json.loads(get(url))]
     else:
         url = f"https://api.ashbyhq.com/posting-api/job-board/{token}"
-        jobs = [(j.get("title"), j.get("department"), j.get("location"))
+        jobs = [(j.get("title"), j.get("department"), j.get("location"), (j.get("publishedAt") or "")[:10] or None)
                 for j in json.loads(get(url)).get("jobs") or [] if j.get("isListed", True)]
     return jobs, url
 
@@ -3108,7 +3115,8 @@ def job_history(provider, token, get, months=12, pause=1.0):
     link = BOARD_JOB_LINK.get(provider)
     if not link:
         yield {"type": "jobs_history_unavailable", "provider": provider,
-               "note": "this provider's board page is built by JavaScript, so archived copies hold no job list"}
+               "note": "this provider's board page is built by JavaScript, so archived copies hold no job list; "
+                       "use the jobs_posting_ages record (posting dates of the roles open now) instead"}
         return
     pattern = re.compile(link.format(t=re.escape(token)))
     rows = []
@@ -3210,6 +3218,20 @@ def jobs_report(target, history=False, fetcher=None, pause=1.0, offices=()):
         return dict(sorted(counts.items(), key=lambda x: -x[1]))
     yield {"type": "jobs_openings", "provider": provider, "board": token, "open_roles": len(jobs),
            "by_department": tally(1), "by_location": dict(list(tally(2).items())[:15]), "url": url}
+    posted = sorted(j[3] for j in jobs if len(j) > 3 and j[3])
+    if posted:
+        today = dt.date.today()
+        ages = sorted((today - _date(d)).days for d in posted)
+        months = {}
+        for d in posted:
+            if (today - _date(d)).days <= 366:
+                months[d[:7]] = months.get(d[:7], 0) + 1
+        yield {"type": "jobs_posting_ages", "provider": provider, "dated_roles": len(posted),
+               "posted_by_month": dict(sorted(months.items())), "median_age_days": ages[len(ages) // 2],
+               "oldest": posted[0], "newest": posted[-1], "url": url,
+               "note": "the open roles by the month they were posted: a proxy for recent hiring, not a count of past "
+                       "openings (roles filled or withdrawn are gone). Many old roles still open can mean evergreen "
+                       "or stale postings"}
     if history:
         yield from job_history(provider, token, get, pause=pause)
 
@@ -3399,8 +3421,8 @@ def cdb_quarters(get, quarters):
 
 
 def cdb_stream_blocks(url, rcs, chunk=1 << 20):
-    """Stream a quarterly file and return the <Declarer> blocks for one RCS number, decoded."""
-    needle = f"<RcsNumber>{rcs}</RcsNumber>".encode()
+    """Stream a quarterly file and return the <Declarer> blocks for one RCS number, or any of several, decoded."""
+    needles = [f"<RcsNumber>{r}</RcsNumber>".encode() for r in ([rcs] if isinstance(rcs, str) else rcs)]
     request = urllib.request.Request(url, headers={"User-Agent": "muckraker"})
     found, buf = [], b""
     with urllib.request.urlopen(request, timeout=60) as r:
@@ -3414,7 +3436,7 @@ def cdb_stream_blocks(url, rcs, chunk=1 << 20):
                 if end < 0:
                     break
                 block, buf = buf[:end + 11], buf[end + 11:]
-                if needle in block:
+                if any(n in block for n in needles):
                     found.append(block[block.rfind(b"<Declarer>"):].decode("iso8859_15", errors="replace"))
             if len(buf) > 64 << 20:
                 raise FetchError(f"no </Declarer> in 64 MB of {url}")
@@ -3451,16 +3473,18 @@ def lu_declarations(block):
 def lu_report(rcs, quarters=12, workers=4, save=None, fetcher=None, streamer=None, today=None):
     """Luxembourg company accounts from the Centrale des Bilans open data: each
     filing's deposit date against the deadline, each year's main figures, and flags
-    for late filing and negative equity."""
+    for late filing and negative equity. `rcs` is one RCS number or a list of them:
+    each quarterly file is read once for all of them."""
     import concurrent.futures
     get = fetcher or (lambda u: fetch(u, None))
     stream = streamer or cdb_stream_blocks
     today = today or dt.date.today()
-    rcs = re.sub(r"\s", "", rcs).upper()
+    wanted = [re.sub(r"\s", "", r).upper() for r in ([rcs] if isinstance(rcs, str) else rcs)]
     files = cdb_quarters(get, quarters)
-    hits, saved = [], []
+    hits, saved = {r: [] for r in wanted}, []
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(stream, url, rcs): (q, url) for q, url, _ in files}
+        futures = {pool.submit(stream, url, wanted[0] if len(wanted) == 1 else tuple(wanted)): (q, url)
+                   for q, url, _ in files}
         for fut in concurrent.futures.as_completed(futures):
             q, url = futures[fut]
             try:
@@ -3469,15 +3493,28 @@ def lu_report(rcs, quarters=12, workers=4, save=None, fetcher=None, streamer=Non
                 yield {"type": "lu_quarter_unreadable", "quarter": q, "error": str(e), "url": url}
                 continue
             for b in blocks:
+                m = re.search(r"<RcsNumber>([^<]+)</RcsNumber>", b)
+                owner = m.group(1).strip().upper() if m and m.group(1).strip().upper() in hits else wanted[0]
                 saved.append(f"<!-- {url} -->\n{b}")
-                hits += [dict(d, quarter=q, url=url) for d in lu_declarations(b)]
+                hits[owner] += [dict(d, quarter=q, url=url) for d in lu_declarations(b)]
     if save and saved:
         with open(save, "w", encoding="utf-8") as f:
             f.write("<CdbExtract>\n" + "\n".join(saved) + "\n</CdbExtract>\n")
+    for r in wanted:
+        records = list(_lu_company(r, hits[r], today))
+        yield from records
+        yield {"type": "lu_summary", "rcs": r, "years": len({d["end"] for d in hits[r]}),
+               "flags": sum(x["type"] == "lu_flag" for x in records), "quarters_searched": [q for q, _, _ in files],
+               "saved_extract": save if save and saved else None,
+               "note": "a filing appears in the quarter it was deposited, so years filed before the oldest quarter "
+                       "searched are missing; raise --quarters to look further back"}
+
+
+def _lu_company(rcs, hits, today):
+    """One company's lu_accounts_filed, lu_accounts_year and lu_flag records from its declarations."""
     years = {}
     for d in sorted(hits, key=lambda d: (d["end"] or "", d["deposited"] or "")):
         years.setdefault(d["end"], []).append(d)
-    flags = 0
     for end, decls in sorted(years.items()):
         end_date = _date(end)
         first = min((d["deposited"] for d in decls if d["deposited"]), default=None)
@@ -3488,8 +3525,7 @@ def lu_report(rcs, quarters=12, workers=4, save=None, fetcher=None, streamer=Non
                "due": due and due.isoformat(), "days_late": max(late, 0) if late is not None else None,
                "filings": len({d["doc"] for d in decls}), "url": decls[0]["url"]}
         if late and late > 0:
-            flags += 1
-            yield {"type": "lu_flag", "flag": "late accounts", "severity": "major", "year_end": end,
+            yield {"type": "lu_flag", "rcs": rcs, "flag": "late accounts", "severity": "major", "year_end": end,
                    "deposited": first, "due": due.isoformat(), "days_late": late,
                    "recent": bool(end_date and (today - end_date).days <= 3 * 366),
                    "rule": "accounts are due within 7 months of the year end (approval within 6 months, filing "
@@ -3498,22 +3534,17 @@ def lu_report(rcs, quarters=12, workers=4, save=None, fetcher=None, streamer=Non
         for d in decls:  # the latest filing for the year wins
             figures.update(d["figures"])
             labels.update(d["labels"])
-        yield {"type": "lu_accounts_year", "year_end": end, "currency": decls[-1]["currency"], **figures,
+        yield {"type": "lu_accounts_year", "rcs": rcs, "year_end": end, "currency": decls[-1]["currency"], **figures,
                "quotes": labels, "url": decls[-1]["url"]}
     latest = max(years) if years else None
     if latest:
         equity = next((d["figures"].get("equity") for d in reversed(years[latest]) if "equity" in d["figures"]), None)
         if equity is not None and equity < 0:
-            flags += 1
-            yield {"type": "lu_flag", "flag": "negative equity", "severity": "major", "year_end": latest,
+            yield {"type": "lu_flag", "rcs": rcs, "flag": "negative equity", "severity": "major", "year_end": latest,
                    "equity": equity, "quote": next(d["labels"]["equity"] for d in reversed(years[latest]) if "equity" in d["labels"]),
                    "rule": "equity below zero at the latest year end; when losses exceed half the capital, "
                            "Luxembourg law requires the shareholders to decide on dissolution (art. 480-2 / 1100-2)",
                    "url": years[latest][-1]["url"]}
-    yield {"type": "lu_summary", "rcs": rcs, "years": len(years), "flags": flags,
-           "quarters_searched": [q for q, _, _ in files], "saved_extract": save if save and saved else None,
-           "note": "a filing appears in the quarter it was deposited, so years filed before the oldest quarter "
-                   "searched are missing; raise --quarters to look further back"}
 
 
 # -------------------------------------------------------------- Ireland ----
@@ -3929,6 +3960,40 @@ def br_report(cnpj, fetcher=None):
                "since": d.get("data_situacao_especial"),
                "rule": "the Receita records judicial recovery (recuperação judicial), bankruptcy (falência) or "
                        "liquidation as a special situation", "url": url}
+
+
+# ------------------------------------------------------------ EU VAT (VIES) ----
+
+VIES_API = "https://ec.europa.eu/taxation_customs/vies/rest-api/ms/{cc}/vat/{number}"
+VIES_COUNTRIES = {"AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "EL", "ES", "FI", "FR", "HR", "HU", "IE", "IT", "LT",
+                  "LU", "LV", "MT", "NL", "PL", "PT", "RO", "SE", "SI", "SK", "XI"}
+
+
+def vat_report(country, number, fetcher=None):
+    """An EU VAT number checked in VIES: whether it is valid now, and the registered name and address
+    where the member state discloses them (Italy, Sweden, France and others do; Spain and Germany do not)."""
+    get = fetcher or (lambda u: fetch(u, None))
+    cc = country.strip().upper().replace("GR", "EL")
+    num = re.sub(r"[\s.\-/]", "", number).upper()
+    if num.startswith(cc):
+        num = num[len(cc):]
+    if cc not in VIES_COUNTRIES:
+        yield {"type": "vat_note", "note": f"VIES covers EU member states (and XI for Northern Ireland), not {country}"}
+        return
+    url = VIES_API.format(cc=cc, number=num)
+    d = json.loads(get(url))
+    name = (d.get("name") or "").strip()
+    address = re.sub(r"\s*\n\s*", ", ", (d.get("address") or "").strip()).strip(", ")
+    hidden = name in ("", "---")
+    yield {"type": "vat_record", "country": cc, "vat_number": f"{cc}{num}", "valid": d.get("isValid"),
+           "name": None if hidden else name, "address": None if address in ("", "---") else address,
+           "checked": (d.get("requestDate") or "")[:10] or None, "url": url,
+           "note": ("this member state does not disclose the name or address through VIES; the check shows only "
+                    "whether the number is valid" if hidden else
+                    "the name the tax authority holds now: compare it with the name the company uses, since a "
+                    "renamed holding keeps its brand in the press")
+                   + ("" if d.get("isValid") else "; an invalid number can be a typo, a deregistered company, or a "
+                                                  "group VAT registration under another number")}
 
 
 # --------------------------------------------------------------- Norway ----
@@ -5206,7 +5271,8 @@ def main(argv=None):
     s.add_argument("siren_or_name", help="a 9-digit SIREN, or a name to list candidates")
 
     s = sub.add_parser("lu", help="Luxembourg: filed accounts from the Centrale des Bilans open data, with late-filing flags")
-    s.add_argument("rcs", help="the RCS number, such as B165616")
+    s.add_argument("rcs", nargs="+", help="the RCS number, such as B165616, or several (each quarterly file is read once "
+                                         "for all of them)")
     s.add_argument("--quarters", type=int, default=12, help="newest quarterly deposit files to search (each 70-820 MB)")
     s.add_argument("--save", metavar="FILE", help="write the company's matching records to this file, for quote-check")
 
@@ -5226,6 +5292,11 @@ def main(argv=None):
     s.add_argument("--scan-to", help="end of the scan (default today)")
     s.add_argument("--province", default="08", help="INE province code of the registry for --scan-from (08 Barcelona, "
                                                     "28 Madrid, 46 Valencia, 41 Sevilla)")
+
+    s = sub.add_parser("vat", help="EU VAT number in VIES: valid now, and the registered name and address where "
+                                   "the country discloses them")
+    s.add_argument("country", help="two-letter EU country code (EL or GR for Greece)")
+    s.add_argument("number", help="the VAT number, with or without the country prefix (IT 10927360015)")
 
     s = sub.add_parser("br", help="Brazil: Receita Federal CNPJ open data: status, special situation, capital, "
                                   "partners and administrators")
@@ -5342,7 +5413,7 @@ def main(argv=None):
             for r in jobs_report(a.target, a.history, offices=a.offices):
                 emit(r)
         elif a.cmd == "lu":
-            for r in lu_report(a.rcs, a.quarters, save=a.save):
+            for r in lu_report(a.rcs[0] if len(a.rcs) == 1 else a.rcs, a.quarters, save=a.save):
                 emit(r)
         elif a.cmd == "ie":
             for r in ie_report(a.cro_or_name):
@@ -5351,6 +5422,9 @@ def main(argv=None):
             if not (a.pdf or a.empresia or a.scan_from):
                 p.error("es needs --pdf, --empresia, or --scan-from")
             for r in es_report(a.name, a.pdf, a.empresia, a.scan_from, a.scan_to, a.province):
+                emit(r)
+        elif a.cmd == "vat":
+            for r in vat_report(a.country, a.number):
                 emit(r)
         elif a.cmd == "br":
             for r in br_report(a.cnpj):
