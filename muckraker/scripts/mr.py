@@ -3015,7 +3015,20 @@ def linkedin_page_fields(html_text):
             "quote": (employees or size).group(0)}
 
 
-def linkedin_history(company, get, sleep=time.sleep, captures=LINKEDIN_CAPTURES):
+def wayback_closest(url, get, today):
+    """The capture of `url` closest to today from the Wayback Availability API, as (timestamp, original), or
+    None. It sees a new capture at once, while the CDX index takes hours to list it and is sometimes offline."""
+    api = "https://archive.org/wayback/available?" + urllib.parse.urlencode(
+        {"url": url, "timestamp": today.strftime("%Y%m%d")})
+    try:
+        closest = (json.loads(get(api)).get("archived_snapshots") or {}).get("closest") or {}
+    except (FetchError, ValueError, AttributeError):
+        return None
+    m = re.search(r"/web/(\d{14})/(.+)$", closest.get("url") or "")
+    return (m.group(1), m.group(2)) if m and closest.get("available") and closest.get("status") == "200" else None
+
+
+def linkedin_history(company, get, sleep=time.sleep, captures=LINKEDIN_CAPTURES, today=None):
     """LinkedIn's public company page as the Wayback Machine captured it, one capture a month: the employee
     count LinkedIn shows (members listing the company, not payroll), followers, size band and headquarters."""
     slug = _linkedin_slug(company)
@@ -3025,14 +3038,22 @@ def linkedin_history(company, get, sleep=time.sleep, captures=LINKEDIN_CAPTURES)
     cdx = "https://web.archive.org/cdx/search/cdx?" + urllib.parse.urlencode(
         {"url": f"linkedin.com/company/{slug}*", "fl": "timestamp,original", "filter": "statuscode:200",
          "collapse": "timestamp:6", "output": "json"})
+    cdx_error = None
     try:
         rows = json.loads(get(cdx) or b"[]")[1:]
-    except (FetchError, ValueError) as e:
-        yield {"type": "footprint_unavailable", "part": "linkedin", "error": str(e), "url": cdx}
-        return
+    except (FetchError, ValueError) as e:  # an outage answers with an HTML page, which fails as JSON
+        rows, cdx_error = [], str(e)
     # the prefix search also matches longer slugs (acme* finds acme-foods): keep this company's page only.
     # Rows come grouped by URL variant (?trk=...), not by date, so sort them before taking the newest
-    rows = sorted((ts, orig) for ts, orig in rows if _linkedin_slug(orig) == slug)
+    rows = [(ts, orig) for ts, orig in rows if _linkedin_slug(orig) == slug]
+    latest = wayback_closest(f"linkedin.com/company/{slug}/", get, today or dt.date.today())
+    added = bool(latest and _linkedin_slug(latest[1]) == slug and latest[0] not in {ts for ts, _ in rows})
+    if added:
+        rows.append(latest)
+    if cdx_error and not rows:
+        yield {"type": "footprint_unavailable", "part": "linkedin", "error": cdx_error, "url": cdx}
+        return
+    rows = sorted(rows)
     rows = list({ts[:6]: (ts, orig) for ts, orig in rows}.values())  # the latest capture of each month
     snapshots, walls, errors, stopped = [], 0, 0, False
     for i, (ts, orig) in enumerate(reversed(rows[-captures:])):
@@ -3057,6 +3078,13 @@ def linkedin_history(company, get, sleep=time.sleep, captures=LINKEDIN_CAPTURES)
     summary = {"type": "linkedin_summary", "company_page": f"https://www.linkedin.com/company/{slug}/",
                "captures_listed": len(rows), "captures_read": len(snapshots) + walls + errors,
                "readable": len(snapshots), "login_walls": walls, "fetch_errors": errors, "url": cdx}
+    if added:
+        summary["latest_from_availability_api"] = (f"the capture of {latest[0][:4]}-{latest[0][4:6]}-{latest[0][6:8]} "
+                                                   "came from the Availability API, since the CDX index had not "
+                                                   "listed it yet")
+    if cdx_error:
+        summary["cdx_unavailable"] = (f"the CDX index failed ({cdx_error}), so only the capture closest to today "
+                                      "was read; run again later for the history")
     if len(counted) >= 2:
         a, b = counted[0], counted[-1]
         years = (dt.date.fromisoformat(b["date"]) - dt.date.fromisoformat(a["date"])).days / 365.25
@@ -3158,7 +3186,7 @@ def footprint_report(domain, github=None, founded=None, fetcher=None, today=None
         except (FetchError, ValueError, KeyError, TypeError) as e:
             yield {"type": "footprint_unavailable", "part": "github", "error": str(e)}
     if linkedin:
-        yield from linkedin_history(linkedin, get, sleep)
+        yield from linkedin_history(linkedin, get, sleep, today=today)
     if founded and len(years) == 2 and int(founded) < min(years) - 2:
         yield {"type": "footprint_flag", "severity": "review", "founded": int(founded), "domain_registered": years[0],
                "first_capture": years[1],
