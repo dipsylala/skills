@@ -2988,9 +2988,94 @@ def _domain_of(text):
     return host.lower().removeprefix("www.")
 
 
-def footprint_report(domain, github=None, founded=None, fetcher=None, today=None, whois=None):
-    """The domain's registration (RDAP), the site's history (Wayback Machine), and a GitHub organisation's
-    activity, with a flag when the claimed founding year is older than both domain and site."""
+LINKEDIN_CAPTURES = 24  # newest monthly captures read; the archive refuses connections after a burst
+
+
+def _linkedin_slug(text):
+    m = re.search(r"linkedin\.com/company/([^/?#\s]+)", text) or re.fullmatch(r"([A-Za-z0-9_.%-]+)", text.strip())
+    return urllib.parse.unquote(m.group(1)).lower() if m else None
+
+
+def linkedin_page_fields(html_text):
+    """The fields LinkedIn's logged-out company page shows, or None for a login wall or an empty capture."""
+    text = text_of(html_text)
+    # the page's structured data carries the count in every version; the visible "View all N employees"
+    # line is missing from some
+    employees = (re.search(r'"numberOfEmployees":\{"value":(\d+)', html_text)
+                 or re.search(r"View all ([\d,]+) employees", text))
+    size = re.search(r"Company size ([\d,]+(?:-[\d,]+|\+) employees)", text)
+    if not (employees or size):
+        return None
+    hq = re.search(r"Headquarters (.+?) (?:Type|Founded|Specialties|Locations|Products)\b", text)
+    founded = re.search(r"Founded (\d{4})", text)
+    followers = re.search(r"([\d,]+) followers", text)
+    num = lambda m: int(m.group(1).replace(",", "")) if m else None
+    return {"employees": num(employees), "followers": num(followers), "size_band": size.group(1) if size else None,
+            "headquarters": hq.group(1) if hq else None, "founded": int(founded.group(1)) if founded else None,
+            "quote": (employees or size).group(0)}
+
+
+def linkedin_history(company, get, sleep=time.sleep, captures=LINKEDIN_CAPTURES):
+    """LinkedIn's public company page as the Wayback Machine captured it, one capture a month: the employee
+    count LinkedIn shows (members listing the company, not payroll), followers, size band and headquarters."""
+    slug = _linkedin_slug(company)
+    if not slug:
+        yield {"type": "footprint_unavailable", "part": "linkedin", "error": f"not a LinkedIn company page: {company}"}
+        return
+    cdx = "https://web.archive.org/cdx/search/cdx?" + urllib.parse.urlencode(
+        {"url": f"linkedin.com/company/{slug}*", "fl": "timestamp,original", "filter": "statuscode:200",
+         "collapse": "timestamp:6", "output": "json"})
+    try:
+        rows = json.loads(get(cdx) or b"[]")[1:]
+    except (FetchError, ValueError) as e:
+        yield {"type": "footprint_unavailable", "part": "linkedin", "error": str(e), "url": cdx}
+        return
+    # the prefix search also matches longer slugs (acme* finds acme-foods): keep this company's page only.
+    # Rows come grouped by URL variant (?trk=...), not by date, so sort them before taking the newest
+    rows = sorted((ts, orig) for ts, orig in rows if _linkedin_slug(orig) == slug)
+    rows = list({ts[:6]: (ts, orig) for ts, orig in rows}.values())  # the latest capture of each month
+    snapshots, walls, errors, stopped = [], 0, 0, False
+    for i, (ts, orig) in enumerate(reversed(rows[-captures:])):
+        if i:
+            sleep(1.5)
+        page = f"https://web.archive.org/web/{ts}/{orig}"
+        try:
+            fields = linkedin_page_fields(decode_body(get(f"https://web.archive.org/web/{ts}id_/{orig}")))
+        except FetchError:
+            errors += 1
+            if errors >= 3:
+                stopped = True
+                break
+            continue
+        if not fields:
+            walls += 1
+            continue
+        snap = {"type": "linkedin_snapshot", "date": f"{ts[:4]}-{ts[4:6]}-{ts[6:8]}", **fields, "url": page}
+        snapshots.append(snap)
+        yield snap
+    counted = sorted((s for s in snapshots if s["employees"]), key=lambda s: s["date"])
+    summary = {"type": "linkedin_summary", "company_page": f"https://www.linkedin.com/company/{slug}/",
+               "captures_listed": len(rows), "captures_read": len(snapshots) + walls + errors,
+               "readable": len(snapshots), "login_walls": walls, "fetch_errors": errors, "url": cdx}
+    if len(counted) >= 2:
+        a, b = counted[0], counted[-1]
+        years = (dt.date.fromisoformat(b["date"]) - dt.date.fromisoformat(a["date"])).days / 365.25
+        change = (b["employees"] - a["employees"]) / a["employees"]
+        summary["employees_change"] = {"from": a["employees"], "from_date": a["date"], "to": b["employees"],
+                                       "to_date": b["date"], "percent": round(100 * change, 1),
+                                       "percent_a_year": round(100 * change / years, 1) if years >= 0.25 else None}
+    if stopped:
+        summary["stopped_early"] = "the archive refused three requests (it limits bursts); run again later for the rest"
+    summary["note"] = ("employees is LinkedIn's count of members who list the company, not payroll; most captures of "
+                       "LinkedIn are login walls, and small or new companies are rarely captured at all")
+    yield summary
+
+
+def footprint_report(domain, github=None, founded=None, fetcher=None, today=None, whois=None, linkedin=None,
+                     sleep=time.sleep):
+    """The domain's registration (RDAP), the site's history (Wayback Machine), a GitHub organisation's
+    activity, and LinkedIn's archived company page, with a flag when the claimed founding year is older than
+    both domain and site."""
     get = fetcher or (lambda u: fetch_bytes(u, None))
     today = today or dt.date.today()
     domain = _domain_of(domain)
@@ -3072,6 +3157,8 @@ def footprint_report(domain, github=None, founded=None, fetcher=None, today=None
                    "url": f"https://github.com/{github}"}
         except (FetchError, ValueError, KeyError, TypeError) as e:
             yield {"type": "footprint_unavailable", "part": "github", "error": str(e)}
+    if linkedin:
+        yield from linkedin_history(linkedin, get, sleep)
     if founded and len(years) == 2 and int(founded) < min(years) - 2:
         yield {"type": "footprint_flag", "severity": "review", "founded": int(founded), "domain_registered": years[0],
                "first_capture": years[1],
@@ -5386,9 +5473,12 @@ def main(argv=None):
     s.add_argument("--max-hits", type=int, default=40, help="filings read per name")
     s = sub.add_parser("icij", help="ICIJ Offshore Leaks nodes matching these names")
     s.add_argument("names", nargs="+", help="company, group company, and officer names")
-    s = sub.add_parser("footprint", help="domain registration (RDAP), site history (Wayback Machine), GitHub activity")
+    s = sub.add_parser("footprint", help="domain registration (RDAP), site history (Wayback Machine), GitHub activity, "
+                                         "and LinkedIn's archived company page")
     s.add_argument("domain", help="the company's domain, such as acme.com")
     s.add_argument("--github", help="the GitHub organisation, such as acme-inc, as the company's site links it")
+    s.add_argument("--linkedin", help="the LinkedIn company page as the company's site links it, such as "
+                                      "https://www.linkedin.com/company/acme/ (takes about two seconds a capture)")
     s.add_argument("--founded", type=int, help="the founding year the company claims, for the history check")
     s = sub.add_parser("jobs", help="open roles from the company's job board, optionally with a monthly trend")
     s.add_argument("target", help="the careers page URL, a job-board URL, or provider:token (greenhouse:acme)")
@@ -5548,7 +5638,7 @@ def main(argv=None):
             for r in icij_report(a.names):
                 emit(r)
         elif a.cmd == "footprint":
-            for r in footprint_report(a.domain, a.github, a.founded):
+            for r in footprint_report(a.domain, a.github, a.founded, linkedin=a.linkedin):
                 emit(r)
         elif a.cmd == "jobs":
             for r in jobs_report(a.target, a.history, offices=a.offices):

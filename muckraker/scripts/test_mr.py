@@ -1512,6 +1512,65 @@ class OfficersLayoffsHiring(unittest.TestCase):
             fetcher=lambda u: b"{}"))
         self.assertEqual(out[0]["extra_words"], ["vuppala"])
 
+    def test_footprint_linkedin_history_from_wayback_captures(self):
+        def page(count=None, visible=None):
+            ld = ('<script type="application/ld+json">{"@type":"Organization","numberOfEmployees":{"value":%d,'
+                  '"@type":"QuantitativeValue"}}</script>' % count) if count else ""
+            seen = "<a>View all %s employees</a>" % visible if visible else ""
+            return (ld + "<h1>Acme</h1><p>Burlington, Massachusetts 1,234 followers</p>" + seen +
+                    "<dl><dt>Company size</dt><dd>501-1,000 employees</dd><dt>Headquarters</dt>"
+                    "<dd>Burlington, Massachusetts</dd><dt>Type</dt><dd>Privately Held</dd>"
+                    "<dt>Founded</dt><dd>2006</dd></dl>").encode()
+        wall = b"<title>Sign Up | LinkedIn</title><p>Join now to see who you already know</p>"
+        cdx = [["timestamp", "original"],
+               ["20250310000000", "https://www.linkedin.com/company/acme?trk=b"],  # grouped by variant, not date
+               ["20240115000000", "https://www.linkedin.com/company/acme?trk=a"],
+               ["20240120000000", "https://www.linkedin.com/company/acme?trk=a"],   # same month: the later one is read
+               ["20250601000000", "https://www.linkedin.com/company/acme-foods/"],  # a longer slug: another company
+               ["20260105000000", "https://www.linkedin.com/company/acme/"]]
+        pages = {"20240120000000": page(count=600), "20250310000000": wall, "20260105000000": page(visible="540")}
+        fetched, sleeps = [], []
+
+        def get(url):
+            fetched.append(url)
+            if "/cdx/" in url:
+                self.assertIn("filter=statuscode%3A200", url)
+                return json.dumps(cdx).encode()
+            return pages[re.search(r"/web/(\d+)id_/", url).group(1)]
+        def other(url):
+            raise mr.FetchError("not under test")
+        out = list(mr.footprint_report("acme.com", linkedin="https://www.linkedin.com/company/acme/",
+                                       fetcher=lambda u: get(u) if "linkedin" in u else other(u), sleep=sleeps.append))
+        snaps = [r for r in out if r["type"] == "linkedin_snapshot"]
+        self.assertEqual([(s["date"], s["employees"]) for s in snaps], [("2026-01-05", 540), ("2024-01-20", 600)])
+        self.assertEqual((snaps[1]["followers"], snaps[1]["size_band"], snaps[1]["headquarters"], snaps[1]["founded"]),
+                         (1234, "501-1,000 employees", "Burlington, Massachusetts", 2006))
+        self.assertEqual(snaps[1]["quote"], '"numberOfEmployees":{"value":600')  # structured data first
+        self.assertEqual(snaps[0]["quote"], "View all 540 employees")            # visible text when it is missing
+        self.assertTrue(snaps[0]["url"].startswith("https://web.archive.org/web/20260105000000/"))
+        self.assertFalse(any("acme-foods" in u or "20240115" in u for u in fetched))
+        summary = next(r for r in out if r["type"] == "linkedin_summary")
+        self.assertEqual((summary["captures_listed"], summary["readable"], summary["login_walls"]), (3, 2, 1))
+        self.assertEqual(summary["employees_change"]["percent"], -10.0)
+        self.assertEqual(sleeps, [1.5, 1.5])
+
+    def test_footprint_linkedin_stops_after_repeated_refusals_and_rejects_non_company_urls(self):
+        cdx = [["timestamp", "original"]] + [[f"2026{m:02d}01000000", "https://www.linkedin.com/company/acme/"]
+                                             for m in range(1, 7)]
+
+        def get(url):
+            if "/cdx/" in url:
+                return json.dumps(cdx).encode()
+            raise mr.FetchError("Connection refused")
+        out = list(mr.linkedin_history("acme", get, sleep=lambda s: None))
+        self.assertEqual(len(out), 1)
+        self.assertEqual((out[0]["fetch_errors"], out[0]["readable"]), (3, 0))
+        self.assertIn("stopped_early", out[0])
+        out = list(mr.linkedin_history("https://www.linkedin.com/in/someone/", get, sleep=lambda s: None))
+        self.assertEqual((out[0]["type"], out[0]["part"]), ("footprint_unavailable", "linkedin"))
+        out = list(mr.linkedin_history("acme", lambda u: b"[]", sleep=lambda s: None))
+        self.assertEqual((out[0]["type"], out[0]["captures_listed"]), ("linkedin_summary", 0))
+
     def test_footprint_rdap_wayback_github_and_whois_fallback(self):
         boot = {"services": [[["com"], ["https://rdap.example/com/v1/"]]]}
 
