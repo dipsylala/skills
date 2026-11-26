@@ -1536,6 +1536,8 @@ class OfficersLayoffsHiring(unittest.TestCase):
             if "/cdx/" in url:
                 self.assertIn("filter=statuscode%3A200", url)
                 return json.dumps(cdx).encode()
+            if "/wayback/available" in url:
+                return json.dumps({"archived_snapshots": {}}).encode()  # nothing newer than CDX lists
             return pages[re.search(r"/web/(\d+)id_/", url).group(1)]
         def other(url):
             raise mr.FetchError("not under test")
@@ -1549,6 +1551,7 @@ class OfficersLayoffsHiring(unittest.TestCase):
         self.assertEqual(snaps[0]["quote"], "View all 540 employees")            # visible text when it is missing
         self.assertTrue(snaps[0]["url"].startswith("https://web.archive.org/web/20260105000000/"))
         self.assertFalse(any("acme-foods" in u or "20240115" in u for u in fetched))
+        self.assertTrue(any("/wayback/available" in u for u in fetched))
         summary = next(r for r in out if r["type"] == "linkedin_summary")
         self.assertEqual((summary["captures_listed"], summary["readable"], summary["login_walls"]), (3, 2, 1))
         self.assertEqual(summary["employees_change"]["percent"], -10.0)
@@ -1747,18 +1750,34 @@ class OfficersLayoffsHiring(unittest.TestCase):
         self.assertEqual([r["type"] for r in out], ["jobs_board_candidates", "jobs_board_ambiguous"])
 
     def test_job_history_counts_archived_links(self):
-        cdx = [["urlkey", "timestamp", "original"], ["k", "20250101000000", "https://job-boards.greenhouse.io/acme"],
-               ["k", "20250201000000", "https://job-boards.greenhouse.io/acme"]]
+        board = "https://job-boards.greenhouse.io/acme"
+        cdx = [["timestamp", "original"], ["20250201000000", board], ["20250101000000", board]]  # out of date order
         snaps = {"20250101000000": '<a href="/acme/jobs/1">a</a><a href="/acme/jobs/2">b</a><a href="/acme/jobs/2">b</a>',
-                 "20250201000000": '<a href="/acme/jobs/3">c</a><a href="/other/jobs/9">x</a>'}
+                 "20250201000000": '<a href="/acme/jobs/3">c</a><a href="/other/jobs/9">x</a>',
+                 "20250315000000": '<a href="/acme/jobs/4">d</a>'}
+        newest = {"archived_snapshots": {"closest": {"available": True, "status": "200",
+                                                     "url": f"http://web.archive.org/web/20250315000000/{board}"}}}
 
         def get(url):
             if "/cdx/" in url:
                 return json.dumps(cdx)
+            if "/wayback/available" in url:
+                return json.dumps(newest)
             return snaps[re.search(r"/web/(\d+)id_/", url).group(1)]
-        out = list(mr.job_history("greenhouse", "acme", get, pause=0))
-        self.assertEqual([(r["date"], r["open_roles"]) for r in out], [("2025-01-01", 2), ("2025-02-01", 1)])
+        out = list(mr.job_history("greenhouse", "acme", get, sleep=lambda s: None, today=dt.date(2025, 3, 20)))
+        self.assertEqual([(r["date"], r["open_roles"]) for r in out],
+                         [("2025-01-01", 2), ("2025-02-01", 1), ("2025-03-15", 1)])  # sorted; newest from Availability
         self.assertEqual(next(mr.job_history("ashby", "acme", get))["type"], "jobs_history_unavailable")
+
+        def refusing(url):
+            if "/cdx/" in url:
+                return json.dumps([["timestamp", "original"]] + [[f"2025{m:02d}01000000", board] for m in range(1, 7)])
+            if "/wayback/available" in url:
+                return json.dumps({"archived_snapshots": {}})
+            raise mr.FetchError("Connection refused")
+        out = list(mr.job_history("greenhouse", "acme", refusing, sleep=lambda s: None))
+        self.assertEqual([r["type"] for r in out], ["jobs_snapshot_unreadable"] * 4)
+        self.assertIn("refused three requests", out[-1]["error"])
 
 
 def cdb_block(rcs, end, deposited, fields, form="CA_BILANABR"):
