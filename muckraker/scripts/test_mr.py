@@ -1910,9 +1910,12 @@ class Fetch(unittest.TestCase):
             def __exit__(self, *a): return False
 
         def urlopen(request, timeout):
-            # what urllib sends: unredirected headers win over ordinary ones
-            sent[urllib.parse.urlparse(request.full_url).hostname] = (
-                request.unredirected_hdrs.get("User-agent") or request.get_header("User-agent"))
+            # urllib's merge order differs by version (3.15+ lets ordinary headers win), so
+            # the request must give the same User-Agent under either order
+            older = {**request.headers, **request.unredirected_hdrs}
+            newer = {**request.unredirected_hdrs, **request.headers}
+            self.assertEqual(older.get("User-agent"), newer.get("User-agent"))
+            sent[urllib.parse.urlparse(request.full_url).hostname] = newer.get("User-agent")
             return Response(b"ok")
         contact = "Jane Doe jane@example.com"
         original, mr.urllib.request.urlopen = mr.urllib.request.urlopen, urlopen
@@ -2554,13 +2557,26 @@ class ItalyRunFixes(unittest.TestCase):
 
 
 class RegisterRecordsHelp(unittest.TestCase):
-    def test_every_listed_record_type_is_printed_by_the_code(self):
+    SECTIONS = {"fr": "France", "lu": "Luxembourg", "ie": "Ireland", "il": "Israel", "es": "Spain",
+                "br": "Brazil", "no": "Norway", "fi": "Finland", "dk": "Denmark"}
+
+    def printed_types(self, cc):
+        """Record types the country's own section of mr.py prints. Scoped to the section, since a
+        file-wide prefix search for no_ also finds no_quote, no_url and other unrelated types."""
         source = pathlib.Path(mr.__file__).read_text(encoding="utf-8")
-        for cc, text in mr.REGISTER_RECORDS.items():
-            names = re.findall(r"^  ([a-z]+_[a-z_]+)\s", text, re.M)
-            self.assertTrue(names, cc)
-            for name in names:
-                self.assertIn('"%s"' % name, source, "%s --help lists %s, which mr.py never prints" % (cc, name))
+        start = re.search(r"^# -+ %s -+$" % self.SECTIONS[cc], source, re.M)
+        self.assertIsNotNone(start, cc)
+        end = re.compile(r"^# -+ ", re.M).search(source, start.end())
+        return set(re.findall(r'"type": "(%s_[a-z_]+)"' % cc, source[start.end():end.start()]))
+
+    def test_help_lists_exactly_the_record_types_each_command_prints(self):
+        self.assertEqual(set(mr.REGISTER_RECORDS), set(self.SECTIONS))
+        for cc in mr.REGISTER_RECORDS:
+            own = set(re.findall(r"^  (%s_[a-z_]+)\s" % cc, mr.REGISTER_RECORDS[cc], re.M))
+            shared = set(re.findall(r"^  (%s_[a-z_]+)\s" % cc, mr.register_help(cc), re.M)) - own
+            printed = self.printed_types(cc)
+            self.assertEqual(own - printed, set(), "%s --help lists records mr.py never prints" % cc)
+            self.assertEqual(printed - own - shared, set(), "%s prints records its --help leaves out" % cc)
 
     def test_each_country_command_shows_its_records(self):
         for cc in mr.REGISTER_RECORDS:

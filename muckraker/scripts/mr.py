@@ -134,7 +134,12 @@ def fetch_bytes(url, user_agent, retries=2, auth=None, accept=None, limit=MAX_BO
         raise FetchError(problem)
     if is_sec:
         user_agent = clean_sec_contact(user_agent)
-    headers = {"User-Agent": "muckraker", "Accept-Encoding": "gzip"}
+    headers = {"Accept-Encoding": "gzip"}
+    if not is_sec:
+        # Never set beside the SEC contact: urllib merges ordinary headers over unredirected
+        # ones on Python 3.15+ (earlier versions did the reverse), so a generic User-Agent
+        # here would replace the contact, and sec.gov answers it with HTTP 403.
+        headers["User-Agent"] = "muckraker"
     if accept:
         headers["Accept"] = accept
     for attempt in range(retries + 1):
@@ -5210,8 +5215,10 @@ REGISTER_RECORDS = {
   fr_finances         the register's published figures, or published: false (accounts filed
                       confidentially under art. L. 232-25, or not filed)
   fr_accounts_filed   a BODACC accounts-filing notice: financial year end, confidential or not
+  fr_registered       a BODACC registration notice: registration and activity start dates
   fr_capital          a capital increase or reduction, with the capital before and after
   fr_officer_change   an officer change, in the notice's own wording
+  fr_notice           every other BODACC notice, with its kind (and its description where it has one)
   fr_insolvency       an insolvency notice (none means BODACC has none)
   fr_struck_off       a striking-off notice
   fr_flag             a financial year whose accounts should have a BODACC filing notice by now and have none""",
@@ -5226,10 +5233,12 @@ REGISTER_RECORDS = {
                       debts to affiliates, net result, and turnover and staff costs where the profit and loss
                       account is filed in full (abridged accounts leave turnover out)
   lu_flag             late accounts (recent: true for a year ended in the last three years), or negative equity
-                      at the latest year end; quotes holds the text to quote""",
+                      at the latest year end; quotes holds the text to quote
+  lu_quarter_unreadable  a quarterly file that could not be read, so filings deposited in it are missing""",
     "no": """records:
   no_company          Enhetsregisteret profile: bankruptcy and winding-up flags, share capital, number of shares
   no_officer          a current officer or the auditor, with a person's birth month and year
+  no_subunit          a sub-unit (branch or establishment), with its employees and address
   no_accounts_year    a year's filed figures (last three years), with the link to the filed PDF
   no_accounts_filed   an accounts filing: receipt date against the deadline of seven months after the year end
   no_capital          a capital change announcement
@@ -5243,6 +5252,7 @@ REGISTER_RECORDS = {
   fi_notice           a registered notice: date, type, entry codes described, topics (capital, board, auditor,
                       accounts, insolvency); deduplicated by record number
   fi_accounts_digital the period of accounts filed digitally (figures not parsed)
+  fi_unavailable      a source that could not be read: the registered notices or the digital accounts
   fi_summary          dates of capital events, board and auditor changes, and accounts registrations
   fi_flag             bankruptcy, restructuring or liquidation; removal from the trade register; accounts
                       registered more than eight months after the year end, or past that deadline and not
@@ -5254,6 +5264,7 @@ Without --fy-end, the year end comes from digitally filed accounts, or the deadl
   dk_accounts_year    a year's figures, scope entity or group; reported is an IFRS report's undimensioned figures
   dk_report_facts     reporting class, audit firm, approval date
   dk_officers         executive and supervisory boards and auditors named in a report
+  dk_unavailable      a year's XBRL report that could not be read
   dk_notes            notes on going concern, events after the year end, parent and related parties,
                       subsidiaries, security, and the auditor's remarks
   dk_flag             late accounts (major when more than a week late on a year ended in the last three years);
@@ -5272,6 +5283,8 @@ Without --fy-end, the year end comes from digitally filed accounts, or the deadl
                       role), and capital (each change with the resulting subscribed capital, nominal amounts)
   es_summary          the current capital and current officers, worked out from appointments and removals
   es_notice           a section C announcement naming the company (liquidation balance, merger, capital reduction)
+  es_scan             with --scan-from: the dates, number of BORME days and province scanned
+  es_unreadable       a BORME PDF that could not be read
   es_flag             dissolution, extinction, insolvency proceeding or provisionally closed sheet (major);
                       inscription numbers missing from the PDFs read (minor)""",
     "br": """records (Receita Federal CNPJ open data, via minhareceita.org):
@@ -5282,6 +5295,17 @@ Without --fy-end, the year end comes from digitally filed accounts, or the deadl
   br_flag             a status other than ATIVA, or a special situation (recuperacao judicial, falencia,
                       liquidacao); both major""",
 }
+
+# Record types several register commands share, printed by each command that has the case.
+REGISTER_COMMON_RECORDS = """also, where this command has them:
+  {cc}_candidate        a company matching a name search, with its number: run again with the right one
+  {cc}_note             a message: a malformed number, no such company, or something the source does not give
+  {cc}_summary          counts of what was read and flagged, and what the source leaves out"""
+
+
+def register_help(cc):
+    """The records part of `mr.py <cc> --help`: the country's own record types, then the shared ones."""
+    return REGISTER_RECORDS[cc] + "\n" + REGISTER_COMMON_RECORDS.format(cc=cc)
 
 
 # ----------------------------------------------------------------- main ----
@@ -5376,28 +5400,23 @@ def main(argv=None):
     s.add_argument("company_number")
     s.add_argument("--sets", type=int, default=3, help="accounts filings to read (each covers two years)")
 
-    s = sub.add_parser("fr", epilog=REGISTER_RECORDS["fr"], formatter_class=argparse.RawDescriptionHelpFormatter,
-                       help="France: register profile, officers, and BODACC notices with missing-accounts flags")
+    s = sub.add_parser("fr", help="France: register profile, officers, and BODACC notices with missing-accounts flags")
     s.add_argument("siren_or_name", help="a 9-digit SIREN, or a name to list candidates")
 
-    s = sub.add_parser("lu", epilog=REGISTER_RECORDS["lu"], formatter_class=argparse.RawDescriptionHelpFormatter,
-                       help="Luxembourg: filed accounts from the Centrale des Bilans open data, with late-filing flags")
+    s = sub.add_parser("lu", help="Luxembourg: filed accounts from the Centrale des Bilans open data, with late-filing flags")
     s.add_argument("rcs", nargs="+", help="the RCS number, such as B165616, or several (each quarterly file is read once "
                                          "for all of them)")
     s.add_argument("--quarters", type=int, default=12, help="newest quarterly deposit files to search (each 70-820 MB)")
     s.add_argument("--save", metavar="FILE", help="write the company's matching records to this file, for quote-check")
 
-    s = sub.add_parser("ie", epilog=REGISTER_RECORDS["ie"], formatter_class=argparse.RawDescriptionHelpFormatter,
-                       help="Ireland: CRO open data profile and annual-return filings with late-filing flags")
+    s = sub.add_parser("ie", help="Ireland: CRO open data profile and annual-return filings with late-filing flags")
     s.add_argument("cro_or_name", help="a CRO company number, or a name to list candidates")
 
-    s = sub.add_parser("il", epilog=REGISTER_RECORDS["il"], formatter_class=argparse.RawDescriptionHelpFormatter,
-                       help="Israel: Corporations Authority profile from a daily register copy, with violating-"
+    s = sub.add_parser("il", help="Israel: Corporations Authority profile from a daily register copy, with violating-"
                                   "company, status and late-annual-report flags")
     s.add_argument("company_number", help="a 9-digit company number (find it in the Authority's search in a browser)")
 
-    s = sub.add_parser("es", epilog=REGISTER_RECORDS["es"], formatter_class=argparse.RawDescriptionHelpFormatter,
-                       help="Spain: a company's acts in BORME section A (officers, capital, address, "
+    s = sub.add_parser("es", help="Spain: a company's acts in BORME section A (officers, capital, address, "
                                   "dissolution), with an inscription-sequence check")
     s.add_argument("name", help="the registered name, such as \"Everyday Software SL\" (the legal form is ignored)")
     s.add_argument("--pdf", nargs="*", default=[], help="BORME-A PDF URLs to read")
@@ -5412,24 +5431,20 @@ def main(argv=None):
     s.add_argument("country", help="two-letter EU country code (EL or GR for Greece)")
     s.add_argument("number", help="the VAT number, with or without the country prefix (IT 10927360015)")
 
-    s = sub.add_parser("br", epilog=REGISTER_RECORDS["br"], formatter_class=argparse.RawDescriptionHelpFormatter,
-                       help="Brazil: Receita Federal CNPJ open data: status, special situation, capital, "
+    s = sub.add_parser("br", help="Brazil: Receita Federal CNPJ open data: status, special situation, capital, "
                                   "partners and administrators")
     s.add_argument("cnpj", help="a 14-digit CNPJ")
 
-    s = sub.add_parser("no", epilog=REGISTER_RECORDS["no"], formatter_class=argparse.RawDescriptionHelpFormatter,
-                       help="Norway: Brønnøysund profile, officers, accounts and announcements, with late-filing "
+    s = sub.add_parser("no", help="Norway: Brønnøysund profile, officers, accounts and announcements, with late-filing "
                                   "and bankruptcy flags")
     s.add_argument("orgnr_or_name", help="a 9-digit organisasjonsnummer, or a name to list candidates")
 
-    s = sub.add_parser("fi", epilog=REGISTER_RECORDS["fi"], formatter_class=argparse.RawDescriptionHelpFormatter,
-                       help="Finland: PRH profile, registered-notices timeline and accounts periods, with "
+    s = sub.add_parser("fi", help="Finland: PRH profile, registered-notices timeline and accounts periods, with "
                                   "insolvency and late-accounts flags")
     s.add_argument("business_id_or_name", help="a business ID such as 2795743-5, or a name to list candidates")
     s.add_argument("--fy-end", help="the financial year end as MM-DD (Virre shows it), for the accounts deadline check")
 
-    s = sub.add_parser("dk", epilog=REGISTER_RECORDS["dk"], formatter_class=argparse.RawDescriptionHelpFormatter,
-                       help="Denmark: annual reports from the Business Authority's open index and XBRL, with "
+    s = sub.add_parser("dk", help="Denmark: annual reports from the Business Authority's open index and XBRL, with "
                                   "late-filing, negative-equity, going-concern and auditor-remark flags")
     s.add_argument("cvr_or_name", help="an 8-digit CVR number, or a name to list candidates (from GLEIF)")
     s.add_argument("--years", type=int, default=3, help="latest annual reports to read figures and notes from")
@@ -5452,6 +5467,10 @@ def main(argv=None):
     s.add_argument("url", help="a page URL, or a local file such as an mr.py lu --save extract")
     s.add_argument("quote")
     s.add_argument("--context", type=int, default=200)
+
+    for cc in REGISTER_RECORDS:  # each national-register command's --help lists the records it prints
+        sub.choices[cc].epilog = register_help(cc)
+        sub.choices[cc].formatter_class = argparse.RawDescriptionHelpFormatter
 
     a = p.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
