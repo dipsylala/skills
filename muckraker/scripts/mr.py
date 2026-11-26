@@ -3015,17 +3015,69 @@ def linkedin_page_fields(html_text):
             "quote": (employees or size).group(0)}
 
 
+def wayback_day(ts):
+    """A Wayback timestamp (20261126013741) as a date (2026-11-26)."""
+    return f"{ts[:4]}-{ts[4:6]}-{ts[6:8]}"
+
+
 def wayback_closest(url, get, today):
     """The capture of `url` closest to today from the Wayback Availability API, as (timestamp, original), or
     None. It sees a new capture at once, while the CDX index takes hours to list it and is sometimes offline."""
     api = "https://archive.org/wayback/available?" + urllib.parse.urlencode(
         {"url": url, "timestamp": today.strftime("%Y%m%d")})
     try:
-        closest = (json.loads(get(api)).get("archived_snapshots") or {}).get("closest") or {}
-    except (FetchError, ValueError, AttributeError):
+        data = json.loads(get(api))
+    except (FetchError, ValueError):
         return None
+    closest = ((data.get("archived_snapshots") or {}).get("closest") or {}) if isinstance(data, dict) else {}
     m = re.search(r"/web/(\d{14})/(.+)$", closest.get("url") or "")
     return (m.group(1), m.group(2)) if m and closest.get("available") and closest.get("status") == "200" else None
+
+
+class WaybackMonths:
+    """The latest Wayback capture of each month for a URL, oldest first, from the CDX index plus the
+    Availability API's newest capture, which the index lists only hours later.
+
+    rows   [(timestamp, original)] after `keep`, one a month, sorted by date (CDX groups rows by URL variant)
+    cdx    the CDX query, to cite
+    error  why the CDX query failed (an outage answers with an HTML page), or None
+    added  the timestamp of a capture the Availability API added because CDX had not listed it, or None"""
+
+    def __init__(self, url, get, keep=lambda original: True, today=None):
+        self.cdx = "https://web.archive.org/cdx/search/cdx?" + urllib.parse.urlencode(
+            {"url": url, "fl": "timestamp,original", "filter": "statuscode:200", "collapse": "timestamp:6",
+             "output": "json"})
+        self.error = None
+        try:
+            rows = [(r[0], r[1]) for r in json.loads(get(self.cdx) or "[]")[1:]]
+        except (FetchError, ValueError) as e:
+            rows, self.error = [], str(e)
+        rows = [(ts, original) for ts, original in rows if keep(original)]
+        latest = wayback_closest(url.rstrip("*"), get, today or dt.date.today())
+        self.added = latest[0] if latest and keep(latest[1]) and latest[0] not in {ts for ts, _ in rows} else None
+        if self.added:
+            rows.append(latest)
+        self.rows = list({ts[:6]: (ts, original) for ts, original in sorted(rows)}.values())
+
+
+def wayback_read(rows, get, sleep=time.sleep, pause=1.5):
+    """Each capture's archived copy as (timestamp, original, text or None, error or None), pausing between
+    requests, and whether it stopped early: the archive refuses connections after a burst, so three failed
+    fetches end the run."""
+    out, errors = [], 0
+    for i, (ts, original) in enumerate(rows):
+        if i:
+            sleep(pause)
+        try:
+            body = get(f"https://web.archive.org/web/{ts}id_/{original}")
+        except FetchError as e:
+            out.append((ts, original, None, str(e)))
+            errors += 1
+            if errors >= 3:
+                return out, i + 1 < len(rows)
+            continue
+        out.append((ts, original, body if isinstance(body, str) else decode_body(body), None))
+    return out, False
 
 
 def linkedin_history(company, get, sleep=time.sleep, captures=LINKEDIN_CAPTURES, today=None):
@@ -3035,55 +3087,33 @@ def linkedin_history(company, get, sleep=time.sleep, captures=LINKEDIN_CAPTURES,
     if not slug:
         yield {"type": "footprint_unavailable", "part": "linkedin", "error": f"not a LinkedIn company page: {company}"}
         return
-    cdx = "https://web.archive.org/cdx/search/cdx?" + urllib.parse.urlencode(
-        {"url": f"linkedin.com/company/{slug}*", "fl": "timestamp,original", "filter": "statuscode:200",
-         "collapse": "timestamp:6", "output": "json"})
-    cdx_error = None
-    try:
-        rows = json.loads(get(cdx) or b"[]")[1:]
-    except (FetchError, ValueError) as e:  # an outage answers with an HTML page, which fails as JSON
-        rows, cdx_error = [], str(e)
-    # the prefix search also matches longer slugs (acme* finds acme-foods): keep this company's page only.
-    # Rows come grouped by URL variant (?trk=...), not by date, so sort them before taking the newest
-    rows = [(ts, orig) for ts, orig in rows if _linkedin_slug(orig) == slug]
-    latest = wayback_closest(f"linkedin.com/company/{slug}/", get, today or dt.date.today())
-    added = bool(latest and _linkedin_slug(latest[1]) == slug and latest[0] not in {ts for ts, _ in rows})
-    if added:
-        rows.append(latest)
-    if cdx_error and not rows:
-        yield {"type": "footprint_unavailable", "part": "linkedin", "error": cdx_error, "url": cdx}
+    # the prefix search also matches longer slugs (acme* finds acme-foods): keep this company's page only
+    months = WaybackMonths(f"linkedin.com/company/{slug}*", get, keep=lambda o: _linkedin_slug(o) == slug, today=today)
+    if months.error and not months.rows:
+        yield {"type": "footprint_unavailable", "part": "linkedin", "error": months.error, "url": months.cdx}
         return
-    rows = sorted(rows)
-    rows = list({ts[:6]: (ts, orig) for ts, orig in rows}.values())  # the latest capture of each month
-    snapshots, walls, errors, stopped = [], 0, 0, False
-    for i, (ts, orig) in enumerate(reversed(rows[-captures:])):
-        if i:
-            sleep(1.5)
-        page = f"https://web.archive.org/web/{ts}/{orig}"
-        try:
-            fields = linkedin_page_fields(decode_body(get(f"https://web.archive.org/web/{ts}id_/{orig}")))
-        except FetchError:
+    read, stopped = wayback_read(list(reversed(months.rows[-captures:])), get, sleep)
+    snapshots, walls, errors = [], 0, 0
+    for ts, original, text, error in read:
+        fields = linkedin_page_fields(text) if text is not None else None
+        if error:
             errors += 1
-            if errors >= 3:
-                stopped = True
-                break
-            continue
-        if not fields:
+        elif not fields:
             walls += 1
-            continue
-        snap = {"type": "linkedin_snapshot", "date": f"{ts[:4]}-{ts[4:6]}-{ts[6:8]}", **fields, "url": page}
-        snapshots.append(snap)
-        yield snap
+        else:
+            snap = {"type": "linkedin_snapshot", "date": wayback_day(ts), **fields,
+                    "url": f"https://web.archive.org/web/{ts}/{original}"}
+            snapshots.append(snap)
+            yield snap
     counted = sorted((s for s in snapshots if s["employees"]), key=lambda s: s["date"])
     summary = {"type": "linkedin_summary", "company_page": f"https://www.linkedin.com/company/{slug}/",
-               "captures_listed": len(rows), "captures_read": len(snapshots) + walls + errors,
-               "readable": len(snapshots), "login_walls": walls, "fetch_errors": errors, "url": cdx}
-    if added:
-        summary["latest_from_availability_api"] = (f"the capture of {latest[0][:4]}-{latest[0][4:6]}-{latest[0][6:8]} "
-                                                   "came from the Availability API, since the CDX index had not "
-                                                   "listed it yet")
-    if cdx_error:
-        summary["cdx_unavailable"] = (f"the CDX index failed ({cdx_error}), so only the capture closest to today "
+               "captures_listed": len(months.rows), "captures_read": len(read),
+               "readable": len(snapshots), "login_walls": walls, "fetch_errors": errors, "url": months.cdx}
+    if months.added:
+        summary["latest_from_availability_api"] = (f"the capture of {wayback_day(months.added)} came from the "
+                                                   "Availability API, since the CDX index had not listed it yet")
+    if months.error:
+        summary["cdx_unavailable"] = (f"the CDX index failed ({months.error}), so only the capture closest to today "
                                       "was read; run again later for the history")
     if len(counted) >= 2:
         a, b = counted[0], counted[-1]
@@ -3151,16 +3181,15 @@ def footprint_report(domain, github=None, founded=None, fetcher=None, today=None
                 y = by_year.setdefault(ts[:4], {"months": 0, "months_ok": 0})
                 y["months"] += 1
                 y["months_ok"] += status == "200"
-            day = lambda ts: f"{ts[:4]}-{ts[4:6]}-{ts[6:8]}"
             cut = (registered or "").replace("-", "")
             prior = [ts for ts, _ in rows if cut and ts[:8] < cut]  # a previous owner's site
             own = [ts for ts, _ in rows if not (cut and ts[:8] < cut)]
             first, last = (own[0] if own else None), rows[-1][0]
             if first:
                 years.append(int(first[:4]))
-            yield {"type": "footprint_wayback", "domain": domain, "first_capture": day(first) if first else None,
-                   "last_capture": day(last), "by_year": by_year,
-                   **({"prior_owner_captures": {"first": day(prior[0]), "last": day(prior[-1]), "months": len(prior),
+            yield {"type": "footprint_wayback", "domain": domain, "first_capture": wayback_day(first) if first else None,
+                   "last_capture": wayback_day(last), "by_year": by_year,
+                   **({"prior_owner_captures": {"first": wayback_day(prior[0]), "last": wayback_day(prior[-1]), "months": len(prior),
                                                 "note": "captures from before the domain's current registration, "
                                                         "usually an earlier owner's site; left out of first_capture"}}
                       if prior else {}),
@@ -3256,7 +3285,7 @@ def job_board_openings(provider, token, get):
     return jobs, url
 
 
-def job_history(provider, token, get, months=12, pause=1.0):
+def job_history(provider, token, get, months=12, pause=1.0, sleep=time.sleep, today=None):
     """Approximate open-role counts from monthly Wayback Machine snapshots of the board page."""
     link = BOARD_JOB_LINK.get(provider)
     if not link:
@@ -3265,25 +3294,25 @@ def job_history(provider, token, get, months=12, pause=1.0):
                        "use the jobs_posting_ages record (posting dates of the roles open now) instead"}
         return
     pattern = re.compile(link.format(t=re.escape(token)))
-    rows = []
     for page in BOARD_PAGES[provider]:
-        cdx = "https://web.archive.org/cdx/search/cdx?" + urllib.parse.urlencode(
-            {"url": page.format(t=token), "output": "json", "filter": "statuscode:200", "collapse": "timestamp:6"})
-        rows = (json.loads(get(cdx) or "[]") or [[]])[1:]
-        if rows:
+        archived = WaybackMonths(page.format(t=token), get, today=today)
+        if archived.rows:
             break
-    if not rows:
-        yield {"type": "jobs_history_unavailable", "provider": provider, "note": "no archived copies of the board page"}
+    if not archived.rows:
+        yield {"type": "jobs_history_unavailable", "provider": provider, "note": "no archived copies of the board page",
+               **({"error": archived.error} if archived.error else {})}
         return
-    for ts, original in [(r[1], r[2]) for r in rows[-months:]]:
-        date, snap = f"{ts[:4]}-{ts[4:6]}-{ts[6:8]}", f"https://web.archive.org/web/{ts}id_/{original}"
-        try:
-            count = len(set(pattern.findall(get(snap))))
-        except FetchError as e:
-            yield {"type": "jobs_snapshot_unreadable", "date": date, "error": str(e)}
-            continue
-        yield {"type": "jobs_snapshot", "date": date, "open_roles": count, "approximate": True, "url": snap}
-        time.sleep(pause)
+    read, stopped = wayback_read(archived.rows[-months:], get, sleep, pause)
+    for ts, original, text, error in read:
+        snap = f"https://web.archive.org/web/{ts}id_/{original}"
+        if error:
+            yield {"type": "jobs_snapshot_unreadable", "date": wayback_day(ts), "error": error}
+        else:
+            yield {"type": "jobs_snapshot", "date": wayback_day(ts), "open_roles": len(set(pattern.findall(text))),
+                   "approximate": True, "url": snap}
+    if stopped:
+        yield {"type": "jobs_snapshot_unreadable", "error": "the archive refused three requests (it limits bursts); "
+                                                            "the older months were not read, so run again later"}
 
 
 def jobs_report(target, history=False, fetcher=None, pause=1.0, offices=()):
