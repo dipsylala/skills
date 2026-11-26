@@ -1554,6 +1554,43 @@ class OfficersLayoffsHiring(unittest.TestCase):
         self.assertEqual(summary["employees_change"]["percent"], -10.0)
         self.assertEqual(sleeps, [1.5, 1.5])
 
+    def test_footprint_linkedin_adds_the_newest_capture_from_the_availability_api(self):
+        page = lambda n: ('<script>{"numberOfEmployees":{"value":%d}}</script>'
+                          "<dt>Company size</dt><dd>2-10 employees</dd>" % n).encode()
+        old = ["20251006152832", "https://www.linkedin.com/company/acme/"]
+        closest = {"archived_snapshots": {"closest": {"status": "200", "available": True, "timestamp": "20261126013741",
+                   "url": "http://web.archive.org/web/20261126013741/https://www.linkedin.com/company/acme"}}}
+        asked = []
+
+        def get(url, cdx_body):
+            asked.append(url)
+            if "/cdx/" in url:
+                return cdx_body
+            if "/wayback/available" in url:
+                self.assertIn("timestamp=20261126", url)
+                return json.dumps(closest).encode()
+            return page({"20251006152832": 1, "20261126013741": 8}[re.search(r"/web/(\d+)id_/", url).group(1)])
+        # the CDX index lags: it lists only last year's capture
+        out = list(mr.linkedin_history("acme", lambda u: get(u, json.dumps([["timestamp", "original"], old]).encode()),
+                                       sleep=lambda s: None, today=dt.date(2026, 11, 26)))
+        self.assertEqual([(r["date"], r["employees"]) for r in out if r["type"] == "linkedin_snapshot"],
+                         [("2026-11-26", 8), ("2025-10-06", 1)])
+        summary = out[-1]
+        self.assertIn("latest_from_availability_api", summary)
+        self.assertEqual((summary["captures_listed"], summary["employees_change"]["to"]), (2, 8))
+        # the CDX index is offline (an HTML page): the closest capture is still read
+        out = list(mr.linkedin_history("acme", lambda u: get(u, b"<html>Temporarily Offline</html>"),
+                                       sleep=lambda s: None, today=dt.date(2026, 11, 26)))
+        self.assertEqual([(r["date"], r["employees"]) for r in out if r["type"] == "linkedin_snapshot"],
+                         [("2026-11-26", 8)])
+        self.assertIn("cdx_unavailable", out[-1])
+        # a capture CDX already lists is not added twice
+        listed = ["20261126013741", "https://www.linkedin.com/company/acme"]
+        out = list(mr.linkedin_history("acme", lambda u: get(u, json.dumps([["timestamp", "original"], old, listed]).encode()),
+                                       sleep=lambda s: None, today=dt.date(2026, 11, 26)))
+        self.assertNotIn("latest_from_availability_api", out[-1])
+        self.assertEqual(out[-1]["captures_listed"], 2)
+
     def test_footprint_linkedin_stops_after_repeated_refusals_and_rejects_non_company_urls(self):
         cdx = [["timestamp", "original"]] + [[f"2026{m:02d}01000000", "https://www.linkedin.com/company/acme/"]
                                              for m in range(1, 7)]
